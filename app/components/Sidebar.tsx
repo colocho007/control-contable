@@ -1,0 +1,86 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+
+import {
+  LayoutDashboard,
+  CheckSquare,
+  Building2,
+  LogIn,
+} from "lucide-react";
+
+export default function Sidebar() {
+
+  const pathname = usePathname();
+
+  const menus = [
+    {
+      name: "Dashboard",
+      path: "/dashboard",
+      icon: LayoutDashboard,
+    },
+    {
+      name: "Tareas",
+      path: "/tareas",
+      icon: CheckSquare,
+    },
+    {
+      name: "Empresas",
+      path: "/empresas",
+      icon: Building2,
+    },
+    {
+      name: "Login",
+      path: "/login",
+      icon: LogIn,
+    },
+  ];
+
+  return (
+    <aside className="w-[260px] min-h-screen bg-[#020617] border-r border-white/10 p-6">
+
+      <div className="mb-10">
+
+        <h1 className="text-3xl font-bold text-white">
+          Control+
+        </h1>
+
+        <p className="text-gray-400 text-sm mt-1">
+          ERP Empresarial
+        </p>
+
+      </div>
+
+      <div className="space-y-3">
+
+        {menus.map((menu, index) => {
+
+          const Icon = menu.icon;
+
+          const active = pathname === menu.path;
+
+          return (
+            <Link
+              key={index}
+              href={menu.path}
+              className={`flex items-center gap-3 p-4 rounded-2xl transition ${
+                active
+                  ? "bg-cyan-500/20 text-cyan-300"
+                  : "text-gray-400 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+
+              <Icon size={20} />
+
+              {menu.name}
+
+            </Link>
+          );
+        })}
+
+      </div>
+
+    </aside>
+  );
+}
