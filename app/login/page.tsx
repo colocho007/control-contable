@@ -31,7 +31,7 @@ async function verificarSesion() {
 
   if (session) {
 
-    router.push("/dashboard");
+  window.location.href = "/dashboard";
 
   }
 

@@ -231,13 +231,13 @@ export default function DashboardPage() {
   </div>
 
   <button
-    onClick={async () => {
+  onClick={async () => {
 
-      await supabase.auth.signOut();
+  await supabase.auth.signOut();
 
-      router.push("/login");
+  window.location.href = "/login";
 
-    }}
+}}
     className="bg-red-500/20 hover:bg-red-500/30 transition text-red-300 px-5 py-3 rounded-2xl flex items-center gap-2"
   >
 
