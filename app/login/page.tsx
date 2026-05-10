@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -16,6 +16,26 @@ export default function LoginPage() {
 
 const [mensaje, setMensaje] =
   useState("");
+
+  useEffect(() => {
+
+  verificarSesion();
+
+}, []);
+
+async function verificarSesion() {
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (session) {
+
+    router.push("/dashboard");
+
+  }
+
+}
 
 async function login() {
 
