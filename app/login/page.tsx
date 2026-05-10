@@ -17,23 +17,15 @@ export default function LoginPage() {
 const [mensaje, setMensaje] =
   useState("");
 
-  useEffect(() => {
+useEffect(() => {
 
-  verificarSesion();
+  cerrarSesionVieja();
 
 }, []);
 
-async function verificarSesion() {
+async function cerrarSesionVieja() {
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (session) {
-
-  window.location.href = "/dashboard";
-
-  }
+  await supabase.auth.signOut();
 
 }
 
