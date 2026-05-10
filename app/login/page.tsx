@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
@@ -17,17 +17,6 @@ export default function LoginPage() {
 const [mensaje, setMensaje] =
   useState("");
 
-useEffect(() => {
-
-  cerrarSesionVieja();
-
-}, []);
-
-async function cerrarSesionVieja() {
-
-  await supabase.auth.signOut();
-
-}
 
 async function login() {
 
