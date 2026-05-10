@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Building2,
   LogIn,
+  Wallet,
 } from "lucide-react";
 
 export default function Sidebar() {
@@ -17,7 +18,7 @@ export default function Sidebar() {
   const menus = [
     {
       name: "Dashboard",
-      path: "/dashboard",
+      path: "/",
       icon: LayoutDashboard,
     },
     {
@@ -26,10 +27,10 @@ export default function Sidebar() {
       icon: CheckSquare,
     },
     {
-      name: "Empresas",
-      path: "/empresas",
-      icon: Building2,
-    },
+  name: "Finanzas",
+  path: "/finanzas",
+  icon: Wallet,
+},
     {
       name: "Login",
       path: "/login",
@@ -52,15 +53,17 @@ export default function Sidebar() {
 
       </div>
 
-      <div className="space-y-3">
+           <div className="space-y-3">
 
         {menus.map((menu, index) => {
 
           const Icon = menu.icon;
 
-          const active = pathname === menu.path;
+          const active =
+            pathname === menu.path;
 
           return (
+
             <Link
               key={index}
               href={menu.path}
@@ -76,7 +79,9 @@ export default function Sidebar() {
               {menu.name}
 
             </Link>
+
           );
+
         })}
 
       </div>
