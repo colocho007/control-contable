@@ -1,218 +1,254 @@
 "use client";
+import { useRouter } from "next/navigation";
+import { verificarRol } from "../lib/auth";
+
 
 import { useEffect, useState } from "react";
-
 import Sidebar from "../components/Sidebar";
-import { supabase } from "../lib/supabase";
-
+import { supabase } from "../../lib/supabase";
 import {
   Trash2,
   UserPlus,
+  ShieldCheck,
+  UserCircle,
+  Users,
+  AlertCircle
 } from "lucide-react";
 
 interface Perfil {
   id: string;
   nombre: string;
   rol: string;
+  created_at?: string;
 }
 
 export default function EmpleadosPage() {
-
-  const [empleados, setEmpleados] =
-    useState<Perfil[]>([]);
-
-  const [nombre, setNombre] =
-    useState("");
-
-  const [rol, setRol] =
-    useState("empleado");
-
-  const [uid, setUid] =
-    useState("");
+    const router = useRouter();
+  const [empleados, setEmpleados] = useState<Perfil[]>([]);
+  const [loading, setLoading] = useState(false);
+  
+  // Estado único para el formulario
+  const [form, setForm] = useState({
+    nombre: "",
+    uid: "",
+    rol: "empleado"
+  });
 
   useEffect(() => {
+  async function iniciar() {
+    const acceso = await verificarRol(["admin"]);
+
+    if (!acceso.autorizado) {
+      router.replace("/dashboard");
+      return;
+    }
+
     obtenerEmpleados();
-  }, []);
+  }
+
+  iniciar();
+}, []);
+
+
 
   async function obtenerEmpleados() {
-
     const { data } = await supabase
       .from("perfiles")
       .select("*")
-      .order("created_at", {
-        ascending: false,
-      });
+      .order("created_at", { ascending: false });
 
-    if (data) {
-      setEmpleados(data);
-    }
+    if (data) setEmpleados(data);
   }
 
   async function crearEmpleado() {
-
-    if (!nombre || !uid)
+    // Validaciones básicas
+    if (!form.nombre.trim() || !form.uid.trim()) {
+      alert("Por favor completa el nombre y el UID del usuario.");
       return;
+    }
 
-    const { error } = await supabase
-      .from("perfiles")
-      .insert([
-        {
-          id: uid,
-          nombre,
-          rol,
-        },
-      ]);
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from("perfiles")
+        .insert([
+          {
+            id: form.uid.trim(), // Limpiamos espacios
+            nombre: form.nombre.trim(),
+            rol: form.rol,
+          },
+        ]);
 
-    console.log(error);
+      if (error) throw error;
 
-    setNombre("");
-    setUid("");
-    setRol("empleado");
-
-    obtenerEmpleados();
+      // Limpiar formulario
+      setForm({ nombre: "", uid: "", rol: "empleado" });
+      obtenerEmpleados();
+    } catch (error: any) {
+      alert("Error al crear empleado: " + error.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  async function eliminarEmpleado(
-    id: string
-  ) {
-
-    await supabase
+  async function eliminarEmpleado(id: string) {
+    if (!confirm("¿Estás seguro de eliminar este acceso? El usuario perderá sus permisos.")) return;
+    
+    const { error } = await supabase
       .from("perfiles")
       .delete()
       .eq("id", id);
 
-    obtenerEmpleados();
+    if (!error) obtenerEmpleados();
   }
 
   return (
-
     <div className="flex bg-[#020617] min-h-screen text-white">
-
       <Sidebar />
 
       <main className="flex-1 p-8">
-
         <div className="max-w-5xl mx-auto">
+          {/* HEADER */}
+          <div className="flex items-end justify-between mb-10">
+            <div>
+              <h1 className="text-5xl font-black tracking-tight">Empleados</h1>
+              <p className="text-gray-400 mt-2 flex items-center gap-2">
+                <Users size={18} className="text-cyan-500" />
+                Control de acceso y jerarquía de personal
+              </p>
+            </div>
+            <div className="bg-white/5 border border-white/10 px-4 py-2 rounded-2xl">
+              <span className="text-sm text-gray-500 font-bold uppercase tracking-widest">Total: </span>
+              <span className="text-xl font-black text-cyan-400">{empleados.length}</span>
+            </div>
+          </div>
 
-          <h1 className="text-5xl font-black mb-8">
-            Empleados
-          </h1>
+          {/* FORMULARIO DE REGISTRO */}
+          <div className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8 mb-12 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5">
+              <UserPlus size={120} />
+            </div>
 
-          {/* FORMULARIO */}
-
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
-
-            <h2 className="text-2xl font-bold mb-6">
-              Nuevo Empleado
+            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+              <ShieldCheck className="text-cyan-500" /> Registrar Nuevo Acceso
             </h2>
 
-            <div className="grid md:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-3 gap-5 relative z-10">
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-gray-500 uppercase ml-2">Nombre Completo</label>
+                <input
+                  type="text"
+                  placeholder="Juan Pérez"
+                  value={form.nombre}
+                  onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all"
+                />
+              </div>
 
-              <input
-                type="text"
-                placeholder="Nombre"
-                value={nombre}
-                onChange={(e) =>
-                  setNombre(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-gray-500 uppercase ml-2">Supabase UID</label>
+                <input
+                  type="text"
+                  placeholder="ID de Authentication"
+                  value={form.uid}
+                  onChange={(e) => setForm({ ...form, uid: e.target.value })}
+                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all font-mono text-sm"
+                />
+              </div>
 
-              <input
-                type="text"
-                placeholder="UID del usuario"
-                value={uid}
-                onChange={(e) =>
-                  setUid(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
-
-              <select
-                value={rol}
-                onChange={(e) =>
-                  setRol(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              >
-
-                <option value="admin">
-                  Admin
-                </option>
-
-                <option value="supervisor">
-                  Supervisor
-                </option>
-
-                <option value="empleado">
-                  Empleado
-                </option>
-
-              </select>
-
+              <div className="flex flex-col gap-2">
+                <label className="text-xs font-bold text-gray-500 uppercase ml-2">Nivel de Rango</label>
+                <select
+                  value={form.rol}
+                  onChange={(e) => setForm({ ...form, rol: e.target.value })}
+                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all appearance-none cursor-pointer"
+                >
+                  <option value="admin">Administrador</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="empleado">Empleado Estándar</option>
+                </select>
+              </div>
             </div>
 
             <button
               onClick={crearEmpleado}
-              className="mt-6 bg-cyan-500 hover:bg-cyan-400 text-black font-bold px-6 py-4 rounded-2xl flex items-center gap-2 transition"
+              disabled={loading}
+              className="mt-8 bg-cyan-500 hover:bg-cyan-400 disabled:bg-gray-600 text-black font-black px-8 py-4 rounded-2xl flex items-center gap-2 transition-all active:scale-95"
             >
-
-              <UserPlus size={20} />
-
-              Crear Empleado
-
+              {loading ? "Procesando..." : <><UserPlus size={20} /> DAR DE ALTA</>}
             </button>
-
           </div>
 
-          {/* LISTA */}
-
-          <div className="space-y-4">
+          {/* LISTA DE PERSONAL */}
+          <div className="grid gap-4">
+            {empleados.length === 0 && (
+              <div className="text-center py-20 border-2 border-dashed border-white/10 rounded-[3rem]">
+                <AlertCircle className="mx-auto text-gray-600 mb-4" size={48} />
+                <p className="text-gray-500 font-medium">No hay empleados registrados todavía.</p>
+              </div>
+            )}
 
             {empleados.map((emp) => (
-
               <div
                 key={emp.id}
-                className="bg-white/5 border border-white/10 rounded-3xl p-5 flex justify-between items-center"
+                className="group bg-white/5 border border-white/10 rounded-[2rem] p-6 flex justify-between items-center hover:bg-white/[0.08] transition-all"
               >
-
-                <div>
-
-                  <h2 className="text-2xl font-bold">
-                    {emp.nombre}
-                  </h2>
-
-                  <p className="text-cyan-400 mt-1 capitalize">
-                    {emp.rol}
-                  </p>
-
-                  <p className="text-gray-500 text-sm mt-1">
-                    {emp.id}
-                  </p>
-
+                <div className="flex items-center gap-6">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 ${getRolStyles(emp.rol).border}`}>
+                    <UserCircle size={32} className={getRolStyles(emp.rol).text} />
+                  </div>
+                  
+                  <div>
+                    <h2 className="text-2xl font-bold tracking-tight">
+                      {emp.nombre}
+                    </h2>
+                    <div className="flex items-center gap-3 mt-1">
+                      <span className={`text-xs font-black uppercase px-3 py-1 rounded-full ${getRolStyles(emp.rol).badge}`}>
+                        {emp.rol}
+                      </span>
+                      <span className="text-gray-600 font-mono text-xs">
+                        ID: {emp.id.substring(0, 8)}...
+                      </span>
+                    </div>
+                  </div>
                 </div>
 
                 <button
-                  onClick={() =>
-                    eliminarEmpleado(emp.id)
-                  }
-                  className="bg-red-500/20 hover:bg-red-500/30 text-red-400 p-4 rounded-2xl transition"
+                  onClick={() => eliminarEmpleado(emp.id)}
+                  className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white p-4 rounded-2xl transition-all"
+                  title="Eliminar acceso"
                 >
-
                   <Trash2 size={20} />
-
                 </button>
-
               </div>
-
             ))}
-
           </div>
-
         </div>
-
       </main>
-
     </div>
   );
+}
+
+// Función auxiliar para estilos de roles
+function getRolStyles(rol: string) {
+  switch (rol) {
+    case 'admin':
+      return { 
+        text: 'text-cyan-400', 
+        border: 'border-cyan-500/30', 
+        badge: 'bg-cyan-500/20 text-cyan-400' 
+      };
+    case 'supervisor':
+      return { 
+        text: 'text-purple-400', 
+        border: 'border-purple-500/30', 
+        badge: 'bg-purple-500/20 text-purple-400' 
+      };
+    default:
+      return { 
+        text: 'text-gray-400', 
+        border: 'border-white/10', 
+        badge: 'bg-white/10 text-gray-400' 
+      };
+  }
 }

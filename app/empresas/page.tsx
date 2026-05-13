@@ -1,10 +1,13 @@
 "use client";
+import { useRouter } from "next/navigation";
+import { verificarRol } from "../lib/auth";
+
 
 import { useEffect, useState } from "react";
 
 import Sidebar from "../components/Sidebar";
 
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
 import {
   Building2,
@@ -27,6 +30,7 @@ interface Empresa {
 }
 
 export default function EmpresasPage() {
+  const router = useRouter();
 
   const [empresas, setEmpresas] =
     useState<Empresa[]>([]);
@@ -56,8 +60,24 @@ const [isr, setIsr] =
   useState("Activa");
 
   useEffect(() => {
+  async function iniciar() {
+    const acceso = await verificarRol([
+      "admin",
+      "supervisor"
+    ]);
+
+    if (!acceso.autorizado) {
+      router.replace("/dashboard");
+      return;
+    }
+
     obtenerEmpresas();
-  }, []);
+  }
+
+  iniciar();
+}, []);
+
+
 
   async function obtenerEmpresas() {
 

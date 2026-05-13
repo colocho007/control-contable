@@ -1,9 +1,13 @@
 "use client";
+import { useRouter } from "next/navigation";
+import { verificarRol } from "../lib/auth";
+
+
 
 import { useEffect, useState } from "react";
 
 import Sidebar from "../components/Sidebar";
-import { supabase } from "../lib/supabase";
+import { supabase } from "../../lib/supabase";
 
 import {
   Plus,
@@ -23,6 +27,7 @@ interface Movimiento {
 }
 
 export default function FinanzasPage() {
+    const router = useRouter();
 
   const [movimientos, setMovimientos] =
     useState<Movimiento[]>([]);
@@ -42,9 +47,21 @@ export default function FinanzasPage() {
   const [fecha, setFecha] =
     useState("");
 
-  useEffect(() => {
-    obtenerMovimientos();
-  }, []);
+ useEffect(() => {
+  iniciarPagina();
+}, []);
+
+async function iniciarPagina() {
+  const auth = await verificarRol(["admin"]);
+
+  if (!auth.autorizado) {
+    alert(auth.error);
+   router.replace("/dashboard");
+    return;
+  }
+
+  obtenerMovimientos();
+}
 
   async function obtenerMovimientos() {
 
