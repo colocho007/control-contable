@@ -11,52 +11,70 @@ import {
   Users,
   Receipt,
   LogOut,
+  Loader2 
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+
+const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const [rol, setRol] = useState<string | null>(null);
+  const [loadingRol, setLoadingRol] = useState(true);
 
   useEffect(() => {
     async function obtenerPerfil() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+  setLoadingRol(false);
+  return;
+}
 
-      const { data } = await supabase
-        .from("perfiles") // Asegúrate de que tu tabla se llame 'perfiles' o 'profiles'
-        .select("rol")
-        .eq("id", user.id)
-        .single();
+        const { data } = await supabase
+          .from("perfiles")
+          .select("rol")
+          .eq("id", user.id)
+          .single();
 
-      if (data) setRol(data.rol);
+        if (data) setRol(data.rol);
+      } catch (error) {
+        console.error("Error cargando perfil en Sidebar:", error);
+      } finally {
+        setLoadingRol(false); 
+      }
     }
     obtenerPerfil();
   }, []);
 
   async function cerrarSesion() {
-    if (!confirm("¿Cerrar sesión ahora?")) return;
+    if (!window.confirm("¿Seguro que deseas cerrar sesión?")) return;
     await supabase.auth.signOut();
     router.replace("/login");
-    router.refresh(); // Limpia caché de Next.js
+    router.refresh(); 
   }
 
-  // Definición de menús con lógica de roles
-  const menus = [
+  // Rutas base que todos (incluyendo empleados) pueden ver
+  const menusBase = [
     { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
     { name: "Tareas", path: "/tareas", icon: CheckSquare },
-    { name: "Empresas", path: "/empresas", icon: Building2 },
-    // Solo admins ven Finanzas y Empleados
-    ...(rol === "admin" ? [
-      { name: "Finanzas", path: "/finanzas", icon: Wallet },
-      { name: "Empleados", path: "/empleados", icon: Users },
-      { name: "Contabilidad", path: "/contabilidad", icon: Receipt },
-    ] : []),
   ];
 
+  // Rutas que solo ven los altos mandos
+  const menusAdmin = [
+    { name: "Empresas", path: "/empresas", icon: Building2 },
+    { name: "Finanzas", path: "/finanzas", icon: Wallet },
+    { name: "Empleados", path: "/empleados", icon: Users },
+    { name: "Contabilidad", path: "/contabilidad", icon: Receipt },
+  ];
+
+  // Unimos los menús basándonos en la validación segura del rol
+  const menus = ROLES_ADMIN.includes(rol || "") 
+    ? [...menusBase, ...menusAdmin] 
+    : menusBase;
+
   return (
-    // 'hidden md:flex' hace que desaparezca en móviles para no romper la UI
     <aside className="hidden md:flex w-[280px] h-screen bg-[#020617] border-r border-white/10 p-6 flex-col sticky top-0">
       
       <div className="mb-10 px-2">
@@ -69,7 +87,6 @@ export default function Sidebar() {
       <nav className="flex-1 space-y-2">
         {menus.map((menu) => {
           const Icon = menu.icon;
-          // Mejora: startsWith permite que /tareas/123 mantenga activo el botón 'Tareas'
           const active = pathname.startsWith(menu.path);
 
           return (
@@ -90,6 +107,13 @@ export default function Sidebar() {
             </Link>
           );
         })}
+
+        {loadingRol && (
+          <div className="flex items-center gap-3 p-4 text-gray-600">
+            <Loader2 size={16} className="animate-spin" />
+            <span className="text-xs italic">Cargando módulos...</span>
+          </div>
+        )}
       </nav>
 
       <div className="pt-6 border-t border-white/5">

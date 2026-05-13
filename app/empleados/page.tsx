@@ -1,10 +1,10 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { verificarRol } from "../lib/auth";
-
+import { verificarRol } from "../../lib/auth";
 
 import { useEffect, useState } from "react";
-import Sidebar from "../components/Sidebar";
+// ✅ CORRECCIÓN: Import limpio y correcto
+import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import {
   Trash2,
@@ -12,8 +12,10 @@ import {
   ShieldCheck,
   UserCircle,
   Users,
-  AlertCircle
+  AlertCircle,
+  Info
 } from "lucide-react";
+import { toast, Toaster } from "react-hot-toast";
 
 interface Perfil {
   id: string;
@@ -23,11 +25,14 @@ interface Perfil {
 }
 
 export default function EmpleadosPage() {
-    const router = useRouter();
+  const router = useRouter();
   const [empleados, setEmpleados] = useState<Perfil[]>([]);
   const [loading, setLoading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   
-  // Estado único para el formulario
+  // ✅ NUEVO: Estado para proteger la interfaz según el rol
+  const [rolActual, setRolActual] = useState<string | null>(null);
+  
   const [form, setForm] = useState({
     nombre: "",
     uid: "",
@@ -35,21 +40,34 @@ export default function EmpleadosPage() {
   });
 
   useEffect(() => {
-  async function iniciar() {
-    const acceso = await verificarRol(["admin"]);
+    async function iniciar() {
+      // ✅ CORRECCIÓN: Ahora supervisor y jefe también pueden entrar
+      const acceso = await verificarRol(["admin", "supervisor", "jefe"]);
 
-    if (!acceso.autorizado) {
-      router.replace("/dashboard");
-      return;
+      if (!acceso.autorizado) {
+        router.replace("/dashboard");
+        return;
+      }
+
+      const { data: { user } } = await supabase.auth.getUser();
+      
+      // ✅ NUEVO: Obtenemos el rol exacto del usuario que está navegando
+      if (user) {
+        setCurrentUserId(user.id);
+        const { data: perfil } = await supabase
+          .from("perfiles")
+          .select("rol")
+          .eq("id", user.id)
+          .single();
+
+        setRolActual(perfil?.rol || null);
+      }
+
+      obtenerEmpleados();
     }
 
-    obtenerEmpleados();
-  }
-
-  iniciar();
-}, []);
-
-
+    iniciar();
+  }, [router]);
 
   async function obtenerEmpleados() {
     const { data } = await supabase
@@ -61,19 +79,20 @@ export default function EmpleadosPage() {
   }
 
   async function crearEmpleado() {
-    // Validaciones básicas
     if (!form.nombre.trim() || !form.uid.trim()) {
-      alert("Por favor completa el nombre y el UID del usuario.");
+      toast.error("Por favor completa el nombre y el UID del usuario.");
       return;
     }
 
     setLoading(true);
+    const toastId = toast.loading("Registrando acceso...");
+
     try {
       const { error } = await supabase
         .from("perfiles")
         .insert([
           {
-            id: form.uid.trim(), // Limpiamos espacios
+            id: form.uid.trim(), 
             nombre: form.nombre.trim(),
             rol: form.rol,
           },
@@ -81,32 +100,48 @@ export default function EmpleadosPage() {
 
       if (error) throw error;
 
-      // Limpiar formulario
       setForm({ nombre: "", uid: "", rol: "empleado" });
       obtenerEmpleados();
+      toast.success("Usuario registrado exitosamente", { id: toastId });
     } catch (error: any) {
-      alert("Error al crear empleado: " + error.message);
+      toast.error("Error al crear empleado: " + error.message, { id: toastId });
     } finally {
       setLoading(false);
     }
   }
 
   async function eliminarEmpleado(id: string) {
-    if (!confirm("¿Estás seguro de eliminar este acceso? El usuario perderá sus permisos.")) return;
-    
-    const { error } = await supabase
-      .from("perfiles")
-      .delete()
-      .eq("id", id);
+    if (id === currentUserId) {
+      toast.error("Acción denegada: No puedes eliminar tu propio perfil.");
+      return;
+    }
 
-    if (!error) obtenerEmpleados();
+    if (!window.confirm("¿Estás seguro de eliminar este acceso? El usuario perderá sus permisos.")) return;
+    
+    const toastId = toast.loading("Eliminando credenciales...");
+
+    try {
+      const { error } = await supabase
+        .from("perfiles")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+      
+      toast.success("Acceso revocado", { id: toastId });
+      obtenerEmpleados();
+    } catch (error: any) {
+      toast.error("Error al eliminar", { id: toastId });
+    }
   }
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
+      <Toaster position="bottom-right" toastOptions={{ style: { background: '#0f172a', color: '#fff', border: '1px solid #1e293b'} }} />
+      
       <Sidebar />
 
-      <main className="flex-1 p-8">
+      <main className="flex-1 p-8 overflow-y-auto">
         <div className="max-w-5xl mx-auto">
           {/* HEADER */}
           <div className="flex items-end justify-between mb-10">
@@ -154,6 +189,9 @@ export default function EmpleadosPage() {
                   onChange={(e) => setForm({ ...form, uid: e.target.value })}
                   className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all font-mono text-sm"
                 />
+                <span className="text-[10px] text-cyan-500/70 ml-2 flex items-center gap-1 font-mono">
+                  <Info size={10} /> Copia este ID desde el panel Auth de Supabase
+                </span>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -165,6 +203,7 @@ export default function EmpleadosPage() {
                 >
                   <option value="admin">Administrador</option>
                   <option value="supervisor">Supervisor</option>
+                  <option value="jefe">Jefe</option>
                   <option value="empleado">Empleado Estándar</option>
                 </select>
               </div>
@@ -188,40 +227,49 @@ export default function EmpleadosPage() {
               </div>
             )}
 
-            {empleados.map((emp) => (
-              <div
-                key={emp.id}
-                className="group bg-white/5 border border-white/10 rounded-[2rem] p-6 flex justify-between items-center hover:bg-white/[0.08] transition-all"
-              >
-                <div className="flex items-center gap-6">
-                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 ${getRolStyles(emp.rol).border}`}>
-                    <UserCircle size={32} className={getRolStyles(emp.rol).text} />
-                  </div>
-                  
-                  <div>
-                    <h2 className="text-2xl font-bold tracking-tight">
-                      {emp.nombre}
-                    </h2>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className={`text-xs font-black uppercase px-3 py-1 rounded-full ${getRolStyles(emp.rol).badge}`}>
-                        {emp.rol}
-                      </span>
-                      <span className="text-gray-600 font-mono text-xs">
-                        ID: {emp.id.substring(0, 8)}...
-                      </span>
+            {empleados.map((emp) => {
+              const isMe = emp.id === currentUserId;
+
+              return (
+                <div
+                  key={emp.id}
+                  className={`group bg-white/5 border border-white/10 rounded-[2rem] p-6 flex justify-between items-center transition-all ${isMe ? 'border-cyan-500/30 bg-cyan-900/10' : 'hover:bg-white/[0.08]'}`}
+                >
+                  <div className="flex items-center gap-6">
+                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center border-2 ${getRolStyles(emp.rol).border}`}>
+                      <UserCircle size={32} className={getRolStyles(emp.rol).text} />
+                    </div>
+                    
+                    <div>
+                      <h2 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+                        {emp.nombre}
+                        {isMe && <span className="text-[10px] bg-cyan-500 text-black px-2 py-0.5 rounded-full uppercase font-black">Tú</span>}
+                      </h2>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className={`text-xs font-black uppercase px-3 py-1 rounded-full ${getRolStyles(emp.rol).badge}`}>
+                          {emp.rol}
+                        </span>
+                        <span className="text-gray-600 font-mono text-xs">
+                          ID: {emp.id.substring(0, 8)}...
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <button
-                  onClick={() => eliminarEmpleado(emp.id)}
-                  className="bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white p-4 rounded-2xl transition-all"
-                  title="Eliminar acceso"
-                >
-                  <Trash2 size={20} />
-                </button>
-              </div>
-            ))}
+                  {/* ✅ CORRECCIÓN: Botón de eliminar bloqueado por rolActual y verificando que no sea el mismo usuario */}
+                  {["admin", "supervisor", "jefe"].includes(rolActual || "") && (
+                    <button
+                      onClick={() => eliminarEmpleado(emp.id)}
+                      disabled={isMe}
+                      className={`p-4 rounded-2xl transition-all ${isMe ? 'opacity-20 cursor-not-allowed text-gray-500' : 'bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white'}`}
+                      title={isMe ? "No puedes eliminarte a ti mismo" : "Eliminar acceso"}
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </main>
@@ -239,6 +287,7 @@ function getRolStyles(rol: string) {
         badge: 'bg-cyan-500/20 text-cyan-400' 
       };
     case 'supervisor':
+    case 'jefe':
       return { 
         text: 'text-purple-400', 
         border: 'border-purple-500/30', 
