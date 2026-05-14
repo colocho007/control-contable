@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import Sidebar from "../components/Sidebar";
+import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { Users, Plus, Trash2, ShieldAlert, Loader2 } from "lucide-react";
 

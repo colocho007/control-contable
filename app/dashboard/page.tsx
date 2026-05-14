@@ -3,10 +3,11 @@
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import Sidebar from "../components/Sidebar";
+import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import {
   Activity,
+  
   CheckCircle2,
   Clock3,
   LogOut,
