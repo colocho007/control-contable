@@ -1,12 +1,8 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { verificarRol } from "../lib/auth";
-
-
+import { verificarRol } from "../../lib/auth";
 import { useEffect, useState } from "react";
-
-import Sidebar from "../components/Sidebar";
-
+import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 
 import {
