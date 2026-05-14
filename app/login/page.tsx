@@ -1,14 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { Loader2, ShieldCheck } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 
 export default function LoginPage() {
-  const router = useRouter();
-
   const [correo, setCorreo] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -26,7 +23,7 @@ export default function LoginPage() {
 
     try {
       const { error } = await supabase.auth.signInWithPassword({
-        email: correo.trim().toLowerCase(), // 🚀 Sanitización estricta
+        email: correo.trim().toLowerCase(), 
         password,
       });
 
@@ -34,12 +31,13 @@ export default function LoginPage() {
 
       toast.success("Acceso autorizado", { id: toastId });
 
-setTimeout(() => {
-  window.location.href = "/dashboard";
-}, 500);
+      setTimeout(() => {
+        window.location.href = "/dashboard";
+      }, 500);
+
     } catch (error: any) {
-      // 🚀 Traducción de errores comunes de Supabase al español
       let mensajeError = "Ocurrió un error al iniciar sesión";
+      
       if (error.message.includes("Invalid login credentials")) {
         mensajeError = "Correo o contraseña incorrectos";
       } else if (error.message.includes("Email not confirmed")) {
@@ -47,14 +45,13 @@ setTimeout(() => {
       }
       
       toast.error(mensajeError, { id: toastId });
-    } finally {
+      
       setLoading(false);
     }
   }
 
   return (
     <div className="min-h-screen bg-[#020617] flex items-center justify-center text-white px-4">
-      {/* 🚀 Estilo oscuro sincronizado con el resto del ERP */}
       <Toaster 
         position="bottom-right" 
         toastOptions={{ 
@@ -83,8 +80,8 @@ setTimeout(() => {
             placeholder="Correo electrónico"
             value={correo}
             onChange={(e) => setCorreo(e.target.value)}
-            disabled={loading} // 🚀 Bloqueamos input durante la carga
-            autoFocus // Buen detalle UX: enfoca este campo al abrir la página
+            disabled={loading} 
+            autoFocus 
             className="w-full h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition disabled:opacity-50"
           />
 
@@ -93,7 +90,7 @@ setTimeout(() => {
             placeholder="Contraseña"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={loading} // 🚀 Bloqueamos input durante la carga
+            disabled={loading} 
             className="w-full h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition disabled:opacity-50"
           />
 
