@@ -80,7 +80,9 @@ export default function Sidebar() {
       <div className="mb-10 px-2">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center font-black text-black">C+</div>
-          <h1 className="text-2xl font-black text-white tracking-tighter">Control+</h1>
+          <h1 className="text-2xl font-black text-white tracking-tighter">Control+
+            
+          </h1>
         </div>
       </div>
 
