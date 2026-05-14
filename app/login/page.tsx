@@ -33,8 +33,10 @@ export default function LoginPage() {
       if (error) throw error;
 
       toast.success("Acceso autorizado", { id: toastId });
-      router.replace("/dashboard");
-      router.refresh();
+
+setTimeout(() => {
+  window.location.href = "/dashboard";
+}, 500);
     } catch (error: any) {
       // 🚀 Traducción de errores comunes de Supabase al español
       let mensajeError = "Ocurrió un error al iniciar sesión";
