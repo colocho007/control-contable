@@ -22,31 +22,34 @@ export default function UsuariosPage() {
 
   // 1. Verificación de Seguridad y Carga de Datos
   useEffect(() => {
-    const inicializar = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        // Obtener rol del usuario actual para seguridad en frontend
-        const { data: perfil } = await supabase
-          .from("perfiles")
-          .select("rol")
-          .eq("id", user.id)
-          .single();
-
-        setPerfilActual(perfil);
-        
-        if (perfil?.rol === "jefe" || perfil?.rol === "supervisor") {
-          await obtenerUsuarios();
-        }
-      } catch (error) {
-        console.error("Error de inicialización:", error);
-      } finally {
+  const inicializar = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
         setLoading(false);
+        return;
       }
-    };
-    inicializar();
-  }, []);
+
+      const { data: perfil } = await supabase
+        .from("perfiles")
+        .select("rol")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      setPerfilActual(perfil);
+
+      if (["admin", "jefe", "supervisor"].includes(perfil?.rol || "")) {
+        await obtenerUsuarios();
+      }
+    } catch (error) {
+      console.error("Error de inicialización:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  inicializar();
+}, []);
 
   const obtenerUsuarios = async () => {
     const { data, error } = await supabase
