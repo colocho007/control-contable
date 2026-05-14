@@ -5,6 +5,12 @@ import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { Users, Plus, Trash2, ShieldAlert, Loader2 } from "lucide-react";
 
+const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
+
+function normalizarRol(rol?: string | null) {
+  return (rol || "").trim().toLowerCase();
+}
+
 interface Usuario {
   id: string;
   nombre: string;
@@ -21,10 +27,11 @@ export default function UsuariosPage() {
   const [form, setForm] = useState({ nombre: "", correo: "", rol: "trabajador" });
 
   // 1. Verificación de Seguridad y Carga de Datos
-  useEffect(() => {
+ useEffect(() => {
   const inicializar = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
+
       if (!user) {
         setLoading(false);
         return;
@@ -38,7 +45,9 @@ export default function UsuariosPage() {
 
       setPerfilActual(perfil);
 
-      if (["admin", "jefe", "supervisor"].includes(perfil?.rol || "")) {
+      const rolNormalizado = normalizarRol(perfil?.rol);
+
+      if (ROLES_PERMITIDOS.includes(rolNormalizado)) {
         await obtenerUsuarios();
       }
     } catch (error) {
