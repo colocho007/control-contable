@@ -389,18 +389,27 @@ export default function TareasPage() {
       </main>
 
       <style jsx>{`
-        .input-custom {
-          height: 3.5rem;
-          padding: 0 1.25rem;
-          border-radius: 0.75rem;
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.1);
-          color: white;
-          outline: none;
-          font-size: 0.8rem;
-          transition: border 0.2s;
-        }
-        .input-custom:focus { border-color: #06b6d4; }
+
+       .input-custom {
+  height: 3.5rem;
+  padding: 0 1.25rem;
+  border-radius: 0.75rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: white;
+  outline: none;
+  font-size: 0.8rem;
+  transition: border 0.2s;
+}
+
+.input-custom option {
+  background: #0f172a;
+  color: white;
+}
+
+.input-custom:focus { 
+  border-color: #06b6d4; 
+}
       `}</style>
     </div>
   );

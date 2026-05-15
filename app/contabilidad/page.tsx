@@ -26,10 +26,12 @@ interface Movimiento {
 }
 
 export default function ContabilidadPage() {
-    const router = useRouter();
+  const router = useRouter();
+
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-  const [listaEmpresas, setListaEmpresas] = useState<{ nombre: string }[]>([]);
-  const [loading, setLoading] = useState(false);
+const [listaEmpresas, setListaEmpresas] = useState<{ nombre: string }[]>([]);
+const [loading, setLoading] = useState(false);
+const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
 
   // Estado unificado para el formulario
   const [form, setForm] = useState({
@@ -42,7 +44,11 @@ export default function ContabilidadPage() {
 
 useEffect(() => {
   async function iniciar() {
-    const acceso = await verificarRol(["admin"]);
+    const acceso = await verificarRol([
+      "admin",
+      "supervisor",
+      "jefe",
+    ]);
 
     if (!acceso.autorizado) {
       router.replace("/dashboard");
@@ -54,20 +60,8 @@ useEffect(() => {
   }
 
   iniciar();
-}, []);
+}, [router]);
 
-async function iniciarPagina() {
-  const auth = await verificarRol(["admin"]);
-
-  if (!auth.autorizado) {
-    alert(auth.error);
-    window.location.href = "/dashboard";
-    return;
-  }
-
-  obtenerMovimientos();
-  obtenerEmpresas();
-}
 
   async function obtenerEmpresas() {
     const { data } = await supabase.from("empresas").select("nombre");
@@ -115,9 +109,20 @@ async function iniciarPagina() {
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
 
   // Cálculos
-  const ingresos = movimientos.filter(m => m.tipo === "Ingreso").reduce((acc, m) => acc + Number(m.monto), 0);
-  const egresos = movimientos.filter(m => m.tipo === "Egreso").reduce((acc, m) => acc + Number(m.monto), 0);
-  const balance = ingresos - egresos;
+  const movimientosFiltrados =
+  empresaFiltro === "Todas"
+    ? movimientos
+    : movimientos.filter((m) => m.empresa === empresaFiltro);
+
+const ingresos = movimientosFiltrados
+  .filter((m) => m.tipo === "Ingreso")
+  .reduce((acc, m) => acc + Number(m.monto), 0);
+
+const egresos = movimientosFiltrados
+  .filter((m) => m.tipo === "Egreso")
+  .reduce((acc, m) => acc + Number(m.monto), 0);
+
+const balance = ingresos - egresos;
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
@@ -125,10 +130,45 @@ async function iniciarPagina() {
 
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">
-          <header className="mb-10">
-            <h1 className="text-5xl font-black tracking-tight">Contabilidad</h1>
-            <p className="text-gray-400 mt-2">Libro diario y control de flujos de caja</p>
-          </header>
+          <header className="mb-10 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+  <div>
+    <h1 className="text-5xl font-black tracking-tight">Contabilidad</h1>
+    <p className="text-gray-400 mt-2">
+      {empresaFiltro === "Todas"
+        ? "Libro diario general de todas las empresas"
+        : `Contabilidad específica de ${empresaFiltro}`}
+    </p>
+  </div>
+
+  <div className="flex flex-col gap-2">
+    <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+      Ver empresa
+    </label>
+
+    <select
+      value={empresaFiltro}
+      onChange={(e) => setEmpresaFiltro(e.target.value)}
+      className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white min-w-[260px]"
+    >
+      <option
+        value="Todas"
+        style={{ backgroundColor: "#0B1120", color: "white" }}
+      >
+        Todas las empresas
+      </option>
+
+      {listaEmpresas.map((emp, i) => (
+        <option
+          key={i}
+          value={emp.nombre}
+          style={{ backgroundColor: "#0B1120", color: "white" }}
+        >
+          {emp.nombre}
+        </option>
+      ))}
+    </select>
+  </div>
+</header>
 
           {/* INDICADORES FINANCIEROS */}
           <div className="grid md:grid-cols-3 gap-6 mb-10">
@@ -169,13 +209,24 @@ async function iniciarPagina() {
               <div className="flex flex-col gap-2">
                 <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Tipo</label>
                 <select
-                  value={form.tipo}
-                  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer"
-                >
-                  <option value="Ingreso">🟢 Ingreso</option>
-                  <option value="Egreso">🔴 Egreso</option>
-                </select>
+  value={form.tipo}
+  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
+>
+  <option
+    value="Ingreso"
+    style={{ backgroundColor: "#0B1120", color: "white" }}
+  >
+    🟢 Ingreso
+  </option>
+
+  <option
+    value="Egreso"
+    style={{ backgroundColor: "#0B1120", color: "white" }}
+  >
+    🔴 Egreso
+  </option>
+</select>
               </div>
 
               <div className="flex flex-col gap-2 md:col-span-2">
@@ -202,16 +253,28 @@ async function iniciarPagina() {
 
               <div className="flex flex-col gap-2">
                 <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Empresa Relacionada</label>
-                <select
-                  value={form.empresa}
-                  onChange={(e) => setForm({ ...form, empresa: e.target.value })}
-                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer"
-                >
-                  <option value="">Seleccionar empresa...</option>
-                  {listaEmpresas.map((emp, i) => (
-                    <option key={i} value={emp.nombre}>{emp.nombre}</option>
-                  ))}
-                </select>
+              <select
+  value={form.empresa}
+  onChange={(e) => setForm({ ...form, empresa: e.target.value })}
+  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
+>
+  <option
+    value=""
+    style={{ backgroundColor: "#0B1120", color: "white" }}
+  >
+    Seleccionar empresa...
+  </option>
+
+  {listaEmpresas.map((emp, i) => (
+    <option
+      key={i}
+      value={emp.nombre}
+      style={{ backgroundColor: "#0B1120", color: "white" }}
+    >
+      {emp.nombre}
+    </option>
+  ))}
+</select>
               </div>
 
               <div className="flex flex-col gap-2">
@@ -236,7 +299,16 @@ async function iniciarPagina() {
 
           {/* LISTADO DE MOVIMIENTOS */}
           <div className="grid gap-4">
-            {movimientos.map((mov) => (
+          {movimientosFiltrados.length === 0 && (
+  <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem]">
+    <p className="text-gray-500 font-medium">
+      {empresaFiltro === "Todas"
+        ? "No hay movimientos registrados todavía."
+        : `No hay movimientos registrados para ${empresaFiltro}.`}
+    </p>
+  </div>
+)}
+           {movimientosFiltrados.map((mov) => (
               <div
                 key={mov.id}
                 className="group bg-[#0B1120] border border-white/5 rounded-[2rem] p-6 flex flex-col md:flex-row justify-between items-start md:items-center hover:border-white/20 transition-all"
