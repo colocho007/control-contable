@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const protectedRoutes = [
   "/dashboard",
   "/tareas",
+  "/cheques",
   "/finanzas",
   "/empleados",
   "/contabilidad",
@@ -97,14 +98,15 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/", // <-- 🚀 Agregado para atrapar la raíz
-    "/dashboard/:path*",
-    "/tareas/:path*",
-    "/finanzas/:path*",
-    "/empleados/:path*",
-    "/contabilidad/:path*",
-    "/empresas/:path*",
-    "/login",
-  ],
+ matcher: [
+  "/",
+  "/dashboard/:path*",
+  "/tareas/:path*",
+  "/cheques/:path*",
+  "/finanzas/:path*",
+  "/empleados/:path*",
+  "/contabilidad/:path*",
+  "/empresas/:path*",
+  "/login",
+],
 };

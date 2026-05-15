@@ -11,7 +11,8 @@ import {
   Users,
   Receipt,
   LogOut,
-  Loader2 
+  Loader2,
+  FileText,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
@@ -57,9 +58,10 @@ export default function Sidebar() {
 
   // Rutas base que todos (incluyendo empleados) pueden ver
   const menusBase = [
-    { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
-    { name: "Tareas", path: "/tareas", icon: CheckSquare },
-  ];
+  { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
+  { name: "Tareas", path: "/tareas", icon: CheckSquare },
+  { name: "Cheques", path: "/cheques", icon: FileText },
+];
 
   // Rutas que solo ven los altos mandos
   const menusAdmin = [
@@ -80,9 +82,7 @@ export default function Sidebar() {
       <div className="mb-10 px-2">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center font-black text-black">C+</div>
-          <h1 className="text-2xl font-black text-white tracking-tighter">Control+
-            
-          </h1>
+          <h1 className="text-2xl font-black text-white tracking-tighter">Control+</h1>
         </div>
       </div>
 
