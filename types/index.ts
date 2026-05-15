@@ -8,9 +8,15 @@ export interface Tarea {
   empleado: string;
   usuario_id: string;
   empresa: string;
-  fecha_limite?: string;
+  fecha_limite?: string | null;
   prioridad: Prioridad;
-  archivo?: string;
+  archivo?: string | null;
+
+  // Nuevos campos para conectar tareas con contabilidad
+  monto?: number | null;
+  tipo_movimiento?: string | null;
+  categoria?: string | null;
+  movimiento_generado?: boolean | null;
 }
 
 export interface TareaRowProps {
@@ -22,5 +28,13 @@ export interface TareaRowProps {
   onFileChange: (id: number, file: File) => void;
 }
 
-export interface Perfil { id: string; nombre: string; rol: string; }
-export interface Empresa { id: number; nombre: string; }
+export interface Perfil {
+  id: string;
+  nombre: string;
+  rol: string;
+}
+
+export interface Empresa {
+  id: number;
+  nombre: string;
+}

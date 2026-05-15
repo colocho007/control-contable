@@ -39,12 +39,15 @@ export default function TareasPage() {
   const [archivos, setArchivos] = useState<{ [key: number]: File }>({});
 
   const [form, setForm] = useState({
-    titulo: "",
-    usuarioId: "",
-    empresa: "",
-    fechaLimite: "",
-    prioridad: "Media" as Prioridad,
-  });
+  titulo: "",
+  usuarioId: "",
+  empresa: "",
+  fechaLimite: "",
+  prioridad: "Media" as Prioridad,
+  monto: "",
+  tipoMovimiento: "Egreso",
+  categoria: "Tarea",
+});
 
   useEffect(() => {
     const initApp = async () => {
@@ -134,6 +137,7 @@ export default function TareasPage() {
   try {
     let archivoUrl: string | null = null;
     const archivo = archivos[id];
+    const tareaActual = tareas.find((t) => t.id === id);
 
     if (archivo) {
       const tiposPermitidos = [
@@ -179,15 +183,30 @@ export default function TareasPage() {
       .eq("id", id);
 
     if (updateError) throw updateError;
-    setTareas((prev) =>
-  prev.map((t) =>
-    t.id === id
-      ? { ...t, estado: "Completado", archivo: archivoUrl || t.archivo }
-      : t
-  )
-);
+    if (
+  tareaActual &&
+  Number(tareaActual.monto || 0) > 0 &&
+  !tareaActual.movimiento_generado
+) {
+  const { error: movError } = await supabase.from("movimientos").insert([
+    {
+      tipo: tareaActual.tipo_movimiento || "Egreso",
+      descripcion: tareaActual.nombre,
+      monto: Number(tareaActual.monto),
+      empresa: tareaActual.empresa,
+      fecha: new Date().toISOString().split("T")[0],
+    },
+  ]);
 
-    setTareas((prev) =>
+  if (movError) throw movError;
+
+  await supabase
+    .from("tareas")
+    .update({ movimiento_generado: true })
+    .eq("id", id);
+}
+ 
+  setTareas((prev) =>
       prev.map((t) =>
         t.id === id
           ? {
@@ -226,7 +245,16 @@ export default function TareasPage() {
   };
 
   const crearTarea = async () => {
-    const { titulo, usuarioId, empresa, fechaLimite, prioridad } = form;
+   const {
+  titulo,
+  usuarioId,
+  empresa,
+  fechaLimite,
+  prioridad,
+  monto,
+  tipoMovimiento,
+  categoria,
+} = form;
     if (!titulo || !usuarioId || !empresa) return toast.error("Completa los campos");
 
     const empleado = usuarios.find(u => u.id === usuarioId)?.nombre || "Empleado";
@@ -241,11 +269,25 @@ export default function TareasPage() {
         fecha_limite: fechaLimite,
         prioridad,
         creado_por: userProfile?.id,
+
+        monto: monto ? Number(monto) : 0,
+tipo_movimiento: tipoMovimiento,
+categoria,
+movimiento_generado: false,
       }]);
 
       if (error) throw error;
       
-      setForm({ titulo: "", usuarioId: "", empresa: "", fechaLimite: "", prioridad: "Media" });
+setForm({
+  titulo: "",
+  usuarioId: "",
+  empresa: "",
+  fechaLimite: "",
+  prioridad: "Media",
+  monto: "",
+  tipoMovimiento: "Egreso",
+  categoria: "Tarea",
+});
       toast.success("Tarea asignada");
     } catch (error) {
       toast.error("Error al crear la tarea");
@@ -357,6 +399,36 @@ export default function TareasPage() {
                   <option value="Media">Prioridad Media</option>
                   <option value="Baja">Prioridad Baja</option>
                 </select>
+                <input
+  type="number"
+  placeholder="Monto Q"
+  className="input-custom"
+  value={form.monto}
+  onChange={(e) => setForm({ ...form, monto: e.target.value })}
+/>
+
+<select
+  className="input-custom"
+  value={form.tipoMovimiento}
+  onChange={(e) => setForm({ ...form, tipoMovimiento: e.target.value })}
+>
+  <option value="Ingreso">Ingreso</option>
+  <option value="Egreso">Egreso</option>
+</select>
+
+<select
+  className="input-custom"
+  value={form.categoria}
+  onChange={(e) => setForm({ ...form, categoria: e.target.value })}
+>
+  <option value="Tarea">Tarea</option>
+  <option value="Cheque">Cheque</option>
+  <option value="Planilla">Planilla</option>
+  <option value="Proveedor">Proveedor</option>
+  <option value="Pago">Pago</option>
+  <option value="Otro">Otro</option>
+</select>
+
                 <button onClick={crearTarea} className="bg-cyan-500 hover:bg-cyan-400 text-black font-black rounded-xl transition-all h-[3.5rem] uppercase text-xs">Desplegar Tarea</button>
               </div>
             </section>
