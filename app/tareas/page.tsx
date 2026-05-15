@@ -207,16 +207,20 @@ export default function TareasPage() {
 }
  
   setTareas((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? {
-              ...t,
-              estado: "Completado",
-              archivo: archivoUrl || t.archivo,
-            }
-          : t
-      )
-    );
+  prev.map((t) =>
+    t.id === id
+      ? {
+          ...t,
+          estado: "Completado",
+          archivo: archivoUrl || t.archivo,
+          movimiento_generado:
+            Number(tareaActual?.monto || 0) > 0
+              ? true
+              : t.movimiento_generado,
+        }
+      : t
+  )
+);
 
     setArchivos((prev) => {
       const n = { ...prev };
