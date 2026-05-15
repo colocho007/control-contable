@@ -525,6 +525,17 @@ function TareaRow({ tarea, rol, isProcessing, onCompletar, onEliminar, onFileCha
             <span>Empleado: {tarea.empleado}</span>
             <span className="text-cyan-600">Client: {tarea.empresa}</span>
             <span>Deadline: {tarea.fecha_limite || "N/A"}</span>
+            {Number(tarea.monto || 0) > 0 && (
+  <span className="text-green-500">
+    Monto: Q{Number(tarea.monto).toFixed(2)}
+  </span>
+)}
+
+{tarea.categoria && (
+  <span className="text-purple-500">
+    Categoría: {tarea.categoria}
+  </span>
+)}
           </div>
         </div>
 
