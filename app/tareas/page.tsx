@@ -125,49 +125,94 @@ export default function TareasPage() {
     if (resE.data) setEmpresas(resE.data);
   };
 
-  const completarTarea = async (id: number) => {
-    if (processingId) return;
-    setProcessingId(id);
-    const toastId = toast.loading("Subiendo evidencia...");
-    
-    try {
-      let archivoUrl = null;
-      const archivo = archivos[id];
-      
-      if (archivo) {
-        const tiposPermitidos = ["application/pdf", "image/png", "image/jpeg"];
-        if (!tiposPermitidos.includes(archivo.type)) throw new Error("Archivo no permitido");
-        if (archivo.size > 5 * 1024 * 1024) throw new Error("Máximo 5MB");
+ const completarTarea = async (id: number) => {
+  if (processingId) return;
 
-        const extension = archivo.name.split(".").pop() || "file";
-        const nombreArchivo = `${crypto.randomUUID()}.${extension}`;
+  setProcessingId(id);
+  const toastId = toast.loading("Subiendo evidencia...");
 
-        const { error: uploadError } = await supabase.storage
-          .from("evidencias")
-          .upload(nombreArchivo, archivo);
+  try {
+    let archivoUrl: string | null = null;
+    const archivo = archivos[id];
 
-        if (uploadError) throw uploadError;
+    if (archivo) {
+      const tiposPermitidos = [
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+      ];
 
-        const { data } = supabase.storage.from("evidencias").getPublicUrl(nombreArchivo);
-        archivoUrl = data.publicUrl;
+      if (!tiposPermitidos.includes(archivo.type)) {
+        toast.error("Archivo no permitido", { id: toastId });
+        setProcessingId(null);
+        return;
       }
 
-      const { error: updateError } = await supabase.from("tareas").update({ 
-        estado: "Completado", 
-        archivo: archivoUrl 
-      }).eq("id", id);
+      if (archivo.size > 5 * 1024 * 1024) {
+        toast.error("Máximo 5MB", { id: toastId });
+        setProcessingId(null);
+        return;
+      }
 
-      if (updateError) throw updateError;
+      const extension = archivo.name.split(".").pop() || "file";
+      const nombreArchivo = `${crypto.randomUUID()}.${extension}`;
 
-      setArchivos(prev => { const n = { ...prev }; delete n[id]; return n; });
-      toast.success("¡Tarea finalizada!", { id: toastId });
-    } catch (error: any) {
-      console.error(error);
-      toast.error(error.message || "Error al actualizar tarea", { id: toastId });
-    } finally {
-      setProcessingId(null);
+      const { error: uploadError } = await supabase.storage
+        .from("evidencias")
+        .upload(nombreArchivo, archivo);
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage
+        .from("evidencias")
+        .getPublicUrl(nombreArchivo);
+
+      archivoUrl = data.publicUrl;
     }
-  };
+
+    const { error: updateError } = await supabase
+      .from("tareas")
+      .update({
+        estado: "Completado",
+        archivo: archivoUrl,
+      })
+      .eq("id", id);
+
+    if (updateError) throw updateError;
+    setTareas((prev) =>
+  prev.map((t) =>
+    t.id === id
+      ? { ...t, estado: "Completado", archivo: archivoUrl || t.archivo }
+      : t
+  )
+);
+
+    setTareas((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              estado: "Completado",
+              archivo: archivoUrl || t.archivo,
+            }
+          : t
+      )
+    );
+
+    setArchivos((prev) => {
+      const n = { ...prev };
+      delete n[id];
+      return n;
+    });
+
+    toast.success("¡Tarea finalizada!", { id: toastId });
+  } catch (error: any) {
+    console.error(error);
+    toast.error(error.message || "Error al actualizar tarea", { id: toastId });
+  } finally {
+    setProcessingId(null);
+  }
+};
 
   const eliminarTarea = async (id: number) => {
     if (!window.confirm("¿Eliminar permanentemente?")) return;
