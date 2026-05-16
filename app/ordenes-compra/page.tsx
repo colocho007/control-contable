@@ -447,8 +447,13 @@ export default function OrdenesCompraPage() {
     }
   }
 
-  const puedeCrear = ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol));
+  const rolActual = normalizarRol(perfilActual?.rol);
 
+const esAdminOrdenes = ROLES_ADMIN.includes(rolActual);
+const esIniciadorGestion = rolActual === "iniciador_gestion";
+const esFirmanteOC = rolActual === "firmante_oc";
+
+const puedeCrear = ROLES_CREADORES.includes(rolActual);
   const usuariosFirmantes = usuarios.filter((u) =>
     ROLES_FIRMANTES.includes(normalizarRol(u.rol))
   );
@@ -465,14 +470,54 @@ export default function OrdenesCompraPage() {
     });
   }, [ordenes, filtroEstado, filtroEmpresa]);
 
-  const stats = useMemo(() => {
+const ordenesDashboard = useMemo(() => {
+  if (esAdminOrdenes) return ordenes;
+
+  if (esIniciadorGestion) {
+    return ordenes.filter((o) => o.creado_por === userId);
+  }
+
+  if (esFirmanteOC) {
+    return ordenes.filter((o) =>
+      o.ordenes_compra_firmas?.some((f) => f.firmante_id === userId)
+    );
+  }
+
+  return ordenes;
+}, [ordenes, userId, esAdminOrdenes, esIniciadorGestion, esFirmanteOC]);
+
+const stats = useMemo(() => {
+  if (esFirmanteOC) {
     return {
-      pendientes: ordenes.filter((o) => o.estado === "Pendiente de firmas").length,
-      parciales: ordenes.filter((o) => o.estado === "Firmada parcialmente").length,
-      aprobadas: ordenes.filter((o) => o.estado === "Aprobada").length,
-      observadas: ordenes.filter((o) => o.estado === "Observada").length,
+      pendientes: ordenesDashboard.filter((o) =>
+        o.ordenes_compra_firmas?.some(
+          (f) => f.firmante_id === userId && f.estado === "Pendiente"
+        )
+      ).length,
+
+      parciales: ordenesDashboard.filter((o) =>
+        o.ordenes_compra_firmas?.some(
+          (f) => f.firmante_id === userId && f.estado === "Firmado"
+        )
+      ).length,
+
+      aprobadas: ordenesDashboard.filter((o) => o.estado === "Aprobada").length,
+
+      observadas: ordenesDashboard.filter((o) =>
+        o.ordenes_compra_firmas?.some(
+          (f) => f.firmante_id === userId && f.estado === "Observada"
+        )
+      ).length,
     };
-  }, [ordenes]);
+  }
+
+  return {
+    pendientes: ordenesDashboard.filter((o) => o.estado === "Pendiente de firmas").length,
+    parciales: ordenesDashboard.filter((o) => o.estado === "Firmada parcialmente").length,
+    aprobadas: ordenesDashboard.filter((o) => o.estado === "Aprobada").length,
+    observadas: ordenesDashboard.filter((o) => o.estado === "Observada").length,
+  };
+}, [ordenesDashboard, esFirmanteOC, userId]);
 
   if (loading) {
     return (
@@ -492,21 +537,71 @@ export default function OrdenesCompraPage() {
         <div className="max-w-7xl mx-auto">
           <header className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
             <div>
-              <h1 className="text-5xl font-black tracking-tight">
-                Órdenes de compra
-              </h1>
-              <p className="text-gray-400 mt-2">
-                Creación, revisión y confirmación de firmas
-              </p>
+             <h1 className="text-5xl font-black tracking-tight">
+  {esFirmanteOC
+    ? "Dashboard de firmante"
+    : esIniciadorGestion
+    ? "Dashboard de iniciador"
+    : "Órdenes de compra"}
+</h1>
+
+<p className="text-gray-400 mt-2">
+  {esFirmanteOC
+    ? "Órdenes pendientes de firma y confirmaciones realizadas"
+    : esIniciadorGestion
+    ? "Control de órdenes creadas y estado de firmas"
+    : "Creación, revisión y confirmación de firmas"}
+</p>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Stat label="Pendientes" value={stats.pendientes} color="text-yellow-400" />
-              <Stat label="Parciales" value={stats.parciales} color="text-cyan-400" />
-              <Stat label="Aprobadas" value={stats.aprobadas} color="text-green-400" />
-              <Stat label="Observadas" value={stats.observadas} color="text-red-400" />
+             <Stat
+  label={esFirmanteOC ? "Por firmar" : "Pendientes"}
+  value={stats.pendientes}
+  color="text-yellow-400"
+/>
+
+<Stat
+  label={esFirmanteOC ? "Firmadas por mí" : "Parciales"}
+  value={stats.parciales}
+  color="text-cyan-400"
+/>
+
+<Stat
+  label="Aprobadas"
+  value={stats.aprobadas}
+  color="text-green-400"
+/>
+
+<Stat
+  label={esFirmanteOC ? "Observadas por mí" : "Observadas"}
+  value={stats.observadas}
+  color="text-red-400"
+/>
             </div>
           </header>
+          {esFirmanteOC && (
+  <div className="mb-8 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl p-5">
+    <h2 className="text-cyan-400 font-black text-sm uppercase">
+      Panel de firmante
+    </h2>
+    <p className="text-gray-400 text-sm mt-1">
+      Aquí solo verás las órdenes de compra asignadas a tu firma. 
+      Puedes confirmar cuando ya firmaste físicamente el documento o marcarla como observada.
+    </p>
+  </div>
+)}
+
+{esIniciadorGestion && (
+  <div className="mb-8 bg-purple-500/10 border border-purple-500/20 rounded-2xl p-5">
+    <h2 className="text-purple-400 font-black text-sm uppercase">
+      Panel de iniciador de gestión
+    </h2>
+    <p className="text-gray-400 text-sm mt-1">
+      Aquí puedes crear órdenes de compra, seleccionar firmantes y dar seguimiento al avance de firmas.
+    </p>
+  </div>
+)}
 
           {puedeCrear && (
             <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
