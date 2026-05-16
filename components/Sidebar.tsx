@@ -13,10 +13,12 @@ import {
   LogOut,
   Loader2,
   FileText,
+  ClipboardList,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
+const ROLES_SOLO_ORDENES = ["iniciador_gestion", "firmante_oc"];
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -61,6 +63,7 @@ export default function Sidebar() {
   { name: "Dashboard", path: "/dashboard", icon: LayoutDashboard },
   { name: "Tareas", path: "/tareas", icon: CheckSquare },
   { name: "Cheques", path: "/cheques", icon: FileText },
+  { name: "Órdenes", path: "/ordenes-compra", icon: ClipboardList },
 ];
 
   // Rutas que solo ven los altos mandos
@@ -72,8 +75,16 @@ export default function Sidebar() {
   ];
 
   // Unimos los menús basándonos en la validación segura del rol
-  const menus = ROLES_ADMIN.includes(rol || "") 
-    ? [...menusBase, ...menusAdmin] 
+  const rolNormalizado = (rol || "").trim().toLowerCase();
+
+const menusOrdenes = [
+  { name: "Órdenes", path: "/ordenes-compra", icon: ClipboardList },
+];
+
+const menus = ROLES_SOLO_ORDENES.includes(rolNormalizado)
+  ? menusOrdenes
+  : ROLES_ADMIN.includes(rolNormalizado)
+    ? [...menusBase, ...menusAdmin]
     : menusBase;
 
   return (
