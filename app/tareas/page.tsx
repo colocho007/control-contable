@@ -4,6 +4,9 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation"; 
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 import { Trash2, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 import {
@@ -13,7 +16,6 @@ import {
 
 // 🚀 1. y 2. Tipos importados globalmente (ya incluyen string | null para fecha y archivo)
 import type {
-  Estado,
   Prioridad,
   Tarea,
   TareaRowProps,
@@ -30,6 +32,7 @@ export default function TareasPage() {
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [usuarios, setUsuarios] = useState<Perfil[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [userProfile, setUserProfile] = useState<Perfil | null>(null);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<number | null>(null);
@@ -38,58 +41,73 @@ export default function TareasPage() {
   const [filtroEstado, setFiltroEstado] = useState("Todas");
   const [archivos, setArchivos] = useState<{ [key: number]: File }>({});
 
-  const [form, setForm] = useState({
+const [form, setForm] = useState({
   titulo: "",
   usuarioId: "",
+  empresaId: "",
   empresa: "",
   fechaLimite: "",
   prioridad: "Media" as Prioridad,
   monto: "",
+  moneda: "GTQ",
   tipoMovimiento: "Egreso",
   categoria: "Tarea",
 });
 
-  useEffect(() => {
-    const initApp = async () => {
-      try {
-        setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (!user) {
-          router.push("/login");
-          return;
-        }
+useEffect(() => {
+const initApp = async () => {
+  try {
+    setLoading(true);
 
-        const { data: profile, error: pError } = await supabase
-          .from("perfiles")
-          .select("*")
-          .eq("id", user.id)
-          .single();
-        
-        if (pError) throw pError;
-        setUserProfile(profile);
+    const modulo = await validarModuloActivo("tareas");
 
-        let query = supabase.from("tareas").select("*").order("id", { ascending: false });
-        
-        // 🚀 3. OPTIONAL CHAINING APLICADO
-        if (!ROLES_ADMIN.includes(profile?.rol || "")) {
-          query = query.eq("usuario_id", profile.id);
-        }
+    if (!modulo.ok) {
+      toast.error("El módulo de Tareas está desactivado.");
+      router.push("/dashboard");
+      return;
+    }
 
-        const { data: tData, error: tError } = await query;
-        if (tError) throw tError;
-        setTareas(tData || []);
+    const validacion = await validarUsuarioActivo();
 
-        await fetchCatalogos();
-      } catch (error) {
-        toast.error("Error al sincronizar datos iniciales");
-        console.error(error);
-      } finally {
-        setLoading(false);
+    if (!validacion.ok) {
+      if (validacion.motivo === "usuario_inactivo") {
+        toast.error("Tu usuario está inactivo. Contacta al administrador.");
       }
-    };
-    initApp();
-  }, [router]);
+
+      router.push("/login");
+      return;
+    }
+
+    const user = validacion.user!;
+    const profile = validacion.perfil!;
+
+    setUserProfile(profile);
+
+    let query = supabase
+      .from("tareas")
+      .select("*")
+      .order("id", { ascending: false });
+
+    if (!ROLES_ADMIN.includes(profile?.rol || "")) {
+      query = query.eq("usuario_id", profile.id);
+    }
+
+    const { data: tData, error: tError } = await query;
+    if (tError) throw tError;
+
+    setTareas(tData || []);
+
+    await fetchCatalogos(user.id, profile?.rol || "");
+  } catch (error) {
+    toast.error("Error al sincronizar datos iniciales");
+    console.error(error);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  initApp();
+}, [router]);
 
   useEffect(() => {
     if (!userProfile) return;
@@ -119,14 +137,27 @@ export default function TareasPage() {
     return () => { supabase.removeChannel(channel); };
   }, [userProfile]);
 
-  const fetchCatalogos = async () => {
-    const [resU, resE] = await Promise.all([
-      supabase.from("perfiles").select("*"),
-      supabase.from("empresas").select("*")
-    ]);
-    if (resU.data) setUsuarios(resU.data);
-    if (resE.data) setEmpresas(resE.data);
-  };
+const fetchCatalogos = async (usuarioId: string, rol: string) => {
+  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
+  setEmpresasPermitidasIds(idsPermitidos);
+
+  const [resU, resEmpresas] = await Promise.all([
+    supabase.from("perfiles").select("*"),
+    idsPermitidos.length
+      ? supabase
+          .from("empresas")
+          .select("id,nombre")
+          .in("id", idsPermitidos)
+          .order("nombre", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (resU.error) throw resU.error;
+  if (resEmpresas.error) throw resEmpresas.error;
+
+  setUsuarios(resU.data || []);
+  setEmpresas(resEmpresas.data || []);
+};
 
  const completarTarea = async (id: number) => {
   if (processingId) return;
@@ -188,15 +219,17 @@ export default function TareasPage() {
   Number(tareaActual.monto || 0) > 0 &&
   !tareaActual.movimiento_generado
 ) {
-  const { error: movError } = await supabase.from("movimientos").insert([
-    {
-      tipo: tareaActual.tipo_movimiento || "Egreso",
-      descripcion: tareaActual.nombre,
-      monto: Number(tareaActual.monto),
-      empresa: tareaActual.empresa,
-      fecha: new Date().toISOString().split("T")[0],
-    },
-  ]);
+ const { error: movError } = await supabase.from("movimientos").insert([
+  {
+    tipo: tareaActual.tipo_movimiento || "Egreso",
+    descripcion: tareaActual.nombre,
+    monto: Number(tareaActual.monto),
+    empresa: tareaActual.empresa,
+    empresa_id: tareaActual.empresa_id,
+    moneda: tareaActual.moneda || "GTQ",
+    fecha: new Date().toISOString().split("T")[0],
+  },
+]);
 
   if (movError) throw movError;
 
@@ -249,18 +282,21 @@ export default function TareasPage() {
   };
 
   const crearTarea = async () => {
-   const {
+ const {
   titulo,
   usuarioId,
   empresa,
   fechaLimite,
   prioridad,
   monto,
+  moneda,
   tipoMovimiento,
   categoria,
 } = form;
-    if (!titulo || !usuarioId || !empresa) return toast.error("Completa los campos");
 
+   if (!titulo || !usuarioId || !empresa || !form.empresaId) {
+  return toast.error("Completa los campos");
+}
     const empleado = usuarios.find(u => u.id === usuarioId)?.nombre || "Empleado";
 
     try {
@@ -269,12 +305,14 @@ export default function TareasPage() {
         estado: "Pendiente",
         usuario_id: usuarioId,
         empleado,
-        empresa,
-        fecha_limite: fechaLimite,
-        prioridad,
-        creado_por: userProfile?.id,
+      empresa,
+empresa_id: Number(form.empresaId),
+fecha_limite: fechaLimite,
+prioridad,
+creado_por: userProfile?.id,
 
-        monto: monto ? Number(monto) : 0,
+monto: monto ? Number(monto) : 0,
+moneda,
 tipo_movimiento: tipoMovimiento,
 categoria,
 movimiento_generado: false,
@@ -285,13 +323,16 @@ movimiento_generado: false,
 setForm({
   titulo: "",
   usuarioId: "",
+  empresaId: "",
   empresa: "",
   fechaLimite: "",
   prioridad: "Media",
   monto: "",
+  moneda: "GTQ",
   tipoMovimiento: "Egreso",
   categoria: "Tarea",
 });
+
       toast.success("Tarea asignada");
     } catch (error) {
       toast.error("Error al crear la tarea");
@@ -299,44 +340,90 @@ setForm({
   };
 
   const stats = useMemo(() => {
-    const completadas = tareas.filter(t => t.estado === "Completado").length;
-    const pendientes = tareas.filter(t => t.estado === "Pendiente").length;
-    const vencidas = tareas.filter(t => {
-      if (!t.fecha_limite || t.estado === "Completado") return false;
-      const hoy = new Date(); hoy.setHours(0,0,0,0);
-      return new Date(t.fecha_limite) < hoy;
-    }).length;
+  const tareasPermitidas = tareas.filter(
+    (t) =>
+      t.empresa_id !== null &&
+      empresasPermitidasIds.includes(Number(t.empresa_id))
+  );
 
-    return {
-      pendientes, completadas, vencidas,
-      progreso: tareas.length ? Math.round((completadas / tareas.length) * 100) : 0,
-      dataEstados: [
-        { nombre: "Pendientes", cantidad: pendientes },
-        { nombre: "Completadas", cantidad: completadas },
-        { nombre: "Vencidas", cantidad: vencidas }
-      ],
-      dataPrioridad: [
-        { nombre: "Alta", valor: tareas.filter(t => t.prioridad === "Alta").length },
-        { nombre: "Media", valor: tareas.filter(t => t.prioridad === "Media").length },
-        { nombre: "Baja", valor: tareas.filter(t => t.prioridad === "Baja").length }
-      ]
-    };
-  }, [tareas]);
+  const completadas = tareasPermitidas.filter(
+    (t) => t.estado === "Completado"
+  ).length;
 
-  const tareasFiltradas = useMemo(() => {
-    return tareas.filter(t => {
-      const matchBusqueda = t.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
-                            t.empleado.toLowerCase().includes(busqueda.toLowerCase());
-      const matchEstado = filtroEstado === "Todas" ? true :
-                         filtroEstado === "Vencidas" ? (t.fecha_limite && new Date(t.fecha_limite) < new Date() && t.estado !== "Completado") :
-                         t.estado === filtroEstado;
-      return matchBusqueda && matchEstado;
-    });
-  }, [tareas, busqueda, filtroEstado]);
+  const pendientes = tareasPermitidas.filter(
+    (t) => t.estado === "Pendiente"
+  ).length;
 
-  if (loading) return <div className="flex h-screen bg-[#020617] items-center justify-center text-cyan-400 font-mono italic">BOOTING_SYSTEM...</div>;
+  const vencidas = tareasPermitidas.filter((t) => {
+    if (!t.fecha_limite || t.estado === "Completado") return false;
 
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+
+    return new Date(t.fecha_limite) < hoy;
+  }).length;
+
+  return {
+    pendientes,
+    completadas,
+    vencidas,
+    progreso: tareasPermitidas.length
+      ? Math.round((completadas / tareasPermitidas.length) * 100)
+      : 0,
+    dataEstados: [
+      { nombre: "Pendientes", cantidad: pendientes },
+      { nombre: "Completadas", cantidad: completadas },
+      { nombre: "Vencidas", cantidad: vencidas },
+    ],
+    dataPrioridad: [
+      {
+        nombre: "Alta",
+        valor: tareasPermitidas.filter((t) => t.prioridad === "Alta").length,
+      },
+      {
+        nombre: "Media",
+        valor: tareasPermitidas.filter((t) => t.prioridad === "Media").length,
+      },
+      {
+        nombre: "Baja",
+        valor: tareasPermitidas.filter((t) => t.prioridad === "Baja").length,
+      },
+    ],
+  };
+}, [tareas, empresasPermitidasIds]);
+
+const tareasFiltradas = useMemo(() => {
+  return tareas.filter((t) => {
+    const perteneceAEmpresaPermitida =
+      t.empresa_id !== null &&
+      empresasPermitidasIds.includes(Number(t.empresa_id));
+
+    const matchBusqueda =
+      t.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
+      t.empleado.toLowerCase().includes(busqueda.toLowerCase());
+
+    const matchEstado =
+      filtroEstado === "Todas"
+        ? true
+        : filtroEstado === "Vencidas"
+        ? t.fecha_limite &&
+          new Date(t.fecha_limite) < new Date() &&
+          t.estado !== "Completado"
+        : t.estado === filtroEstado;
+
+    return perteneceAEmpresaPermitida && matchBusqueda && matchEstado;
+  });
+}, [tareas, busqueda, filtroEstado, empresasPermitidasIds]);
+
+if (loading) {
   return (
+    <div className="flex h-screen bg-[#020617] items-center justify-center text-cyan-400 font-mono italic">
+      BOOTING_SYSTEM...
+    </div>
+  );
+}
+
+return (
     <div className="flex bg-[#020617] min-h-screen text-white font-sans">
       <Toaster position="bottom-right" toastOptions={{ style: { background: '#0f172a', color: '#fff', border: '1px solid #1e293b'} }} />
       <Sidebar />
@@ -393,23 +480,50 @@ setForm({
                   ))}
                 </select>
 
-                <select className="input-custom" value={form.empresa} onChange={(e) => setForm({ ...form, empresa: e.target.value })}>
-                  <option value="">Empresa...</option>
-                  {empresas.map((emp) => <option key={emp.id} value={emp.nombre}>{emp.nombre}</option>)}
-                </select>
+               <select
+  className="input-custom"
+  value={form.empresaId}
+  onChange={(e) => {
+    const empresaSeleccionada = empresas.find(
+      (emp) => String(emp.id) === e.target.value
+    );
+
+    setForm({
+      ...form,
+      empresaId: e.target.value,
+      empresa: empresaSeleccionada?.nombre || "",
+    });
+  }}
+>
+  <option value="">Empresa...</option>
+  {empresas.map((emp) => (
+    <option key={emp.id} value={String(emp.id)}>
+      {emp.nombre}
+    </option>
+  ))}
+</select>
                 <input type="date" className="input-custom" value={form.fechaLimite} onChange={(e) => setForm({ ...form, fechaLimite: e.target.value })} />
                 <select className="input-custom" value={form.prioridad} onChange={(e) => setForm({ ...form, prioridad: e.target.value as Prioridad })}>
                   <option value="Alta">Prioridad Alta</option>
                   <option value="Media">Prioridad Media</option>
                   <option value="Baja">Prioridad Baja</option>
                 </select>
-                <input
+<input
   type="number"
-  placeholder="Monto Q"
+  placeholder={`Monto en ${form.moneda}`}
   className="input-custom"
   value={form.monto}
   onChange={(e) => setForm({ ...form, monto: e.target.value })}
 />
+
+<select
+  className="input-custom border-cyan-500"
+  value={form.moneda}
+  onChange={(e) => setForm({ ...form, moneda: e.target.value })}
+>
+  <option value="GTQ">Moneda: Quetzales (GTQ)</option>
+  <option value="USD">Moneda: Dólares (USD)</option>
+</select>
 
 <select
   className="input-custom"
@@ -525,9 +639,10 @@ function TareaRow({ tarea, rol, isProcessing, onCompletar, onEliminar, onFileCha
             <span>Empleado: {tarea.empleado}</span>
             <span className="text-cyan-600">Client: {tarea.empresa}</span>
             <span>Deadline: {tarea.fecha_limite || "N/A"}</span>
-            {Number(tarea.monto || 0) > 0 && (
+{Number(tarea.monto || 0) > 0 && (
   <span className="text-green-500">
-    Monto: Q{Number(tarea.monto).toFixed(2)}
+    Monto: {(tarea.moneda || "GTQ") === "USD" ? "$" : "Q"}
+    {Number(tarea.monto).toFixed(2)}
   </span>
 )}
 

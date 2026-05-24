@@ -8,12 +8,14 @@ export interface Tarea {
   empleado: string;
   usuario_id: string;
   empresa: string;
+  empresa_id: number | null;
   fecha_limite?: string | null;
   prioridad: Prioridad;
   archivo?: string | null;
 
   // Nuevos campos para conectar tareas con contabilidad
   monto?: number | null;
+  moneda?: string | null;
   tipo_movimiento?: string | null;
   categoria?: string | null;
   movimiento_generado?: boolean | null;

@@ -1,13 +1,12 @@
 "use client";
+
 import { useRouter } from "next/navigation";
-import { verificarRol } from "../../lib/auth";
-
-
-
 import { useEffect, useState } from "react";
 
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 
 import {
   Plus,
@@ -47,16 +46,35 @@ export default function FinanzasPage() {
   const [fecha, setFecha] =
     useState("");
 
- useEffect(() => {
+useEffect(() => {
   iniciarPagina();
-}, []);
+}, [router]);
 
 async function iniciarPagina() {
-  const auth = await verificarRol(["admin"]);
+  const modulo = await validarModuloActivo("finanzas");
 
-  if (!auth.autorizado) {
-    alert(auth.error);
-   router.replace("/dashboard");
+  if (!modulo.ok) {
+    alert("El módulo de Finanzas está desactivado.");
+    router.replace("/dashboard");
+    return;
+  }
+
+  const validacion = await validarUsuarioActivo();
+
+  if (!validacion.ok) {
+    if (validacion.motivo === "usuario_inactivo") {
+      alert("Tu usuario está inactivo. Contacta al administrador.");
+    }
+
+    router.replace("/login");
+    return;
+  }
+
+  const perfil = validacion.perfil!;
+  const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
+
+  if (rolNormalizado !== "admin") {
+    router.replace("/dashboard");
     return;
   }
 

@@ -1,9 +1,11 @@
 "use client";
+
 import { useRouter } from "next/navigation";
-import { verificarRol } from "../../lib/auth";
 import { useEffect, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 
 import {
   Building2,
@@ -55,14 +57,31 @@ const [isr, setIsr] =
   const [estado, setEstado] =
   useState("Activa");
 
-  useEffect(() => {
+useEffect(() => {
   async function iniciar() {
-    const acceso = await verificarRol([
-      "admin",
-      "supervisor"
-    ]);
+    const modulo = await validarModuloActivo("empresas");
 
-    if (!acceso.autorizado) {
+    if (!modulo.ok) {
+      alert("El módulo de Empresas está desactivado.");
+      router.replace("/dashboard");
+      return;
+    }
+
+    const validacion = await validarUsuarioActivo();
+
+    if (!validacion.ok) {
+      if (validacion.motivo === "usuario_inactivo") {
+        alert("Tu usuario está inactivo. Contacta al administrador.");
+      }
+
+      router.replace("/login");
+      return;
+    }
+
+    const perfil = validacion.perfil!;
+    const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
+
+    if (!["admin", "supervisor"].includes(rolNormalizado)) {
       router.replace("/dashboard");
       return;
     }
@@ -71,7 +90,7 @@ const [isr, setIsr] =
   }
 
   iniciar();
-}, []);
+}, [router]);
 
 
 

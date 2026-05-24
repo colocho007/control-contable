@@ -1,11 +1,12 @@
 "use client";
-import { useRouter } from "next/navigation";
-import { verificarRol } from "../../lib/auth";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-// ✅ CORRECCIÓN: Import limpio y correcto
+
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 import {
   Trash2,
   UserPlus,
@@ -39,35 +40,45 @@ export default function EmpleadosPage() {
     rol: "empleado"
   });
 
-  useEffect(() => {
-    async function iniciar() {
-      // ✅ CORRECCIÓN: Ahora supervisor y jefe también pueden entrar
-      const acceso = await verificarRol(["admin", "supervisor", "jefe"]);
+ useEffect(() => {
+  async function iniciar() {
+    const modulo = await validarModuloActivo("empleados");
 
-      if (!acceso.autorizado) {
-        router.replace("/dashboard");
-        return;
-      }
-
-      const { data: { user } } = await supabase.auth.getUser();
-      
-      // ✅ NUEVO: Obtenemos el rol exacto del usuario que está navegando
-      if (user) {
-        setCurrentUserId(user.id);
-        const { data: perfil } = await supabase
-          .from("perfiles")
-          .select("rol")
-          .eq("id", user.id)
-          .single();
-
-        setRolActual(perfil?.rol || null);
-      }
-
-      obtenerEmpleados();
+    if (!modulo.ok) {
+      alert("El módulo de Empleados está desactivado.");
+      router.replace("/dashboard");
+      return;
     }
 
-    iniciar();
-  }, [router]);
+    const validacion = await validarUsuarioActivo();
+
+    if (!validacion.ok) {
+      if (validacion.motivo === "usuario_inactivo") {
+        alert("Tu usuario está inactivo. Contacta al administrador.");
+      }
+
+      router.replace("/login");
+      return;
+    }
+
+    const user = validacion.user!;
+    const perfil = validacion.perfil!;
+
+    const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
+
+    if (!["admin", "supervisor", "jefe"].includes(rolNormalizado)) {
+      router.replace("/dashboard");
+      return;
+    }
+
+    setCurrentUserId(user.id);
+    setRolActual(rolNormalizado);
+
+    obtenerEmpleados();
+  }
+
+  iniciar();
+}, [router]);
 
   async function obtenerEmpleados() {
     const { data } = await supabase

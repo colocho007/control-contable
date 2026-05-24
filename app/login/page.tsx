@@ -10,45 +10,55 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function iniciarSesion(e: React.FormEvent) {
-    e.preventDefault();
+ async function iniciarSesion(e: React.FormEvent) {
+  e.preventDefault();
 
-    if (!correo || !password) {
-      toast.error("Ingresa correo y contraseña");
-      return;
-    }
+  const emailLimpio = correo.trim().toLowerCase();
+  const passwordLimpio = password.trim();
 
-    setLoading(true);
-    const toastId = toast.loading("Autenticando...");
-
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: correo.trim().toLowerCase(), 
-        password,
-      });
-
-      if (error) throw error;
-
-      toast.success("Acceso autorizado", { id: toastId });
-
-      setTimeout(() => {
-        window.location.href = "/dashboard";
-      }, 500);
-
-    } catch (error: any) {
-      let mensajeError = "Ocurrió un error al iniciar sesión";
-      
-      if (error.message.includes("Invalid login credentials")) {
-        mensajeError = "Correo o contraseña incorrectos";
-      } else if (error.message.includes("Email not confirmed")) {
-        mensajeError = "Debes confirmar tu correo electrónico primero";
-      }
-      
-      toast.error(mensajeError, { id: toastId });
-      
-      setLoading(false);
-    }
+  if (!emailLimpio || !passwordLimpio) {
+    toast.error("Ingresa correo y contraseña");
+    return;
   }
+
+  setLoading(true);
+  const toastId = toast.loading("Autenticando...");
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: emailLimpio,
+      password: passwordLimpio,
+    });
+
+    if (error) {
+      console.error("Error real de Supabase:", error);
+      throw error;
+    }
+
+    console.log("Login correcto:", data);
+
+    toast.success("Acceso autorizado", { id: toastId });
+
+    setTimeout(() => {
+      window.location.href = "/dashboard";
+    }, 500);
+  } catch (error: any) {
+    console.error("Error al iniciar sesión:", error);
+
+    let mensajeError = "Ocurrió un error al iniciar sesión";
+
+    if (error?.message?.includes("Invalid login credentials")) {
+      mensajeError = "Correo o contraseña incorrectos";
+    } else if (error?.message?.includes("Email not confirmed")) {
+      mensajeError = "Debes confirmar tu correo electrónico primero";
+    } else if (error?.status === 401) {
+      mensajeError = "Correo o contraseña incorrectos";
+    }
+
+    toast.error(mensajeError, { id: toastId });
+    setLoading(false);
+  }
+}
 
   return (
     <div className="min-h-screen bg-[#020617] flex items-center justify-center text-white px-4">

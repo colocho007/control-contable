@@ -1,11 +1,12 @@
 "use client";
+
 import { useRouter } from "next/navigation";
-import { verificarRol } from "../../lib/auth";
-
-
 import { useEffect, useState } from "react";
 import Sidebar from "../../components/Sidebar";
+import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 import {
   Plus,
   Trash2,
@@ -13,7 +14,7 @@ import {
   TrendingDown,
   Wallet,
   Building2,
-  Calendar
+  Calendar,
 } from "lucide-react";
 
 interface Movimiento {
@@ -22,107 +23,269 @@ interface Movimiento {
   descripcion: string;
   monto: number;
   empresa: string;
+  empresa_id: number | null;
+  moneda: string | null;
   fecha: string;
+  estado?: string | null;
+  creado_por?: string | null;
+  anulado_por?: string | null;
+  anulado_at?: string | null;
+  motivo_anulacion?: string | null;
+}
+
+interface Empresa {
+  id: number;
+  nombre: string;
 }
 
 export default function ContabilidadPage() {
   const router = useRouter();
 
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
-const [listaEmpresas, setListaEmpresas] = useState<{ nombre: string }[]>([]);
-const [loading, setLoading] = useState(false);
-const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
+  const [listaEmpresas, setListaEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
+  const [rolActual, setRolActual] = useState("");
+const [userId, setUserId] = useState<string | null>(null);
 
-  // Estado unificado para el formulario
   const [form, setForm] = useState({
     tipo: "Ingreso",
     descripcion: "",
     monto: "",
     empresa: "",
-    fecha: new Date().toISOString().split('T')[0] // Fecha de hoy por defecto
+    empresaId: "",
+    moneda: "GTQ",
+    fecha: new Date().toISOString().split("T")[0],
   });
 
 useEffect(() => {
   async function iniciar() {
-    const acceso = await verificarRol([
-      "admin",
-      "supervisor",
-      "jefe",
-    ]);
+    const modulo = await validarModuloActivo("contabilidad");
 
-    if (!acceso.autorizado) {
+    if (!modulo.ok) {
+      alert("El módulo de Contabilidad está desactivado.");
       router.replace("/dashboard");
       return;
     }
 
-    obtenerMovimientos();
-    obtenerEmpresas();
+ const validacion = await validarUsuarioActivo();
+
+if (!validacion.ok) {
+  if (validacion.motivo === "usuario_inactivo") {
+    alert("Tu usuario está inactivo. Contacta al administrador.");
+  }
+
+  router.replace("/login");
+  return;
+}
+
+const user = validacion.user!;
+const perfil = validacion.perfil!;
+
+const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
+
+setRolActual(rolNormalizado);
+setUserId(user.id);
+
+if (!["admin", "supervisor", "jefe", "empleado"].includes(rolNormalizado)) {
+  router.replace("/dashboard");
+  return;
+}
+
+    const idsPermitidos = await obtenerEmpresas(user.id, perfil.rol || "");
+    await obtenerMovimientos(idsPermitidos);
   }
 
   iniciar();
 }, [router]);
 
+  async function obtenerEmpresas(usuarioId: string, rol: string) {
+    const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
 
-  async function obtenerEmpresas() {
-    const { data } = await supabase.from("empresas").select("nombre");
-    if (data) setListaEmpresas(data);
+    setEmpresasPermitidasIds(idsPermitidos);
+
+    if (!idsPermitidos.length) {
+      setListaEmpresas([]);
+      return idsPermitidos;
+    }
+
+    const { data, error } = await supabase
+      .from("empresas")
+      .select("id,nombre")
+      .in("id", idsPermitidos)
+      .order("nombre", { ascending: true });
+
+    if (error) throw error;
+
+    setListaEmpresas(data || []);
+
+    return idsPermitidos;
   }
 
-  async function obtenerMovimientos() {
-    const { data } = await supabase
-      .from("movimientos")
-      .select("*")
-      .order("fecha", { ascending: false });
+  async function obtenerMovimientos(idsPermitidos?: number[]) {
+    const ids = idsPermitidos || empresasPermitidasIds;
 
-    if (data) setMovimientos(data);
-  }
-
-  async function crearMovimiento() {
-    if (!form.descripcion || !form.monto || !form.empresa) {
-      alert("Por favor completa todos los campos obligatorios.");
+    if (!ids.length) {
+      setMovimientos([]);
       return;
     }
 
+    const { data, error } = await supabase
+      .from("movimientos")
+      .select("*")
+      .in("empresa_id", ids)
+      .order("fecha", { ascending: false });
+
+    if (error) throw error;
+
+    setMovimientos(data || []);
+  }
+
+  async function crearMovimiento() {
+  if (!userId) {
+    alert("Sesión no válida.");
+    return;
+  }
+
+  if (!form.descripcion || !form.monto || !form.empresa || !form.empresaId) {
+    alert("Por favor completa todos los campos obligatorios.");
+    return;
+  }
+
     setLoading(true);
-    const { error } = await supabase.from("movimientos").insert([
-      {
-        ...form,
-        monto: Number(form.monto),
-      },
-    ]);
+
+   const { error } = await supabase.from("movimientos").insert([
+{
+  tipo: form.tipo,
+  descripcion: form.descripcion,
+  monto: Number(form.monto),
+  empresa: form.empresa,
+  empresa_id: Number(form.empresaId),
+  moneda: form.moneda,
+  fecha: form.fecha,
+  estado: "activo",
+  creado_por: userId,
+}
+]);
 
     if (!error) {
-      setForm({ ...form, descripcion: "", monto: "" });
-      obtenerMovimientos();
+      setForm({
+        ...form,
+        descripcion: "",
+        monto: "",
+      });
+
+      await obtenerMovimientos();
+    } else {
+      console.error("Error creando movimiento:", error);
+      alert("Error al registrar movimiento.");
     }
+
     setLoading(false);
   }
 
-  async function eliminarMovimiento(id: number) {
-    if (!confirm("¿Eliminar este registro contable?")) return;
-    await supabase.from("movimientos").delete().eq("id", id);
-    obtenerMovimientos();
+  async function anularMovimiento(id: number) {
+  if (!puedeAnularMovimiento) {
+    alert("No tienes permiso para anular movimientos.");
+    return;
   }
 
-  // Formateador de Moneda
-  const money = (val: number) => 
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+  if (!userId) {
+    alert("Sesión no válida.");
+    return;
+  }
 
-  // Cálculos
+  const motivo = window.prompt("Indica el motivo de anulación:");
+
+  if (!motivo || motivo.trim().length < 5) {
+    alert("Debes escribir un motivo válido para anular.");
+    return;
+  }
+
+  const confirmar = window.confirm(
+    "¿Seguro que deseas anular este movimiento? No se borrará, quedará como anulado."
+  );
+
+  if (!confirmar) return;
+
+  const { error } = await supabase
+    .from("movimientos")
+    .update({
+      estado: "anulado",
+      anulado_por: userId,
+      anulado_at: new Date().toISOString(),
+      motivo_anulacion: motivo.trim(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("Error anulando movimiento:", error);
+    alert("Error al anular movimiento.");
+    return;
+  }
+
+  await supabase.from("movimientos_historial").insert([
+    {
+      movimiento_id: id,
+      accion: "Movimiento anulado",
+      comentario: motivo.trim(),
+      usuario_id: userId,
+    },
+  ]);
+
+  await obtenerMovimientos();
+}
+
+ const money = (val: number, moneda: string | null = "GTQ") =>
+  new Intl.NumberFormat(moneda === "USD" ? "en-US" : "es-GT", {
+    style: "currency",
+    currency: moneda === "USD" ? "USD" : "GTQ",
+  }).format(Number(val || 0));
+
+ const movimientosPermitidos = movimientos.filter(
+  (m) =>
+    m.empresa_id !== null &&
+    empresasPermitidasIds.includes(Number(m.empresa_id)) &&
+    (m.estado || "activo") !== "anulado"
+);
+
   const movimientosFiltrados =
-  empresaFiltro === "Todas"
-    ? movimientos
-    : movimientos.filter((m) => m.empresa === empresaFiltro);
+    empresaFiltro === "Todas"
+      ? movimientosPermitidos
+      : movimientosPermitidos.filter(
+          (m) => Number(m.empresa_id) === Number(empresaFiltro)
+        );
 
-const ingresos = movimientosFiltrados
-  .filter((m) => m.tipo === "Ingreso")
+const ingresosGTQ = movimientosFiltrados
+  .filter((m) => m.tipo === "Ingreso" && (m.moneda || "GTQ") === "GTQ")
   .reduce((acc, m) => acc + Number(m.monto), 0);
 
-const egresos = movimientosFiltrados
-  .filter((m) => m.tipo === "Egreso")
+const egresosGTQ = movimientosFiltrados
+  .filter((m) => m.tipo === "Egreso" && (m.moneda || "GTQ") === "GTQ")
   .reduce((acc, m) => acc + Number(m.monto), 0);
 
-const balance = ingresos - egresos;
+const balanceGTQ = ingresosGTQ - egresosGTQ;
+
+const ingresosUSD = movimientosFiltrados
+  .filter((m) => m.tipo === "Ingreso" && m.moneda === "USD")
+  .reduce((acc, m) => acc + Number(m.monto), 0);
+
+const egresosUSD = movimientosFiltrados
+  .filter((m) => m.tipo === "Egreso" && m.moneda === "USD")
+  .reduce((acc, m) => acc + Number(m.monto), 0);
+
+const balanceUSD = ingresosUSD - egresosUSD;
+
+const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
+  rolActual
+);
+
+  const nombreEmpresaFiltro =
+    empresaFiltro === "Todas"
+      ? "Todas las empresas"
+      : listaEmpresas.find((emp) => String(emp.id) === empresaFiltro)?.nombre ||
+        "empresa seleccionada";
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
@@ -131,75 +294,169 @@ const balance = ingresos - egresos;
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">
           <header className="mb-10 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-  <div>
-    <h1 className="text-5xl font-black tracking-tight">Contabilidad</h1>
-    <p className="text-gray-400 mt-2">
-      {empresaFiltro === "Todas"
-        ? "Libro diario general de todas las empresas"
-        : `Contabilidad específica de ${empresaFiltro}`}
+            <div>
+              <h1 className="text-5xl font-black tracking-tight">
+                Contabilidad
+              </h1>
+
+              <p className="text-gray-400 mt-2">
+                {empresaFiltro === "Todas"
+                  ? "Libro diario general de todas las empresas"
+                  : `Contabilidad específica de ${nombreEmpresaFiltro}`}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                Ver empresa
+              </label>
+
+              <select
+                value={empresaFiltro}
+                onChange={(e) => setEmpresaFiltro(e.target.value)}
+                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white min-w-[260px]"
+              >
+                <option
+                  value="Todas"
+                  style={{ backgroundColor: "#0B1120", color: "white" }}
+                >
+                  Todas las empresas
+                </option>
+
+                {listaEmpresas.map((emp) => (
+                  <option
+                    key={emp.id}
+                    value={String(emp.id)}
+                    style={{ backgroundColor: "#0B1120", color: "white" }}
+                  >
+                    {emp.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </header>
+
+          {rolActual === "empleado" && (
+  <div className="mb-8 bg-green-500/10 border border-green-500/20 rounded-2xl p-5">
+    <h2 className="text-green-400 font-black text-sm uppercase">
+      Vista operativa contable
+    </h2>
+    <p className="text-gray-400 text-sm mt-1">
+      Puedes registrar ingresos o egresos de las empresas asignadas y dar seguimiento
+      a los movimientos. No puedes anular ni eliminar registros.
+    </p>
+  </div>
+)}
+
+        
+
+          <div className="grid md:grid-cols-3 xl:grid-cols-6 gap-6 mb-10">
+  <div className="bg-green-500/10 border border-green-500/20 rounded-[2.5rem] p-6 shadow-xl">
+    <div className="flex items-center gap-3 text-green-400 opacity-80">
+      <TrendingUp size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Ingresos GTQ
+      </span>
+    </div>
+
+    <p className="text-2xl font-black text-green-400 mt-4">
+      {money(ingresosGTQ, "GTQ")}
     </p>
   </div>
 
-  <div className="flex flex-col gap-2">
-    <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
-      Ver empresa
-    </label>
+  <div className="bg-red-500/10 border border-red-500/20 rounded-[2.5rem] p-6 shadow-xl">
+    <div className="flex items-center gap-3 text-red-400 opacity-80">
+      <TrendingDown size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Egresos GTQ
+      </span>
+    </div>
 
-    <select
-      value={empresaFiltro}
-      onChange={(e) => setEmpresaFiltro(e.target.value)}
-      className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white min-w-[260px]"
-    >
-      <option
-        value="Todas"
-        style={{ backgroundColor: "#0B1120", color: "white" }}
-      >
-        Todas las empresas
-      </option>
-
-      {listaEmpresas.map((emp, i) => (
-        <option
-          key={i}
-          value={emp.nombre}
-          style={{ backgroundColor: "#0B1120", color: "white" }}
-        >
-          {emp.nombre}
-        </option>
-      ))}
-    </select>
+    <p className="text-2xl font-black text-red-400 mt-4">
+      {money(egresosGTQ, "GTQ")}
+    </p>
   </div>
-</header>
 
-          {/* INDICADORES FINANCIEROS */}
-          <div className="grid md:grid-cols-3 gap-6 mb-10">
-            <div className="bg-green-500/10 border border-green-500/20 rounded-[2.5rem] p-8 shadow-xl">
-              <div className="flex items-center gap-3 text-green-400 opacity-80">
-                <TrendingUp size={20} />
-                <span className="text-sm font-bold uppercase tracking-widest">Ingresos</span>
-              </div>
-              <p className="text-4xl font-black text-green-400 mt-4">{money(ingresos)}</p>
-            </div>
+  <div
+    className={`border rounded-[2.5rem] p-6 shadow-xl transition-colors ${
+      balanceGTQ >= 0
+        ? "bg-cyan-500/10 border-cyan-500/20"
+        : "bg-orange-500/10 border-orange-500/20"
+    }`}
+  >
+    <div
+      className={`flex items-center gap-3 opacity-80 ${
+        balanceGTQ >= 0 ? "text-cyan-400" : "text-orange-400"
+      }`}
+    >
+      <Wallet size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Balance GTQ
+      </span>
+    </div>
 
-            <div className="bg-red-500/10 border border-red-500/20 rounded-[2.5rem] p-8 shadow-xl">
-              <div className="flex items-center gap-3 text-red-400 opacity-80">
-                <TrendingDown size={20} />
-                <span className="text-sm font-bold uppercase tracking-widest">Egresos</span>
-              </div>
-              <p className="text-4xl font-black text-red-400 mt-4">{money(egresos)}</p>
-            </div>
+    <p
+      className={`text-2xl font-black mt-4 ${
+        balanceGTQ >= 0 ? "text-cyan-400" : "text-orange-400"
+      }`}
+    >
+      {money(balanceGTQ, "GTQ")}
+    </p>
+  </div>
 
-            <div className={`border rounded-[2.5rem] p-8 shadow-xl transition-colors ${balance >= 0 ? 'bg-cyan-500/10 border-cyan-500/20' : 'bg-orange-500/10 border-orange-500/20'}`}>
-              <div className={`flex items-center gap-3 opacity-80 ${balance >= 0 ? 'text-cyan-400' : 'text-orange-400'}`}>
-                <Wallet size={20} />
-                <span className="text-sm font-bold uppercase tracking-widest">Balance Neto</span>
-              </div>
-              <p className={`text-4xl font-black mt-4 ${balance >= 0 ? 'text-cyan-400' : 'text-orange-400'}`}>
-                {money(balance)}
-              </p>
-            </div>
-          </div>
+  <div className="bg-green-500/10 border border-green-500/20 rounded-[2.5rem] p-6 shadow-xl">
+    <div className="flex items-center gap-3 text-green-400 opacity-80">
+      <TrendingUp size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Ingresos USD
+      </span>
+    </div>
 
-          {/* REGISTRO DE MOVIMIENTO */}
+    <p className="text-2xl font-black text-green-400 mt-4">
+      {money(ingresosUSD, "USD")}
+    </p>
+  </div>
+
+  <div className="bg-red-500/10 border border-red-500/20 rounded-[2.5rem] p-6 shadow-xl">
+    <div className="flex items-center gap-3 text-red-400 opacity-80">
+      <TrendingDown size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Egresos USD
+      </span>
+    </div>
+
+    <p className="text-2xl font-black text-red-400 mt-4">
+      {money(egresosUSD, "USD")}
+    </p>
+  </div>
+
+  <div
+    className={`border rounded-[2.5rem] p-6 shadow-xl transition-colors ${
+      balanceUSD >= 0
+        ? "bg-cyan-500/10 border-cyan-500/20"
+        : "bg-orange-500/10 border-orange-500/20"
+    }`}
+  >
+    <div
+      className={`flex items-center gap-3 opacity-80 ${
+        balanceUSD >= 0 ? "text-cyan-400" : "text-orange-400"
+      }`}
+    >
+      <Wallet size={20} />
+      <span className="text-xs font-bold uppercase tracking-widest">
+        Balance USD
+      </span>
+    </div>
+
+    <p
+      className={`text-2xl font-black mt-4 ${
+        balanceUSD >= 0 ? "text-cyan-400" : "text-orange-400"
+      }`}
+    >
+      {money(balanceUSD, "USD")}
+    </p>
+  </div>
+</div>
           <div className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8 mb-12">
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
               <Plus className="text-cyan-500" /> Nuevo Registro
@@ -207,82 +464,134 @@ const balance = ingresos - egresos;
 
             <div className="grid md:grid-cols-3 gap-5">
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Tipo</label>
-                <select
-  value={form.tipo}
-  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
->
-  <option
-    value="Ingreso"
-    style={{ backgroundColor: "#0B1120", color: "white" }}
-  >
-    🟢 Ingreso
-  </option>
+                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                  Tipo
+                </label>
 
-  <option
-    value="Egreso"
-    style={{ backgroundColor: "#0B1120", color: "white" }}
-  >
-    🔴 Egreso
-  </option>
-</select>
+                <select
+                  value={form.tipo}
+                  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
+                >
+                  <option
+                    value="Ingreso"
+                    style={{ backgroundColor: "#0B1120", color: "white" }}
+                  >
+                    🟢 Ingreso
+                  </option>
+
+                  <option
+                    value="Egreso"
+                    style={{ backgroundColor: "#0B1120", color: "white" }}
+                  >
+                    🔴 Egreso
+                  </option>
+                </select>
               </div>
 
               <div className="flex flex-col gap-2 md:col-span-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Descripción del concepto</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                  Descripción del concepto
+                </label>
+
                 <input
                   type="text"
                   placeholder="Ej: Pago de Honorarios - Cliente X"
                   value={form.descripcion}
-                  onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, descripcion: e.target.value })
+                  }
                   className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all"
                 />
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Monto ($)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                 Monto ({form.moneda})
+                </label>
+
                 <input
                   type="number"
                   placeholder="0.00"
                   value={form.monto}
-                  onChange={(e) => setForm({ ...form, monto: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, monto: e.target.value })
+                  }
                   className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all font-mono"
                 />
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Empresa Relacionada</label>
-              <select
-  value={form.empresa}
-  onChange={(e) => setForm({ ...form, empresa: e.target.value })}
-  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
->
-  <option
-    value=""
-    style={{ backgroundColor: "#0B1120", color: "white" }}
-  >
-    Seleccionar empresa...
-  </option>
+  <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+    Moneda
+  </label>
 
-  {listaEmpresas.map((emp, i) => (
-    <option
-      key={i}
-      value={emp.nombre}
-      style={{ backgroundColor: "#0B1120", color: "white" }}
-    >
-      {emp.nombre}
+  <select
+    value={form.moneda}
+    onChange={(e) => setForm({ ...form, moneda: e.target.value })}
+    className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
+  >
+    <option value="GTQ" style={{ backgroundColor: "#0B1120", color: "white" }}>
+      Quetzales GTQ
     </option>
-  ))}
-</select>
+
+    <option value="USD" style={{ backgroundColor: "#0B1120", color: "white" }}>
+      Dólares USD
+    </option>
+  </select>
+</div>
+
+
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                  Empresa Relacionada
+                </label>
+
+                <select
+                  value={form.empresaId}
+                  onChange={(e) => {
+                    const empresaSeleccionada = listaEmpresas.find(
+                      (emp) => String(emp.id) === e.target.value
+                    );
+
+                    setForm({
+                      ...form,
+                      empresaId: e.target.value,
+                      empresa: empresaSeleccionada?.nombre || "",
+                    });
+                  }}
+                  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all cursor-pointer text-white"
+                >
+                  <option
+                    value=""
+                    style={{ backgroundColor: "#0B1120", color: "white" }}
+                  >
+                    Seleccionar empresa...
+                  </option>
+
+                  {listaEmpresas.map((emp) => (
+                    <option
+                      key={emp.id}
+                      value={String(emp.id)}
+                      style={{ backgroundColor: "#0B1120", color: "white" }}
+                    >
+                      {emp.nombre}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">Fecha del Movimiento</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
+                  Fecha del Movimiento
+                </label>
+
                 <input
                   type="date"
                   value={form.fecha}
-                  onChange={(e) => setForm({ ...form, fecha: e.target.value })}
+                  onChange={(e) =>
+                    setForm({ ...form, fecha: e.target.value })
+                  }
                   className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none focus:border-cyan-500 transition-all"
                 />
               </div>
@@ -297,49 +606,72 @@ const balance = ingresos - egresos;
             </button>
           </div>
 
-          {/* LISTADO DE MOVIMIENTOS */}
           <div className="grid gap-4">
-          {movimientosFiltrados.length === 0 && (
-  <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem]">
-    <p className="text-gray-500 font-medium">
-      {empresaFiltro === "Todas"
-        ? "No hay movimientos registrados todavía."
-        : `No hay movimientos registrados para ${empresaFiltro}.`}
-    </p>
-  </div>
-)}
-           {movimientosFiltrados.map((mov) => (
+            {movimientosFiltrados.length === 0 && (
+              <div className="text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem]">
+                <p className="text-gray-500 font-medium">
+                  {empresaFiltro === "Todas"
+                    ? "No hay movimientos registrados todavía."
+                    : `No hay movimientos registrados para ${nombreEmpresaFiltro}.`}
+                </p>
+              </div>
+            )}
+
+            {movimientosFiltrados.map((mov) => (
               <div
                 key={mov.id}
                 className="group bg-[#0B1120] border border-white/5 rounded-[2rem] p-6 flex flex-col md:flex-row justify-between items-start md:items-center hover:border-white/20 transition-all"
               >
                 <div className="flex gap-6 items-center">
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-xl ${mov.tipo === 'Ingreso' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
-                    {mov.tipo === 'Ingreso' ? '+' : '-'}
+                  <div
+                    className={`w-14 h-14 rounded-2xl flex items-center justify-center font-bold text-xl ${
+                      mov.tipo === "Ingreso"
+                        ? "bg-green-500/10 text-green-400"
+                        : "bg-red-500/10 text-red-400"
+                    }`}
+                  >
+                    {mov.tipo === "Ingreso" ? "+" : "-"}
                   </div>
+
                   <div>
-                    <h3 className="text-xl font-bold tracking-tight">{mov.descripcion}</h3>
+                    <h3 className="text-xl font-bold tracking-tight">
+                      {mov.descripcion}
+                    </h3>
+
                     <div className="flex flex-wrap gap-4 mt-2">
                       <span className="flex items-center gap-1.5 text-xs text-gray-500 font-bold">
-                        <Building2 size={14} className="text-cyan-500" /> {mov.empresa}
+                        <Building2 size={14} className="text-cyan-500" />{" "}
+                        {mov.empresa}
                       </span>
+
                       <span className="flex items-center gap-1.5 text-xs text-gray-500 font-bold">
-                        <Calendar size={14} className="text-purple-500" /> {mov.fecha}
+                        <Calendar size={14} className="text-purple-500" />{" "}
+                        {mov.fecha}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="mt-4 md:mt-0 flex items-center gap-6 w-full md:w-auto justify-between">
-                  <span className={`text-2xl font-black ${mov.tipo === 'Ingreso' ? 'text-green-400' : 'text-red-400'}`}>
-                    {money(mov.monto)}
-                  </span>
-                  <button
-                    onClick={() => eliminarMovimiento(mov.id)}
-                    className="p-3 text-gray-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                  <span
+                    className={`text-2xl font-black ${
+                      mov.tipo === "Ingreso"
+                        ? "text-green-400"
+                        : "text-red-400"
+                    }`}
                   >
-                    <Trash2 size={18} />
-                  </button>
+                 {money(mov.monto, mov.moneda)}
+                  </span>
+
+                 {puedeAnularMovimiento && (
+  <button
+    onClick={() => anularMovimiento(mov.id)}
+    className="p-3 text-gray-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+    title="Anular movimiento"
+  >
+    <Trash2 size={18} />
+  </button>
+)}
                 </div>
               </div>
             ))}
