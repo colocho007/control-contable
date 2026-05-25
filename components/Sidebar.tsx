@@ -10,6 +10,7 @@ import {
   Wallet,
   Users,
   Receipt,
+  Truck,
   LogOut,
   Loader2,
   FileText,
@@ -130,6 +131,12 @@ export default function Sidebar() {
     icon: Receipt,
     clave: "contabilidad",
   },
+  {
+  name: "Proveedores",
+  path: "/proveedores",
+  icon: Truck,
+  clave: "proveedores",
+},
   {
   name: "Importaciones",
   path: "/importaciones",
