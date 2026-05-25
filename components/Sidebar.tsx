@@ -35,6 +35,7 @@ export default function Sidebar() {
   const [rol, setRol] = useState<string | null>(null);
   const [loadingRol, setLoadingRol] = useState(true);
   const [modulosActivos, setModulosActivos] = useState<string[]>([]);
+  const [modulosUsuario, setModulosUsuario] = useState<string[]>([]);
 
   useEffect(() => {
     async function obtenerPerfilYModulos() {
@@ -67,6 +68,7 @@ export default function Sidebar() {
           .from("modulos_sistema")
           .select("clave,activo")
           .eq("activo", true);
+        
 
         if (modulosError) {
           console.error("Error cargando módulos en Sidebar:", modulosError);
@@ -74,6 +76,20 @@ export default function Sidebar() {
           setModulosActivos(
             (modulosData || []).map((modulo: ModuloSistema) => modulo.clave)
           );
+          const { data: usuarioModulosData, error: usuarioModulosError } =
+  await supabase
+    .from("usuario_modulos")
+    .select("modulo_clave,activo")
+    .eq("usuario_id", user.id)
+    .eq("activo", true);
+
+if (usuarioModulosError) {
+  console.error("Error cargando módulos del usuario:", usuarioModulosError);
+} else {
+  setModulosUsuario(
+    (usuarioModulosData || []).map((modulo) => modulo.modulo_clave)
+  );
+}
         }
       } catch (error) {
         console.error("Error cargando perfil en Sidebar:", error);
@@ -95,9 +111,15 @@ export default function Sidebar() {
 
   const rolNormalizado = (rol || "").trim().toLowerCase();
 
-  function moduloActivo(clave: string) {
+ function moduloActivo(clave: string) {
+  if (clave === "admin") return rolNormalizado === "admin";
+
+  if (rolNormalizado === "admin") {
     return modulosActivos.includes(clave);
   }
+
+  return modulosActivos.includes(clave) && modulosUsuario.includes(clave);
+}
 
   // Rutas base
  const menusBase = [

@@ -43,6 +43,12 @@ interface ModuloSistema {
   activo: boolean;
   orden: number;
 }
+interface UsuarioModulo {
+  id: number;
+  usuario_id: string;
+  modulo_clave: string;
+  activo: boolean;
+}
 
 const ROLES_ADMIN = ["admin"];
 const ROLES_SISTEMA = [
@@ -64,6 +70,9 @@ export default function AdminPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [asignaciones, setAsignaciones] = useState<UsuarioEmpresa[]>([]);
   const [modulos, setModulos] = useState<ModuloSistema[]>([]);
+
+  const [usuarioModulos, setUsuarioModulos] = useState<UsuarioModulo[]>([]);
+const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [procesando, setProcesando] = useState(false);
@@ -127,6 +136,11 @@ function cargarUsuarioParaEditar(usuarioId: string) {
   setRolSeleccionado(usuario.rol || "empleado");
   setActivoSeleccionado(usuario.activo !== false);
   setEmpresasSeleccionadas(empresasDelUsuario);
+ const modulosDelUsuario = usuarioModulos
+  .filter((m) => m.usuario_id === usuarioId && m.activo)
+  .map((m) => m.modulo_clave);
+
+setModulosSeleccionados(modulosDelUsuario); 
 }
 
 function toggleEmpresa(empresaId: number) {
@@ -135,6 +149,26 @@ function toggleEmpresa(empresaId: number) {
       ? prev.filter((id) => id !== empresaId)
       : [...prev, empresaId]
   );
+}
+
+function toggleModulo(moduloClave: string) {
+  setModulosSeleccionados((prev) =>
+    prev.includes(moduloClave)
+      ? prev.filter((clave) => clave !== moduloClave)
+      : [...prev, moduloClave]
+  );
+}
+
+function seleccionarTodosLosModulos() {
+  setModulosSeleccionados(
+    modulos
+      .filter((m) => m.clave !== "admin" && m.activo)
+      .map((m) => m.clave)
+  );
+}
+
+function limpiarModulosSeleccionados() {
+  setModulosSeleccionados([]);
 }
 function seleccionarTodasLasEmpresas() {
   setEmpresasSeleccionadas(empresas.map((empresa) => Number(empresa.id)));
@@ -187,6 +221,26 @@ async function guardarPermisosUsuario() {
 
       if (insertError) throw insertError;
     }
+    const { error: deleteModulosError } = await supabase
+  .from("usuario_modulos")
+  .delete()
+  .eq("usuario_id", usuarioEditando);
+
+if (deleteModulosError) throw deleteModulosError;
+
+if (modulosSeleccionados.length > 0) {
+  const nuevosModulos = modulosSeleccionados.map((moduloClave) => ({
+    usuario_id: usuarioEditando,
+    modulo_clave: moduloClave,
+    activo: true,
+  }));
+
+  const { error: insertModulosError } = await supabase
+    .from("usuario_modulos")
+    .insert(nuevosModulos);
+
+  if (insertModulosError) throw insertModulosError;
+}
 
     await cargarDatos();
 
@@ -194,6 +248,7 @@ async function guardarPermisosUsuario() {
 setRolSeleccionado("");
 setActivoSeleccionado(true);
 setEmpresasSeleccionadas([]);
+setModulosSeleccionados([]);
 
     toast.success("Permisos actualizados correctamente", { id: toastId });
   } catch (error: any) {
@@ -206,7 +261,13 @@ setEmpresasSeleccionadas([]);
 
 
   async function cargarDatos() {
- const [resUsuarios, resEmpresas, resAsignaciones, resModulos] = await Promise.all([
+ const [
+  resUsuarios,
+  resEmpresas,
+  resAsignaciones,
+  resModulos,
+  resUsuarioModulos,
+] = await Promise.all([
   supabase
   .from("perfiles")
   .select("id,nombre,rol,activo")
@@ -236,16 +297,23 @@ setEmpresasSeleccionadas([]);
   .from("modulos_sistema")
   .select("id,clave,nombre,activo,orden")
   .order("orden", { ascending: true }),
+
+  supabase
+  .from("usuario_modulos")
+  .select("id,usuario_id,modulo_clave,activo"),
     ]);
 
     if (resUsuarios.error) throw resUsuarios.error;
+    
     if (resEmpresas.error) throw resEmpresas.error;
     if (resAsignaciones.error) throw resAsignaciones.error;
     if (resModulos.error) throw resModulos.error;
+    if (resUsuarioModulos.error) throw resUsuarioModulos.error;
 
     setUsuarios(resUsuarios.data || []);
     setEmpresas(resEmpresas.data || []);
     setModulos(resModulos.data || []);
+    setUsuarioModulos(resUsuarioModulos.data || []);
 
     const limpias = (resAsignaciones.data || []).map((item: any) => ({
       id: item.id,
@@ -583,6 +651,62 @@ El Panel Admin no se puede desactivar desde aquí para evitar perder el acceso.
     })}
   </div>
 
+  <div className="flex flex-wrap gap-3 mb-5">
+  <button
+    type="button"
+    onClick={seleccionarTodosLosModulos}
+    disabled={!usuarioEditando || procesando}
+    className="px-4 py-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs font-black uppercase disabled:opacity-50"
+  >
+    Seleccionar módulos
+  </button>
+
+  <button
+    type="button"
+    onClick={limpiarModulosSeleccionados}
+    disabled={!usuarioEditando || procesando}
+    className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-black uppercase disabled:opacity-50"
+  >
+    Limpiar módulos
+  </button>
+
+  <div className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase text-gray-400">
+    Módulos seleccionados: {modulosSeleccionados.length}
+  </div>
+</div>
+
+<div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6 max-h-[320px] overflow-y-auto pr-2">
+  {modulos
+    .filter((modulo) => modulo.clave !== "admin" && modulo.activo)
+    .map((modulo) => {
+      const activo = modulosSeleccionados.includes(modulo.clave);
+
+      return (
+        <button
+          key={modulo.clave}
+          type="button"
+          onClick={() => toggleModulo(modulo.clave)}
+          disabled={!usuarioEditando || procesando}
+          className={`text-left rounded-2xl border p-4 transition-all disabled:opacity-50 ${
+            activo
+              ? "border-purple-500 bg-purple-500/10 text-purple-300"
+              : "border-white/10 bg-white/[0.02] text-gray-400 hover:border-purple-500/30"
+          }`}
+        >
+          <p className="text-[10px] font-black uppercase mb-1">
+            {modulo.clave}
+          </p>
+
+          <p className="text-sm font-black">{modulo.nombre}</p>
+
+          <p className="text-[10px] mt-2">
+            {activo ? "Asignado" : "No asignado"}
+          </p>
+        </button>
+      );
+    })}
+</div>
+
   <button
     type="button"
     onClick={guardarPermisosUsuario}
@@ -594,7 +718,7 @@ El Panel Admin no se puede desactivar desde aquí para evitar perder el acceso.
     ) : (
       <ShieldCheck size={16} />
     )}
-    Guardar rol y empresas
+    Guardar rol, empresas y módulos
   </button>
 </section>
 
