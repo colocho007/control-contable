@@ -99,7 +99,8 @@ export default function OrdenesCompraPage() {
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoOrdenes, setCargandoOrdenes] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
 
@@ -139,7 +140,8 @@ const [form, setForm] = useState({
 
  async function iniciar() {
   try {
-    setLoading(true);
+    setValidandoAcceso(true);
+    setCargandoOrdenes(false);
 
     const acceso = await validarAccesoModuloUsuario("ordenes");
 
@@ -175,25 +177,30 @@ const [form, setForm] = useState({
 
     setUserId(user.id);
     setPerfilActual(perfil);
+    setCargandoOrdenes(true);
+    setAutorizado(true);
+    setValidandoAcceso(false);
+
+    const idsPermitidos = await obtenerEmpresasPermitidas(
+      user.id,
+      perfil.rol || ""
+    );
+
+    setEmpresasPermitidasIds(idsPermitidos);
 
     await Promise.all([
-      obtenerEmpresas(user.id, perfil.rol || ""),
+      obtenerEmpresas(idsPermitidos),
       obtenerUsuarios(perfil.rol || ""),
-      obtenerOrdenes(user.id, perfil.rol || ""),
+      obtenerOrdenes(idsPermitidos, user.id, perfil.rol || ""),
     ]);
-    setAutorizado(true);
   } catch (error) {
     console.error(error);
     toast.error("Error cargando órdenes de compra");
   } finally {
-    setLoading(false);
+    setCargandoOrdenes(false);
   }
 }
-async function obtenerEmpresas(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
-  setEmpresasPermitidasIds(idsPermitidos);
-
+async function obtenerEmpresas(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setEmpresas([]);
     return;
@@ -226,9 +233,12 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
     setUsuarios(data || []);
   }
 
- async function obtenerOrdenes(usuarioId: string, rol: string) {
+ async function obtenerOrdenes(
+  idsPermitidos: number[],
+  usuarioId: string,
+  rol: string
+) {
   const rolNormalizado = normalizarRol(rol);
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rolNormalizado);
 
   if (!idsPermitidos.length) {
     setOrdenes([]);
@@ -299,7 +309,7 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
 
   async function refrescarOrdenes() {
     if (!userId || !perfilActual) return;
-    await obtenerOrdenes(userId, perfilActual.rol);
+    await obtenerOrdenes(empresasPermitidasIds, userId, perfilActual.rol);
   }
 
  function money(valor: number, moneda: string | null = "GTQ") {
@@ -712,7 +722,7 @@ const stats = useMemo(() => {
   };
 }, [ordenesDashboard, esFirmanteOC, userId]);
 
-  if (loading || !autorizado) {
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
@@ -756,27 +766,38 @@ const stats = useMemo(() => {
   label={esFirmanteOC ? "Por firmar" : "Pendientes"}
   value={stats.pendientes}
   color="text-yellow-400"
+  loading={cargandoOrdenes}
 />
 
 <Stat
   label={esFirmanteOC ? "Firmadas por mí" : "Parciales"}
   value={stats.parciales}
   color="text-cyan-400"
+  loading={cargandoOrdenes}
 />
 
 <Stat
   label="Aprobadas"
   value={stats.aprobadas}
   color="text-green-400"
+  loading={cargandoOrdenes}
 />
 
 <Stat
   label={esFirmanteOC ? "Observadas por mí" : "Observadas"}
   value={stats.observadas}
   color="text-red-400"
+  loading={cargandoOrdenes}
 />
             </div>
           </header>
+          {cargandoOrdenes ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
+              <Loader2 className="animate-spin mr-2" />
+              Cargando ordenes de compra...
+            </section>
+          ) : (
+            <>
           {esFirmanteOC && (
   <div className="mb-8 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl p-5">
     <h2 className="text-cyan-400 font-black text-sm uppercase">
@@ -1120,6 +1141,8 @@ const stats = useMemo(() => {
 />
             ))}
           </section>
+            </>
+          )}
         </div>
       </main>
 
@@ -1152,17 +1175,25 @@ function Stat({
   label,
   value,
   color,
+  loading = false,
 }: {
   label: string;
   value: number;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 min-w-[130px]">
       <p className="text-gray-500 text-[9px] uppercase font-bold tracking-widest">
         {label}
       </p>
-      <h2 className={`text-2xl font-black mt-1 ${color}`}>{value}</h2>
+      <h2 className={`text-2xl font-black mt-1 ${color}`}>
+        {loading ? (
+          <span className="text-xs text-gray-500">Cargando...</span>
+        ) : (
+          value
+        )}
+      </h2>
     </div>
   );
 }
