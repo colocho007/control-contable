@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
 import { Users, Plus, Trash2, ShieldAlert, Loader2 } from "lucide-react";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
@@ -19,6 +21,7 @@ interface Usuario {
 }
 
 export default function UsuariosPage() {
+  const router = useRouter();
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
   const [perfilActual, setPerfilActual] = useState<any>(null);
@@ -30,18 +33,14 @@ export default function UsuariosPage() {
  useEffect(() => {
   const inicializar = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const validacion = await validarUsuarioActivo();
 
-      if (!user) {
-        setLoading(false);
+      if (!validacion.ok) {
+        router.replace("/login");
         return;
       }
 
-      const { data: perfil } = await supabase
-        .from("perfiles")
-        .select("rol")
-        .eq("id", user.id)
-        .maybeSingle();
+      const perfil = validacion.perfil!;
 
       setPerfilActual(perfil);
 
@@ -58,7 +57,7 @@ export default function UsuariosPage() {
   };
 
   inicializar();
-}, []);
+}, [router]);
 
   const obtenerUsuarios = async () => {
     const { data, error } = await supabase
@@ -123,7 +122,7 @@ export default function UsuariosPage() {
   );
 
   // Pantalla de Seguridad (Acceso Denegado)
-  if (perfilActual?.rol !== "jefe" && perfilActual?.rol !== "supervisor") {
+  if (!ROLES_PERMITIDOS.includes(normalizarRol(perfilActual?.rol))) {
     return (
       <div className="flex bg-[#020617] min-h-screen text-white">
         <Sidebar />
