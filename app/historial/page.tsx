@@ -19,6 +19,7 @@ export default function HistorialPage() {
   const router = useRouter();
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [busqueda, setBusqueda] = useState("");
 
   useEffect(() => {
@@ -40,6 +41,7 @@ export default function HistorialPage() {
         return;
       }
 
+      setAutorizado(true);
       await obtenerLogs();
 
       if (!activo) return;
@@ -94,6 +96,14 @@ export default function HistorialPage() {
         log.tarea.toLowerCase().includes(busqueda.toLowerCase())
     );
   }, [logs, busqueda]);
+
+  if (!autorizado) {
+    return (
+      <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        Validando acceso...
+      </div>
+    );
+  }
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white font-sans">
