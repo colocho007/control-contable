@@ -100,6 +100,7 @@ export default function OrdenesCompraPage() {
   const [userId, setUserId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
 
   const [filtroEstado, setFiltroEstado] = useState("Todos");
@@ -180,6 +181,7 @@ const [form, setForm] = useState({
       obtenerUsuarios(),
       obtenerOrdenes(user.id, perfil.rol || ""),
     ]);
+    setAutorizado(true);
   } catch (error) {
     console.error(error);
     toast.error("Error cargando órdenes de compra");
@@ -683,11 +685,11 @@ const stats = useMemo(() => {
   };
 }, [ordenesDashboard, esFirmanteOC, userId]);
 
-  if (loading) {
+  if (loading || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
-        Cargando órdenes...
+        Validando acceso...
       </div>
     );
   }
