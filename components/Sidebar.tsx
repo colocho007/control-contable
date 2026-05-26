@@ -19,6 +19,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
+import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
 
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_SOLO_ORDENES = ["iniciador_gestion", "firmante_oc"];
@@ -40,29 +41,19 @@ export default function Sidebar() {
   useEffect(() => {
     async function obtenerPerfilYModulos() {
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
+        const validacion = await validarUsuarioActivo();
 
-        if (!user) {
-          setLoadingRol(false);
+        if (!validacion.ok) {
+          setRol(null);
+          setModulosActivos([]);
+          setModulosUsuario([]);
           return;
         }
 
-        const { data, error } = await supabase
-          .from("perfiles")
-          .select("rol")
-          .eq("id", user.id)
-          .single();
+        const user = validacion.user!;
+        const perfil = validacion.perfil!;
 
-        if (error) {
-          console.error("Error obteniendo rol en Sidebar:", error);
-          return;
-        }
-
-        if (data) {
-          setRol(data.rol);
-        }
+        setRol(perfil.rol);
 
         const { data: modulosData, error: modulosError } = await supabase
           .from("modulos_sistema")
