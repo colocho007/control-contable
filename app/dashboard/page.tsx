@@ -11,10 +11,15 @@ import { toast, Toaster } from "react-hot-toast";
 
 import {
   Activity,
+  AlertTriangle,
+  Building2,
   CheckCircle2,
   Clock3,
+  CreditCard,
+  FileText,
   LogOut,
   TrendingUp,
+  UserRound,
   Wallet,
   ArrowUpRight,
 } from "lucide-react";
@@ -36,7 +41,10 @@ interface Tarea {
   nombre?: string;
   titulo?: string;
   estado: string;
-  empresa_id?: number;
+  empresa_id: number | null;
+  empresa?: string | null;
+  empleado?: string | null;
+  fecha_limite?: string | null;
 }
 
 interface Movimiento {
@@ -44,7 +52,91 @@ interface Movimiento {
   monto: number;
   tipo: string;
   fecha: string;
-  empresa_id?: number;
+  empresa_id: number | null;
+  empresa?: string | null;
+  estado?: string | null;
+}
+
+interface OrdenCompra {
+  id: number;
+  empresa_id: number | null;
+  empresa: string | null;
+  numero_orden: string | null;
+  proveedor: string | null;
+  encargado: string | null;
+  fecha_necesaria: string | null;
+  estado: string;
+}
+
+interface Cheque {
+  id: number;
+  empresa_id: number | null;
+  empresa: string | null;
+  numero_cheque: string | null;
+  beneficiario: string | null;
+  responsable_actual: string | null;
+  fecha_pago: string | null;
+  estado: string;
+}
+
+interface Empresa {
+  id: number;
+  nombre: string;
+}
+
+type Semaforo = "verde" | "amarillo" | "rojo";
+
+interface AlertaProceso {
+  id: string;
+  tipo: string;
+  descripcion: string;
+  empresaId: number | null;
+  empresa: string;
+  responsable: string;
+  fecha: string;
+  semaforo: Semaforo;
+}
+
+function estadoNormalizado(estado?: string | null) {
+  return (estado || "").trim().toLowerCase();
+}
+
+function tareaPendiente(tarea: Tarea) {
+  return !["completado", "cancelada", "anulado", "anulada"].includes(
+    estadoNormalizado(tarea.estado)
+  );
+}
+
+function ordenPendiente(orden: OrdenCompra) {
+  return !["aprobada", "anulada", "cancelada", "rechazada"].includes(
+    estadoNormalizado(orden.estado)
+  );
+}
+
+function chequePendiente(cheque: Cheque) {
+  return !["pagado", "anulado", "rechazado"].includes(
+    estadoNormalizado(cheque.estado)
+  );
+}
+
+function obtenerSemaforo(fecha?: string | null): Semaforo | null {
+  if (!fecha) return null;
+
+  const [anio, mes, dia] = fecha.slice(0, 10).split("-").map(Number);
+
+  if (!anio || !mes || !dia) return null;
+
+  const fechaProceso = new Date(anio, mes - 1, dia);
+  const hoy = new Date();
+  hoy.setHours(0, 0, 0, 0);
+
+  const diasRestantes = Math.ceil(
+    (fechaProceso.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  if (diasRestantes < 0) return "rojo";
+  if (diasRestantes <= 3) return "amarillo";
+  return "verde";
 }
 
 export default function DashboardPage() {
@@ -53,16 +145,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
+  const [ordenes, setOrdenes] = useState<OrdenCompra[]>([]);
+  const [cheques, setCheques] = useState<Cheque[]>([]);
+  const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [perfil, setPerfil] = useState({ nombre: "", rol: "" });
   const [autorizado, setAutorizado] = useState(false);
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[]>([]);
   const [esAdmin, setEsAdmin] = useState(false);
 
   // Referencias para evitar re-suscripciones innecesarias en Realtime
-  const esAdminRef = useRef(esAdmin);
   const empresasRef = useRef(empresasPermitidas);
 
-  esAdminRef.current = esAdmin;
   empresasRef.current = empresasPermitidas;
 
   useEffect(() => {
@@ -77,12 +170,22 @@ export default function DashboardPage() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "tareas" },
-        () => obtenerTareas(esAdminRef.current, empresasRef.current)
+        () => obtenerTareas(empresasRef.current)
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "movimientos" },
-        () => obtenerFinanzas(esAdminRef.current, empresasRef.current)
+        () => obtenerFinanzas(empresasRef.current)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "ordenes_compra" },
+        () => obtenerOrdenes(empresasRef.current)
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "cheques" },
+        () => obtenerCheques(empresasRef.current)
       )
       .subscribe();
 
@@ -139,32 +242,27 @@ export default function DashboardPage() {
     setAutorizado(true);
 
     await Promise.all([
-      obtenerTareas(admin, empresas),
-      obtenerFinanzas(admin, empresas),
+      obtenerTareas(empresas),
+      obtenerFinanzas(empresas),
+      obtenerOrdenes(empresas),
+      obtenerCheques(empresas),
+      obtenerNombresEmpresas(empresas),
     ]);
 
     setLoading(false);
   }
 
-  async function obtenerTareas(
-    adminParam = esAdminRef.current,
-    empresasParam = empresasRef.current
-  ) {
-    let query = supabase
-      .from("tareas")
-      .select("*")
-      .order("id", { ascending: false });
-
-    if (!adminParam) {
-      if (!empresasParam.length) {
-        setTareas([]);
-        return;
-      }
-
-      query = query.in("empresa_id", empresasParam);
+  async function obtenerTareas(empresasParam = empresasRef.current) {
+    if (!empresasParam.length) {
+      setTareas([]);
+      return;
     }
 
-    const { data, error } = await query;
+    const { data, error } = await supabase
+      .from("tareas")
+      .select("id,nombre,estado,empresa_id,empresa,empleado,fecha_limite")
+      .in("empresa_id", empresasParam)
+      .order("id", { ascending: false });
 
     if (error) {
       console.error("Error obteniendo tareas:", error);
@@ -175,25 +273,17 @@ export default function DashboardPage() {
     if (data) setTareas(data);
   }
 
-  async function obtenerFinanzas(
-    adminParam = esAdminRef.current,
-    empresasParam = empresasRef.current
-  ) {
-    let query = supabase
-      .from("movimientos")
-      .select("*")
-      .order("fecha", { ascending: true });
-
-    if (!adminParam) {
-      if (!empresasParam.length) {
-        setMovimientos([]);
-        return;
-      }
-
-      query = query.in("empresa_id", empresasParam);
+  async function obtenerFinanzas(empresasParam = empresasRef.current) {
+    if (!empresasParam.length) {
+      setMovimientos([]);
+      return;
     }
 
-    const { data, error } = await query;
+    const { data, error } = await supabase
+      .from("movimientos")
+      .select("id,monto,tipo,fecha,empresa_id,empresa,estado")
+      .in("empresa_id", empresasParam)
+      .order("fecha", { ascending: true });
 
     if (error) {
       console.error("Error obteniendo movimientos:", error);
@@ -204,30 +294,298 @@ export default function DashboardPage() {
     if (data) setMovimientos(data);
   }
 
+  async function obtenerOrdenes(empresasParam = empresasRef.current) {
+    if (!empresasParam.length) {
+      setOrdenes([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("ordenes_compra")
+      .select(
+        "id,empresa_id,empresa,numero_orden,proveedor,encargado,fecha_necesaria,estado"
+      )
+      .in("empresa_id", empresasParam)
+      .order("id", { ascending: false });
+
+    if (error) {
+      console.error("Error obteniendo ordenes:", error);
+      toast.error("Error cargando ordenes de compra");
+      return;
+    }
+
+    setOrdenes(data || []);
+  }
+
+  async function obtenerCheques(empresasParam = empresasRef.current) {
+    if (!empresasParam.length) {
+      setCheques([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("cheques")
+      .select(
+        "id,empresa_id,empresa,numero_cheque,beneficiario,responsable_actual,fecha_pago,estado"
+      )
+      .in("empresa_id", empresasParam)
+      .order("id", { ascending: false });
+
+    if (error) {
+      console.error("Error obteniendo cheques:", error);
+      toast.error("Error cargando cheques");
+      return;
+    }
+
+    setCheques(data || []);
+  }
+
+  async function obtenerNombresEmpresas(empresasParam = empresasRef.current) {
+    if (!empresasParam.length) {
+      setEmpresas([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresas")
+      .select("id,nombre")
+      .in("id", empresasParam)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.error("Error obteniendo empresas:", error);
+      toast.error("Error cargando empresas");
+      return;
+    }
+
+    setEmpresas(data || []);
+  }
+
+  const movimientosActivos = useMemo(
+    () =>
+      movimientos.filter(
+        (movimiento) => estadoNormalizado(movimiento.estado) !== "anulado"
+      ),
+    [movimientos]
+  );
+
+  const tareasVigentes = useMemo(
+    () =>
+      tareas.filter(
+        (tarea) =>
+          !["cancelada", "anulado", "anulada"].includes(
+            estadoNormalizado(tarea.estado)
+          )
+      ),
+    [tareas]
+  );
+
+  const tareasPendientesActivas = useMemo(
+    () => tareasVigentes.filter(tareaPendiente),
+    [tareasVigentes]
+  );
+
+  const ordenesPendientesActivas = useMemo(
+    () => ordenes.filter(ordenPendiente),
+    [ordenes]
+  );
+
+  const chequesPendientesActivos = useMemo(
+    () => cheques.filter(chequePendiente),
+    [cheques]
+  );
+
+  const procesosConFecha = useMemo(() => {
+    const alertas: AlertaProceso[] = [];
+
+    tareasPendientesActivas.forEach((tarea) => {
+      const semaforo = obtenerSemaforo(tarea.fecha_limite);
+
+      if (!semaforo || !tarea.fecha_limite) return;
+
+      alertas.push({
+        id: `tarea-${tarea.id}`,
+        tipo: "Tarea",
+        descripcion: tarea.nombre || tarea.titulo || "Tarea sin nombre",
+        empresaId: tarea.empresa_id,
+        empresa: tarea.empresa || "Empresa no identificada",
+        responsable: tarea.empleado || "Sin responsable",
+        fecha: tarea.fecha_limite,
+        semaforo,
+      });
+    });
+
+    ordenesPendientesActivas.forEach((orden) => {
+      const semaforo = obtenerSemaforo(orden.fecha_necesaria);
+
+      if (!semaforo || !orden.fecha_necesaria) return;
+
+      alertas.push({
+        id: `orden-${orden.id}`,
+        tipo: "Orden",
+        descripcion:
+          orden.numero_orden || orden.proveedor || `Orden #${orden.id}`,
+        empresaId: orden.empresa_id,
+        empresa: orden.empresa || "Empresa no identificada",
+        responsable: orden.encargado || "Sin responsable",
+        fecha: orden.fecha_necesaria,
+        semaforo,
+      });
+    });
+
+    chequesPendientesActivos.forEach((cheque) => {
+      const semaforo = obtenerSemaforo(cheque.fecha_pago);
+
+      if (!semaforo || !cheque.fecha_pago) return;
+
+      alertas.push({
+        id: `cheque-${cheque.id}`,
+        tipo: "Cheque",
+        descripcion:
+          cheque.numero_cheque || cheque.beneficiario || `Cheque #${cheque.id}`,
+        empresaId: cheque.empresa_id,
+        empresa: cheque.empresa || "Empresa no identificada",
+        responsable:
+          cheque.responsable_actual || cheque.beneficiario || "Sin responsable",
+        fecha: cheque.fecha_pago,
+        semaforo,
+      });
+    });
+
+    const prioridad: Record<Semaforo, number> = {
+      rojo: 0,
+      amarillo: 1,
+      verde: 2,
+    };
+
+    return alertas.sort(
+      (a, b) =>
+        prioridad[a.semaforo] - prioridad[b.semaforo] ||
+        a.fecha.localeCompare(b.fecha)
+    );
+  }, [tareasPendientesActivas, ordenesPendientesActivas, chequesPendientesActivos]);
+
+  const procesosVencidos = procesosConFecha.filter(
+    (proceso) => proceso.semaforo === "rojo"
+  );
+  const procesosPorVencer = procesosConFecha.filter(
+    (proceso) => proceso.semaforo === "amarillo"
+  );
+  const procesosEnTiempo = procesosConFecha.filter(
+    (proceso) => proceso.semaforo === "verde"
+  );
+  const alertasCriticas = procesosConFecha.filter(
+    (proceso) => proceso.semaforo !== "verde"
+  );
+  const tareasVencidas = procesosVencidos.filter(
+    (proceso) => proceso.tipo === "Tarea"
+  );
+  const pagosPorVencer = procesosPorVencer.filter(
+    (proceso) => proceso.tipo === "Cheque"
+  );
+
+  const responsablesAtrasados = useMemo(() => {
+    const resumen = new Map<
+      string,
+      { responsable: string; total: number; tareas: number; ordenes: number; cheques: number }
+    >();
+
+    procesosVencidos.forEach((proceso) => {
+      const actual = resumen.get(proceso.responsable) || {
+        responsable: proceso.responsable,
+        total: 0,
+        tareas: 0,
+        ordenes: 0,
+        cheques: 0,
+      };
+
+      actual.total += 1;
+
+      if (proceso.tipo === "Tarea") actual.tareas += 1;
+      if (proceso.tipo === "Orden") actual.ordenes += 1;
+      if (proceso.tipo === "Cheque") actual.cheques += 1;
+
+      resumen.set(proceso.responsable, actual);
+    });
+
+    return Array.from(resumen.values()).sort((a, b) => b.total - a.total);
+  }, [procesosVencidos]);
+
+  const resumenPorEmpresa = useMemo(() => {
+    return empresas
+      .map((empresa) => {
+        const movimientosEmpresa = movimientosActivos.filter(
+          (movimiento) => Number(movimiento.empresa_id) === empresa.id
+        );
+        const ingresos = movimientosEmpresa
+          .filter((movimiento) => movimiento.tipo === "Ingreso")
+          .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+        const egresos = movimientosEmpresa
+          .filter((movimiento) => movimiento.tipo === "Egreso")
+          .reduce((total, movimiento) => total + Number(movimiento.monto || 0), 0);
+
+        return {
+          id: empresa.id,
+          nombre: empresa.nombre,
+          movimientos: movimientosEmpresa.length,
+          balance: ingresos - egresos,
+          tareas: tareasPendientesActivas.filter(
+            (tarea) => Number(tarea.empresa_id) === empresa.id
+          ).length,
+          ordenes: ordenesPendientesActivas.filter(
+            (orden) => Number(orden.empresa_id) === empresa.id
+          ).length,
+          cheques: chequesPendientesActivos.filter(
+            (cheque) => Number(cheque.empresa_id) === empresa.id
+          ).length,
+          vencidos: procesosVencidos.filter(
+            (proceso) => Number(proceso.empresaId) === empresa.id
+          ).length,
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.movimientos - a.movimientos ||
+          b.vencidos - a.vencidos ||
+          a.nombre.localeCompare(b.nombre)
+      );
+  }, [
+    empresas,
+    movimientosActivos,
+    tareasPendientesActivas,
+    ordenesPendientesActivas,
+    chequesPendientesActivos,
+    procesosVencidos,
+  ]);
+
+  const empresaConMasMovimientos = resumenPorEmpresa[0];
+
   const stats = useMemo(() => {
-    const completadas = tareas.filter(
+    const completadas = tareasVigentes.filter(
       (t) => t.estado === "Completado"
     ).length;
 
-    const ingresos = movimientos
+    const ingresos = movimientosActivos
       .filter((m) => m.tipo === "Ingreso")
       .reduce((acc, cur) => acc + Number(cur.monto || 0), 0);
 
-    const egresos = movimientos
+    const egresos = movimientosActivos
       .filter((m) => m.tipo === "Egreso")
       .reduce((acc, cur) => acc + Number(cur.monto || 0), 0);
 
     return {
       completadas,
-      pendientes: tareas.length - completadas,
-      totalTareas: tareas.length,
+      pendientes: tareasPendientesActivas.length,
+      totalTareas: tareasVigentes.length,
       progreso:
-        tareas.length > 0 ? Math.floor((completadas / tareas.length) * 100) : 0,
+        tareasVigentes.length > 0
+          ? Math.floor((completadas / tareasVigentes.length) * 100)
+          : 0,
       balance: ingresos - egresos,
       ingresos,
       egresos,
     };
-  }, [tareas, movimientos]);
+  }, [tareasVigentes, tareasPendientesActivas, movimientosActivos]);
 
   const pieData = [
     { name: "Completadas", value: stats.completadas },
@@ -332,7 +690,76 @@ export default function DashboardPage() {
             </div>
           </header>
 
-          {/* STATS */}
+          {/* RESUMEN EJECUTIVO */}
+          <section className="mb-10">
+            <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Resumen ejecutivo</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Plazos calculados sobre tareas, órdenes y fechas de pago de cheques.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-3 text-xs font-bold">
+                <SemaforoBadge estado="verde" texto="En tiempo" />
+                <SemaforoBadge estado="amarillo" texto="Por vencer" />
+                <SemaforoBadge estado="rojo" texto="Vencido" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
+              <ExecutiveCard
+                title="Cheques pendientes"
+                value={chequesPendientesActivos.length}
+                icon={<CreditCard size={18} />}
+                color="text-cyan-400"
+              />
+              <ExecutiveCard
+                title="Órdenes pendientes"
+                value={ordenesPendientesActivas.length}
+                icon={<FileText size={18} />}
+                color="text-purple-400"
+              />
+              <ExecutiveCard
+                title="Tareas pendientes"
+                value={tareasPendientesActivas.length}
+                icon={<Activity size={18} />}
+                color="text-cyan-400"
+              />
+              <ExecutiveCard
+                title="Tareas vencidas"
+                value={tareasVencidas.length}
+                icon={<AlertTriangle size={18} />}
+                color="text-red-400"
+              />
+              <ExecutiveCard
+                title="Pagos por vencer"
+                value={pagosPorVencer.length}
+                icon={<Clock3 size={18} />}
+                color="text-yellow-400"
+              />
+              <ExecutiveCard
+                title="Procesos vencidos"
+                value={procesosVencidos.length}
+                icon={<AlertTriangle size={18} />}
+                color="text-red-400"
+              />
+              <ExecutiveCard
+                title="Por vencer"
+                value={procesosPorVencer.length}
+                icon={<Clock3 size={18} />}
+                color="text-yellow-400"
+              />
+              <ExecutiveCard
+                title="En tiempo"
+                value={procesosEnTiempo.length}
+                icon={<CheckCircle2 size={18} />}
+                color="text-green-400"
+              />
+            </div>
+          </section>
+
+          {/* STATS FINANCIERAS */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
             <StatCard
               title="Balance Neto"
@@ -349,8 +776,8 @@ export default function DashboardPage() {
             />
 
             <StatCard
-              title="Tareas"
-              value={stats.totalTareas}
+              title="Movimientos"
+              value={movimientosActivos.length}
               icon={<Activity />}
               color="text-cyan-400"
             />
@@ -381,7 +808,7 @@ export default function DashboardPage() {
 
               <div className="h-[350px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={movimientos}>
+                  <AreaChart data={movimientosActivos}>
                     <defs>
                       <linearGradient
                         id="colorCash"
@@ -493,7 +920,7 @@ export default function DashboardPage() {
                 <h3 className="text-xl font-black mb-4">Próximos Pasos</h3>
 
                 <div className="space-y-3">
-                  {tareas.slice(0, 3).map((t) => (
+                  {tareasPendientesActivas.slice(0, 3).map((t) => (
                     <div
                       key={t.id}
                       className="bg-white/20 backdrop-blur-md rounded-2xl p-3 flex items-center gap-3"
@@ -512,17 +939,242 @@ export default function DashboardPage() {
                     </div>
                   ))}
 
-                  {tareas.length === 0 && (
+                  {tareasPendientesActivas.length === 0 && (
                     <p className="text-sm font-bold text-black/70">
-                      No hay tareas disponibles para tus empresas asignadas.
+                      No hay tareas pendientes para tus empresas asignadas.
                     </p>
                   )}
                 </div>
               </div>
             </div>
           </div>
+
+          <section className="grid grid-cols-1 xl:grid-cols-3 gap-8 mt-10">
+            <div className="xl:col-span-2 bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+              <div className="flex items-center justify-between gap-4 mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold">Alertas críticas</h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Procesos vencidos o con vencimiento en los próximos 3 días.
+                  </p>
+                </div>
+                <AlertTriangle className="text-red-400" size={24} />
+              </div>
+
+              <div className="space-y-3">
+                {alertasCriticas.slice(0, 10).map((alerta) => (
+                  <div
+                    key={alerta.id}
+                    className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#0f172a]/80 border border-white/10 rounded-2xl p-4"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <SemaforoBadge
+                          estado={alerta.semaforo}
+                          texto={alerta.semaforo === "rojo" ? "Vencido" : "Por vencer"}
+                        />
+                        <span className="text-[10px] text-gray-500 uppercase font-black">
+                          {alerta.tipo}
+                        </span>
+                      </div>
+                      <p className="font-bold truncate">{alerta.descripcion}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {alerta.empresa} | Responsable: {alerta.responsable}
+                      </p>
+                    </div>
+
+                    <div className="text-sm text-gray-300 shrink-0">
+                      {formatearFecha(alerta.fecha)}
+                    </div>
+                  </div>
+                ))}
+
+                {alertasCriticas.length === 0 && (
+                  <div className="rounded-2xl bg-green-500/10 border border-green-500/20 p-5 text-green-400 text-sm font-bold">
+                    No hay procesos vencidos ni próximos a vencer.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+              <div className="flex items-center gap-3 mb-6">
+                <UserRound className="text-red-400" size={22} />
+                <div>
+                  <h3 className="text-xl font-bold">Responsables con pendientes</h3>
+                  <p className="text-xs text-gray-500">Procesos vencidos</p>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {responsablesAtrasados.slice(0, 8).map((responsable) => (
+                  <div
+                    key={responsable.responsable}
+                    className="rounded-2xl border border-white/10 bg-[#0f172a]/80 p-4"
+                  >
+                    <div className="flex justify-between gap-3">
+                      <p className="font-bold text-sm truncate">
+                        {responsable.responsable}
+                      </p>
+                      <span className="text-red-400 font-black">
+                        {responsable.total}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-2">
+                      Tareas: {responsable.tareas} | Órdenes: {responsable.ordenes} | Cheques: {responsable.cheques}
+                    </p>
+                  </div>
+                ))}
+
+                {responsablesAtrasados.length === 0 && (
+                  <p className="text-sm text-gray-500">
+                    No hay responsables con procesos vencidos.
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8 mt-10">
+            <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6">
+              <div>
+                <div className="flex items-center gap-3">
+                  <Building2 className="text-cyan-400" size={22} />
+                  <h3 className="text-2xl font-bold">Resumen por empresa</h3>
+                </div>
+                <p className="text-sm text-gray-500 mt-2">
+                  Empresas ordenadas por cantidad de movimientos registrados.
+                </p>
+              </div>
+
+              {empresaConMasMovimientos && (
+                <div className="rounded-2xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-3 text-sm">
+                  <p className="text-[10px] uppercase font-black text-gray-500">
+                    Mayor actividad
+                  </p>
+                  <p className="font-bold text-cyan-400">
+                    {empresaConMasMovimientos.nombre} ({empresaConMasMovimientos.movimientos})
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              {resumenPorEmpresa.map((empresa) => (
+                <div
+                  key={empresa.id}
+                  className="grid grid-cols-2 md:grid-cols-6 gap-4 items-center rounded-2xl border border-white/10 bg-[#0f172a]/80 p-4"
+                >
+                  <div className="col-span-2">
+                    <p className="font-bold">{empresa.nombre}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Balance: Q{empresa.balance.toLocaleString("es-GT")}
+                    </p>
+                  </div>
+                  <ResumenDato label="Movimientos" value={empresa.movimientos} />
+                  <ResumenDato label="Tareas" value={empresa.tareas} />
+                  <ResumenDato label="Órdenes" value={empresa.ordenes} />
+                  <ResumenDato
+                    label="Cheques / Vencidos"
+                    value={`${empresa.cheques} / ${empresa.vencidos}`}
+                    alerta={empresa.vencidos > 0}
+                  />
+                </div>
+              ))}
+
+              {resumenPorEmpresa.length === 0 && (
+                <p className="text-sm text-gray-500">
+                  No hay empresas asignadas para mostrar resumen.
+                </p>
+              )}
+            </div>
+          </section>
         </div>
       </main>
+    </div>
+  );
+}
+
+function formatearFecha(fecha: string) {
+  const [anio, mes, dia] = fecha.slice(0, 10).split("-").map(Number);
+
+  if (!anio || !mes || !dia) return fecha;
+
+  return new Intl.DateTimeFormat("es-GT", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(anio, mes - 1, dia));
+}
+
+function SemaforoBadge({
+  estado,
+  texto,
+}: {
+  estado: Semaforo;
+  texto: string;
+}) {
+  const estilos = {
+    verde: "bg-green-500/10 border-green-500/30 text-green-400",
+    amarillo: "bg-yellow-500/10 border-yellow-500/30 text-yellow-400",
+    rojo: "bg-red-500/10 border-red-500/30 text-red-400",
+  };
+
+  const puntos = {
+    verde: "bg-green-400",
+    amarillo: "bg-yellow-400",
+    rojo: "bg-red-400",
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 ${estilos[estado]}`}
+    >
+      <span className={`h-2 w-2 rounded-full ${puntos[estado]}`} />
+      {texto}
+    </span>
+  );
+}
+
+function ExecutiveCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+      <div className="flex items-center justify-between text-gray-500 mb-3">
+        {icon}
+      </div>
+      <p className="text-[10px] uppercase font-black tracking-wider text-gray-500 min-h-[2rem]">
+        {title}
+      </p>
+      <p className={`text-3xl font-black mt-1 ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function ResumenDato({
+  label,
+  value,
+  alerta = false,
+}: {
+  label: string;
+  value: string | number;
+  alerta?: boolean;
+}) {
+  return (
+    <div>
+      <p className="text-[10px] text-gray-500 uppercase font-black">{label}</p>
+      <p className={`font-bold mt-1 ${alerta ? "text-red-400" : "text-white"}`}>
+        {value}
+      </p>
     </div>
   );
 }
