@@ -25,7 +25,7 @@ const rolesPermitidos = [
   "jefe",
 ];
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   let res = NextResponse.next();
 
   const supabase = createServerClient(
