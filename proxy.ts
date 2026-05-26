@@ -25,6 +25,11 @@ const rolesPermitidos = [
   "jefe",
 ];
 
+const rolesPermitidosContabilidad = [
+  ...rolesPermitidos,
+  "empleado",
+];
+
 export async function proxy(req: NextRequest) {
   let res = NextResponse.next();
 
@@ -89,7 +94,11 @@ export async function proxy(req: NextRequest) {
         .eq("id", user.id)
         .single();
 
-      if (!perfil?.rol || !rolesPermitidos.includes(perfil.rol)) {
+      const rolesPermitidosRuta = req.nextUrl.pathname.startsWith("/contabilidad")
+        ? rolesPermitidosContabilidad
+        : rolesPermitidos;
+
+      if (!perfil?.rol || !rolesPermitidosRuta.includes(perfil.rol)) {
         return redirectSafe("/dashboard"); // Usamos la redirección segura aquí también
       }
     }
