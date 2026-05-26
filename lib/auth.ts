@@ -32,7 +32,7 @@ export async function verificarRol(
     // Usamos .single() porque cada ID de usuario es único
     const { data: perfil, error: dbError } = await supabase
       .from("perfiles")
-      .select("rol")
+      .select("rol, activo")
       .eq("id", user.id)
       .single();
 
@@ -41,6 +41,14 @@ export async function verificarRol(
       return { 
         autorizado: false, 
         error: "No se encontró un perfil asociado a este usuario" 
+      };
+    }
+
+    if (perfil.activo === false) {
+      return {
+        autorizado: false,
+        rol: perfil.rol,
+        error: "Usuario inactivo. Contacta al administrador."
       };
     }
 
