@@ -179,6 +179,7 @@ const TIPOS_IMPORTACION: {
 
 export default function ImportacionesPage() {
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
@@ -238,6 +239,7 @@ export default function ImportacionesPage() {
       const user = acceso.user!;
       const perfil = acceso.perfil!;
 
+      setAutorizado(true);
       setUserId(user.id);
       setRolActual(perfil.rol || "");
 
@@ -889,11 +891,11 @@ XLSX.utils.book_append_sheet(libro, hoja, nombreHoja);
 XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
   }
 
-  if (loading) {
+  if (loading || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
-        Cargando importaciones...
+        Validando acceso...
       </div>
     );
   }
