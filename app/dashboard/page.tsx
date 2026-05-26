@@ -163,36 +163,38 @@ export default function DashboardPage() {
   }, [router]);
 
   useEffect(() => {
-    if (!autorizado) return;
+    if (!autorizado || !empresasPermitidas.length) return;
+
+    const filtroEmpresas = `empresa_id=in.(${empresasPermitidas.join(",")})`;
 
     const channel = supabase
       .channel("dashboard-changes")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "tareas" },
-        () => obtenerTareas(empresasRef.current)
+        { event: "*", schema: "public", table: "tareas", filter: filtroEmpresas },
+        () => obtenerTareas(empresasPermitidas)
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "movimientos" },
-        () => obtenerFinanzas(empresasRef.current)
+        { event: "*", schema: "public", table: "movimientos", filter: filtroEmpresas },
+        () => obtenerFinanzas(empresasPermitidas)
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "ordenes_compra" },
-        () => obtenerOrdenes(empresasRef.current)
+        { event: "*", schema: "public", table: "ordenes_compra", filter: filtroEmpresas },
+        () => obtenerOrdenes(empresasPermitidas)
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "cheques" },
-        () => obtenerCheques(empresasRef.current)
+        { event: "*", schema: "public", table: "cheques", filter: filtroEmpresas },
+        () => obtenerCheques(empresasPermitidas)
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [autorizado]);
+  }, [autorizado, empresasPermitidas]);
 
   async function inicializarDashboard() {
     setLoading(true);
@@ -445,8 +447,7 @@ export default function DashboardPage() {
           cheque.numero_cheque || cheque.beneficiario || `Cheque #${cheque.id}`,
         empresaId: cheque.empresa_id,
         empresa: cheque.empresa || "Empresa no identificada",
-        responsable:
-          cheque.responsable_actual || cheque.beneficiario || "Sin responsable",
+        responsable: cheque.responsable_actual || "Sin responsable",
         fecha: cheque.fecha_pago,
         semaforo,
       });
