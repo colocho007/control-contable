@@ -178,16 +178,20 @@ const TIPOS_IMPORTACION: {
 ];
 
 export default function ImportacionesPage() {
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoImportaciones, setCargandoImportaciones] = useState(false);
+  const [cargandoCatalogos, setCargandoCatalogos] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
   const [userId, setUserId] = useState<string | null>(null);
   const [rolActual, setRolActual] = useState("");
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [fondos, setFondos] = useState<FondoEmpresa[]>([]);
   const [chequeras, setChequeras] = useState<Chequera[]>([]);
   const [chequesFisicos, setChequesFisicos] = useState<ChequeFisico[]>([]);
+  const [catalogosChequesCargados, setCatalogosChequesCargados] = useState(false);
 
   const [tipo, setTipo] = useState<TipoImportacion>("proveedores");
   const [nombreArchivo, setNombreArchivo] = useState("");
@@ -207,7 +211,8 @@ export default function ImportacionesPage() {
 
   async function iniciar() {
     try {
-      setLoading(true);
+      setValidandoAcceso(true);
+      setCargandoImportaciones(false);
 
       const acceso = await validarAccesoModuloUsuario("importaciones");
 
@@ -240,6 +245,8 @@ export default function ImportacionesPage() {
       const perfil = acceso.perfil!;
 
       setAutorizado(true);
+      setValidandoAcceso(false);
+      setCargandoImportaciones(true);
       setUserId(user.id);
       setRolActual(perfil.rol || "");
 
@@ -247,6 +254,8 @@ export default function ImportacionesPage() {
         user.id,
         perfil.rol || ""
       );
+
+      setEmpresasPermitidasIds(idsPermitidos);
 
       if (!idsPermitidos.length) {
         setEmpresas([]);
@@ -262,54 +271,76 @@ export default function ImportacionesPage() {
       if (error) throw error;
 
       setEmpresas(data || []);
-
-      await cargarDatosCheques(idsPermitidos);
-
-    
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || "Error cargando importaciones");
     } finally {
-      setLoading(false);
+      setCargandoImportaciones(false);
     }
   }
 
   async function cargarDatosCheques(idsPermitidos: number[]) {
-  if (!idsPermitidos.length) {
-    setFondos([]);
-    setChequeras([]);
-    setChequesFisicos([]);
-    return;
+    if (!idsPermitidos.length) {
+      setFondos([]);
+      setChequeras([]);
+      setChequesFisicos([]);
+      setCatalogosChequesCargados(true);
+      return { fondos: [], chequeras: [], chequesFisicos: [] };
+    }
+
+    const [fondosRes, chequerasRes, chequesFisicosRes] = await Promise.all([
+      supabase
+        .from("fondos_empresa")
+        .select("*")
+        .in("empresa_id", idsPermitidos)
+        .neq("estado", "Inactiva"),
+
+      supabase
+        .from("chequeras")
+        .select("*")
+        .in("empresa_id", idsPermitidos)
+        .eq("estado", "Activa"),
+
+      supabase
+        .from("cheques_fisicos")
+        .select("*")
+        .in("empresa_id", idsPermitidos)
+        .eq("estado", "Disponible"),
+    ]);
+
+    if (fondosRes.error) throw fondosRes.error;
+    if (chequerasRes.error) throw chequerasRes.error;
+    if (chequesFisicosRes.error) throw chequesFisicosRes.error;
+
+    const nuevosFondos = fondosRes.data || [];
+    const nuevasChequeras = chequerasRes.data || [];
+    const nuevosChequesFisicos = chequesFisicosRes.data || [];
+
+    setFondos(nuevosFondos);
+    setChequeras(nuevasChequeras);
+    setChequesFisicos(nuevosChequesFisicos);
+    setCatalogosChequesCargados(true);
+
+    return {
+      fondos: nuevosFondos,
+      chequeras: nuevasChequeras,
+      chequesFisicos: nuevosChequesFisicos,
+    };
   }
 
-  const [fondosRes, chequerasRes, chequesFisicosRes] = await Promise.all([
-    supabase
-      .from("fondos_empresa")
-      .select("*")
-      .in("empresa_id", idsPermitidos)
-      .neq("estado", "Inactiva"),
+  async function asegurarDatosCheques() {
+    if (catalogosChequesCargados) {
+      return { fondos, chequeras, chequesFisicos };
+    }
 
-    supabase
-      .from("chequeras")
-      .select("*")
-      .in("empresa_id", idsPermitidos)
-      .eq("estado", "Activa"),
+    setCargandoCatalogos(true);
 
-    supabase
-      .from("cheques_fisicos")
-      .select("*")
-      .in("empresa_id", idsPermitidos)
-      .eq("estado", "Disponible"),
-  ]);
-
-  if (fondosRes.error) throw fondosRes.error;
-  if (chequerasRes.error) throw chequerasRes.error;
-  if (chequesFisicosRes.error) throw chequesFisicosRes.error;
-
-  setFondos(fondosRes.data || []);
-  setChequeras(chequerasRes.data || []);
-  setChequesFisicos(chequesFisicosRes.data || []);
-}
+    try {
+      return await cargarDatosCheques(empresasPermitidasIds);
+    } finally {
+      setCargandoCatalogos(false);
+    }
+  }
 
   function limpiarTexto(valor: any) {
     return String(valor ?? "").trim();
@@ -430,7 +461,15 @@ export default function ImportacionesPage() {
     return limite.toISOString();
   }
 
-  function transformarFila(tipoImportacion: TipoImportacion, fila: any, indice: number): FilaPreview {
+  function transformarFila(
+    tipoImportacion: TipoImportacion,
+    fila: any,
+    indice: number,
+    catalogosCheques?: {
+      fondos: FondoEmpresa[];
+      chequesFisicos: ChequeFisico[];
+    }
+  ): FilaPreview {
     const errores: string[] = [];
 
     const nombreEmpresa = limpiarTexto(
@@ -530,6 +569,9 @@ export default function ImportacionesPage() {
     }
 
 if (tipoImportacion === "cheques") {
+  const fondosDisponibles = catalogosCheques?.fondos || fondos;
+  const chequesFisicosDisponibles =
+    catalogosCheques?.chequesFisicos || chequesFisicos;
   const beneficiario = limpiarTexto(
     leerCampo(fila, ["Beneficiario", "beneficiario", "Proveedor"])
   );
@@ -588,7 +630,7 @@ const montoGtq = tipoCambio > 0 ? monto * tipoCambio : monto;
     if (!cuentaExcel) errores.push("Falta cuenta bancaria");
 
     if (empresa && numeroChequeExcel) {
-      const fondoEncontrado = fondos.find((fondo) => {
+      const fondoEncontrado = fondosDisponibles.find((fondo) => {
         const mismaEmpresa = Number(fondo.empresa_id) === Number(empresa.id);
         const mismaMoneda = fondo.moneda === moneda;
         const mismaCuenta =
@@ -613,7 +655,7 @@ const montoGtq = tipoCambio > 0 ? monto * tipoCambio : monto;
         cuentaFinal = fondoEncontrado.cuenta_bancaria || cuentaExcel;
       }
 
-      const chequeFisicoEncontrado = chequesFisicos.find((cf) => {
+      const chequeFisicoEncontrado = chequesFisicosDisponibles.find((cf) => {
         const mismoNumero =
           Number(cf.numero_cheque) === Number(numeroChequeExcel);
 
@@ -764,6 +806,8 @@ monto_gtq: montoGtq,
     setPreview([]);
 
     try {
+      const catalogosCheques =
+        tipo === "cheques" ? await asegurarDatosCheques() : undefined;
       const buffer = await archivo.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
       const hoja = workbook.Sheets[workbook.SheetNames[0]];
@@ -777,7 +821,7 @@ monto_gtq: montoGtq,
       }
 
       const resultado = filas.map((fila, index) =>
-        transformarFila(tipo, fila, index)
+        transformarFila(tipo, fila, index, catalogosCheques)
       );
 
       setPreview(resultado);
@@ -838,7 +882,7 @@ async function confirmarImportacion() {
         importados++;
       }
 
-      await cargarDatosCheques(empresas.map((empresa) => empresa.id));
+      await cargarDatosCheques(empresasPermitidasIds);
 
       toast.success(`Se importaron ${importados} cheques / pagos`, {
         id: toastId,
@@ -891,7 +935,7 @@ XLSX.utils.book_append_sheet(libro, hoja, nombreHoja);
 XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
   }
 
-  if (loading || !autorizado) {
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
@@ -927,6 +971,13 @@ XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
             </p>
           </header>
 
+          {cargandoImportaciones ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
+              <Loader2 className="animate-spin mr-2" />
+              Cargando empresas permitidas...
+            </section>
+          ) : (
+            <>
           <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
             <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
               <Upload size={16} className="text-cyan-500" />
@@ -937,9 +988,18 @@ XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
               <select
                 value={tipo}
                 onChange={(e) => {
-                  setTipo(e.target.value as TipoImportacion);
+                  const nuevoTipo = e.target.value as TipoImportacion;
+
+                  setTipo(nuevoTipo);
                   setPreview([]);
                   setNombreArchivo("");
+
+                  if (nuevoTipo === "cheques") {
+                    asegurarDatosCheques().catch((error) => {
+                      console.error(error);
+                      toast.error("Error cargando catálogos de cheques");
+                    });
+                  }
                 }}
                 className="input-custom"
               >
@@ -958,17 +1018,31 @@ XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
                 Descargar plantilla
               </button>
 
-              <label className="bg-cyan-500 hover:bg-cyan-400 text-black font-black rounded-xl transition-all h-[3.5rem] uppercase text-xs flex items-center justify-center gap-2 cursor-pointer">
+              <label
+                className={`bg-cyan-500 hover:bg-cyan-400 text-black font-black rounded-xl transition-all h-[3.5rem] uppercase text-xs flex items-center justify-center gap-2 ${
+                  cargandoCatalogos
+                    ? "opacity-60 cursor-not-allowed"
+                    : "cursor-pointer"
+                }`}
+              >
                 <Upload size={16} />
                 Subir Excel
                 <input
                   type="file"
                   accept=".xlsx,.xls,.csv"
                   onChange={leerExcel}
+                  disabled={cargandoCatalogos}
                   className="hidden"
                 />
               </label>
             </div>
+
+            {tipo === "cheques" && cargandoCatalogos && (
+              <p className="text-xs text-cyan-300 mt-5 flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin" />
+                Cargando fondos y cheques disponibles para validar la plantilla...
+              </p>
+            )}
 
             <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
               <p className="text-sm font-black text-white">
@@ -1015,7 +1089,7 @@ XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
 
               <button
                 onClick={confirmarImportacion}
-                disabled={procesando || !filasValidas.length}
+                disabled={procesando || cargandoCatalogos || !filasValidas.length}
                 className="bg-green-500 hover:bg-green-400 disabled:opacity-40 text-black font-black rounded-xl transition-all px-6 h-[3.2rem] uppercase text-xs flex items-center justify-center gap-2"
               >
                 {procesando ? (
@@ -1099,6 +1173,8 @@ XLSX.writeFile(libro, `plantilla_${tipo}.xlsx`);
               </div>
             )}
           </section>
+            </>
+          )}
         </div>
       </main>
 
