@@ -4,8 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import {
   Plus,
   CheckCircle2,
@@ -141,27 +140,37 @@ const [form, setForm] = useState({
   try {
     setLoading(true);
 
-    const modulo = await validarModuloActivo("ordenes");
+    const acceso = await validarAccesoModuloUsuario("ordenes");
 
-    if (!modulo.ok) {
-      toast.error("El módulo de Órdenes de compra está desactivado.");
+    if (!acceso.ok) {
+      if (
+        acceso.motivo === "sin_sesion" ||
+        acceso.motivo === "sin_perfil" ||
+        acceso.motivo === "usuario_inactivo"
+      ) {
+        if (acceso.motivo === "usuario_inactivo") {
+          toast.error("Tu usuario está inactivo. Contacta al administrador.");
+        }
+
+        window.location.href = "/login";
+        return;
+      }
+
+      if (
+        acceso.motivo === "modulo_inactivo" ||
+        acceso.motivo === "modulo_no_encontrado"
+      ) {
+        toast.error("El módulo de Órdenes de compra está desactivado.");
+      } else {
+        toast.error("No tienes acceso al módulo de Órdenes de compra.");
+      }
+
       window.location.href = "/dashboard";
       return;
     }
 
-    const validacion = await validarUsuarioActivo();
-
-    if (!validacion.ok) {
-      if (validacion.motivo === "usuario_inactivo") {
-        toast.error("Tu usuario está inactivo. Contacta al administrador.");
-      }
-
-      window.location.href = "/login";
-      return;
-    }
-
-    const user = validacion.user!;
-    const perfil = validacion.perfil!;
+    const user = acceso.user!;
+    const perfil = acceso.perfil!;
 
     setUserId(user.id);
     setPerfilActual(perfil);
