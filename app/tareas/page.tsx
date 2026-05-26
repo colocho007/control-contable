@@ -35,7 +35,8 @@ export default function TareasPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [userProfile, setUserProfile] = useState<Perfil | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoTareas, setCargandoTareas] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
 
@@ -59,7 +60,8 @@ const [form, setForm] = useState({
 useEffect(() => {
 const initApp = async () => {
   try {
-    setLoading(true);
+    setValidandoAcceso(true);
+    setCargandoTareas(false);
 
     const acceso = await validarAccesoModuloUsuario("tareas");
 
@@ -92,43 +94,27 @@ const initApp = async () => {
 
     const user = acceso.user!;
     const profile = acceso.perfil!;
+    setCargandoTareas(true);
+    setUserProfile(profile);
+    setAutorizado(true);
+    setValidandoAcceso(false);
+
     const idsPermitidos = await obtenerEmpresasPermitidas(
       user.id,
       profile?.rol || ""
     );
 
     setEmpresasPermitidasIds(idsPermitidos);
-    setAutorizado(true);
-    setUserProfile(profile);
 
-    if (!idsPermitidos.length) {
-      setTareas([]);
-      await fetchCatalogos(idsPermitidos, profile?.rol || "");
-      return;
-    }
-
-    let query = supabase
-      .from("tareas")
-      .select("*")
-      .in("empresa_id", idsPermitidos)
-      .neq("estado", "Cancelada")
-      .order("id", { ascending: false });
-
-    if (!ROLES_ADMIN.includes(profile?.rol || "")) {
-      query = query.eq("usuario_id", profile.id);
-    }
-
-    const { data: tData, error: tError } = await query;
-    if (tError) throw tError;
-
-    setTareas(tData || []);
-
-    await fetchCatalogos(idsPermitidos, profile?.rol || "");
+    await Promise.all([
+      fetchTareas(idsPermitidos, profile),
+      fetchCatalogos(idsPermitidos, profile?.rol || ""),
+    ]);
   } catch (error) {
     toast.error("Error al sincronizar datos iniciales");
     console.error(error);
   } finally {
-    setLoading(false);
+    setCargandoTareas(false);
   }
 };
 
@@ -176,6 +162,29 @@ const initApp = async () => {
 
     return () => { supabase.removeChannel(channel); };
   }, [autorizado, userProfile, empresasPermitidasIds]);
+
+const fetchTareas = async (idsPermitidos: number[], profile: Perfil) => {
+  if (!idsPermitidos.length) {
+    setTareas([]);
+    return;
+  }
+
+  let query = supabase
+    .from("tareas")
+    .select("*")
+    .in("empresa_id", idsPermitidos)
+    .neq("estado", "Cancelada")
+    .order("id", { ascending: false });
+
+  if (!ROLES_ADMIN.includes(profile?.rol || "")) {
+    query = query.eq("usuario_id", profile.id);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+
+  setTareas(data || []);
+};
 
 const fetchCatalogos = async (idsPermitidos: number[], rol: string) => {
   const puedeAsignar = ROLES_ADMIN.includes(rol);
@@ -483,7 +492,7 @@ const tareasFiltradas = useMemo(() => {
   });
 }, [tareas, busqueda, filtroEstado, empresasPermitidasIds]);
 
-if (loading || !autorizado) {
+if (validandoAcceso || !autorizado) {
   return (
     <div className="flex h-screen bg-[#020617] items-center justify-center text-cyan-400 font-mono italic">
       Validando acceso...
@@ -503,6 +512,13 @@ return (
             <p className="text-gray-500 text-sm">Operador: {userProfile?.nombre?.toUpperCase()} | Rol: {userProfile?.rol?.toUpperCase()}</p>
           </header>
 
+          {cargandoTareas ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-3xl p-10 flex items-center justify-center gap-2 text-cyan-400">
+              <Loader2 className="animate-spin" size={18} />
+              Cargando tareas...
+            </section>
+          ) : (
+            <>
           <section className="grid md:grid-cols-4 gap-4 mb-8">
             <StatCard label="Pendientes" value={stats.pendientes} color="text-yellow-400" />
             <StatCard label="Completadas" value={stats.completadas} color="text-green-400" />
@@ -643,6 +659,8 @@ return (
               />
             ))}
           </div>
+            </>
+          )}
         </div>
       </main>
 
