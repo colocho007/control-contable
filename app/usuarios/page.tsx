@@ -25,6 +25,7 @@ export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
   const [autorizado, setAutorizado] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   
   // Estado del formulario unificado
   const [form, setForm] = useState({ nombre: "", correo: "", rol: "trabajador" });
@@ -71,6 +72,7 @@ export default function UsuariosPage() {
         return;
       }
 
+      setCurrentUserId(acceso.user!.id);
       await obtenerUsuarios();
       setAutorizado(true);
     } catch (error) {
@@ -87,6 +89,7 @@ export default function UsuariosPage() {
     const { data, error } = await supabase
       .from("usuarios")
       .select("*")
+      .eq("activo", true)
       .order("creado_en", { ascending: false });
 
     if (error) console.error("Error al obtener usuarios:", error.message);
@@ -103,7 +106,7 @@ export default function UsuariosPage() {
     try {
       const { data, error } = await supabase
         .from("usuarios")
-        .insert([form])
+        .insert([{ ...form, activo: true }])
         .select();
 
       if (error) throw error;
@@ -118,9 +121,14 @@ export default function UsuariosPage() {
     }
   }
 
-  // 3. Eliminación (Optimista)
+  // 3. Desactivación (Optimista)
   async function eliminarUsuario(id: string) {
-    if (!confirm("¿Estás seguro de eliminar este usuario?")) return;
+    if (id === currentUserId) {
+      alert("No puedes desactivar tu propio usuario.");
+      return;
+    }
+
+    if (!confirm("¿Estás seguro de desactivar este usuario?")) return;
 
     try {
       // Quitar de la UI inmediatamente
@@ -128,12 +136,19 @@ export default function UsuariosPage() {
 
       const { error } = await supabase
         .from("usuarios")
-        .delete()
+        .update({
+          activo: false,
+          desactivado_at: new Date().toISOString(),
+          desactivado_por: currentUserId,
+          motivo_desactivacion: "Desactivado desde módulo Usuarios",
+        })
         .eq("id", id);
 
       if (error) throw error;
+
+      alert("Usuario desactivado correctamente.");
     } catch (error: any) {
-      alert("No se pudo eliminar: " + error.message);
+      alert("No se pudo desactivar: " + error.message);
       obtenerUsuarios(); // Si falla, revertir y sincronizar con la DB
     }
   }
@@ -209,7 +224,7 @@ export default function UsuariosPage() {
                   <button
                     onClick={() => eliminarUsuario(usuario.id)}
                     className="bg-red-500/10 hover:bg-red-500/30 text-red-400 p-3 rounded-2xl transition-all"
-                    title="Eliminar usuario"
+                    title="Desactivar usuario"
                   >
                     <Trash2 size={20} />
                   </button>
