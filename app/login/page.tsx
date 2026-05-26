@@ -25,17 +25,14 @@ export default function LoginPage() {
   const toastId = toast.loading("Autenticando...");
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email: emailLimpio,
       password: passwordLimpio,
     });
 
     if (error) {
-      console.error("Error real de Supabase:", error);
       throw error;
     }
-
-    console.log("Login correcto:", data);
 
     toast.success("Acceso autorizado", { id: toastId });
 
