@@ -142,7 +142,8 @@ function obtenerSemaforo(fecha?: string | null): Semaforo | null {
 export default function DashboardPage() {
   const router = useRouter();
 
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoDashboard, setCargandoDashboard] = useState(false);
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [ordenes, setOrdenes] = useState<OrdenCompra[]>([]);
@@ -197,7 +198,8 @@ export default function DashboardPage() {
   }, [autorizado, empresasPermitidas]);
 
   async function inicializarDashboard() {
-    setLoading(true);
+    setValidandoAcceso(true);
+    setCargandoDashboard(false);
 
     const acceso = await validarAccesoModuloUsuario("dashboard");
 
@@ -220,7 +222,7 @@ export default function DashboardPage() {
       }
 
       setAutorizado(false);
-      setLoading(false);
+      setValidandoAcceso(false);
       router.replace("/login");
       return;
     }
@@ -237,21 +239,28 @@ export default function DashboardPage() {
     });
 
     setEsAdmin(admin);
-
-    const empresas = await obtenerEmpresasPermitidas(user.id, p.rol);
-
-    setEmpresasPermitidas(empresas);
+    setCargandoDashboard(true);
     setAutorizado(true);
+    setValidandoAcceso(false);
 
-    await Promise.all([
-      obtenerTareas(empresas),
-      obtenerFinanzas(empresas),
-      obtenerOrdenes(empresas),
-      obtenerCheques(empresas),
-      obtenerNombresEmpresas(empresas),
-    ]);
+    try {
+      const empresas = await obtenerEmpresasPermitidas(user.id, p.rol);
 
-    setLoading(false);
+      setEmpresasPermitidas(empresas);
+
+      await Promise.all([
+        obtenerTareas(empresas),
+        obtenerFinanzas(empresas),
+        obtenerOrdenes(empresas),
+        obtenerCheques(empresas),
+        obtenerNombresEmpresas(empresas),
+      ]);
+    } catch (error) {
+      console.error("Error cargando datos del dashboard:", error);
+      toast.error("Error cargando datos del dashboard");
+    } finally {
+      setCargandoDashboard(false);
+    }
   }
 
   async function obtenerTareas(empresasParam = empresasRef.current) {
@@ -595,13 +604,13 @@ export default function DashboardPage() {
 
   const COLORS = ["#06b6d4", "#1e293b"];
 
-  if (loading) {
+  if (validandoAcceso) {
     return (
       <div className="h-screen w-full bg-[#020617] flex items-center justify-center">
         <div className="animate-pulse flex flex-col items-center">
           <div className="w-16 h-16 bg-cyan-500/20 rounded-full mb-4"></div>
           <p className="text-cyan-500 font-mono tracking-widest">
-            CARGANDO SISTEMA...
+            VALIDANDO ACCESO...
           </p>
         </div>
       </div>
@@ -651,7 +660,9 @@ export default function DashboardPage() {
               </p>
 
               <p className="text-xs text-gray-500 mt-2">
-                {esAdmin
+                {cargandoDashboard
+                  ? "Cargando alcance de datos..."
+                  : esAdmin
                   ? "Vista global de todas las empresas"
                   : `Vista filtrada por ${empresasPermitidas.length} empresa(s) asignada(s)`}
               </p>
@@ -714,48 +725,56 @@ export default function DashboardPage() {
                 value={chequesPendientesActivos.length}
                 icon={<CreditCard size={18} />}
                 color="text-cyan-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Órdenes pendientes"
                 value={ordenesPendientesActivas.length}
                 icon={<FileText size={18} />}
                 color="text-purple-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Tareas pendientes"
                 value={tareasPendientesActivas.length}
                 icon={<Activity size={18} />}
                 color="text-cyan-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Tareas vencidas"
                 value={tareasVencidas.length}
                 icon={<AlertTriangle size={18} />}
                 color="text-red-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Pagos por vencer"
                 value={pagosPorVencer.length}
                 icon={<Clock3 size={18} />}
                 color="text-yellow-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Procesos vencidos"
                 value={procesosVencidos.length}
                 icon={<AlertTriangle size={18} />}
                 color="text-red-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="Por vencer"
                 value={procesosPorVencer.length}
                 icon={<Clock3 size={18} />}
                 color="text-yellow-400"
+                loading={cargandoDashboard}
               />
               <ExecutiveCard
                 title="En tiempo"
                 value={procesosEnTiempo.length}
                 icon={<CheckCircle2 size={18} />}
                 color="text-green-400"
+                loading={cargandoDashboard}
               />
             </div>
           </section>
@@ -767,6 +786,7 @@ export default function DashboardPage() {
               value={`Q${stats.balance.toLocaleString("es-GT")}`}
               icon={<Wallet />}
               color="text-white"
+              loading={cargandoDashboard}
             />
 
             <StatCard
@@ -774,6 +794,7 @@ export default function DashboardPage() {
               value={`Q${stats.ingresos.toLocaleString("es-GT")}`}
               icon={<TrendingUp />}
               color="text-green-400"
+              loading={cargandoDashboard}
             />
 
             <StatCard
@@ -781,6 +802,7 @@ export default function DashboardPage() {
               value={movimientosActivos.length}
               icon={<Activity />}
               color="text-cyan-400"
+              loading={cargandoDashboard}
             />
 
             <StatCard
@@ -788,6 +810,7 @@ export default function DashboardPage() {
               value={`${stats.progreso}%`}
               icon={<CheckCircle2 />}
               color="text-purple-400"
+              loading={cargandoDashboard}
             />
           </div>
 
@@ -808,8 +831,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="h-[350px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={movimientosActivos}>
+                {cargandoDashboard ? (
+                  <CargandoDatos />
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={movimientosActivos}>
                     <defs>
                       <linearGradient
                         id="colorCash"
@@ -871,8 +897,9 @@ export default function DashboardPage() {
                       strokeWidth={4}
                       fill="url(#colorCash)"
                     />
-                  </AreaChart>
-                </ResponsiveContainer>
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -884,36 +911,42 @@ export default function DashboardPage() {
                 </h3>
 
                 <div className="h-[200px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={pieData}
-                        innerRadius={60}
-                        outerRadius={80}
-                        paddingAngle={5}
-                        dataKey="value"
-                      >
-                        {pieData.map((_, i) => (
-                          <Cell key={i} fill={COLORS[i]} stroke="none" />
-                        ))}
-                      </Pie>
+                  {cargandoDashboard ? (
+                    <CargandoDatos />
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={pieData}
+                          innerRadius={60}
+                          outerRadius={80}
+                          paddingAngle={5}
+                          dataKey="value"
+                        >
+                          {pieData.map((_, i) => (
+                            <Cell key={i} fill={COLORS[i]} stroke="none" />
+                          ))}
+                        </Pie>
 
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
 
-                <div className="flex justify-center gap-6 mt-4">
-                  <div className="flex items-center gap-2 text-xs text-gray-400">
-                    <div className="w-3 h-3 bg-cyan-500 rounded-full" />{" "}
-                    Completadas
-                  </div>
+                {!cargandoDashboard && (
+                  <div className="flex justify-center gap-6 mt-4">
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <div className="w-3 h-3 bg-cyan-500 rounded-full" />{" "}
+                      Completadas
+                    </div>
 
-                  <div className="flex items-center gap-2 text-xs text-gray-400">
-                    <div className="w-3 h-3 bg-slate-800 rounded-full" />{" "}
-                    Pendientes
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <div className="w-3 h-3 bg-slate-800 rounded-full" />{" "}
+                      Pendientes
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* LISTA RÁPIDA */}
@@ -921,7 +954,15 @@ export default function DashboardPage() {
                 <h3 className="text-xl font-black mb-4">Próximos Pasos</h3>
 
                 <div className="space-y-3">
-                  {tareasPendientesActivas.slice(0, 3).map((t) => (
+                  {cargandoDashboard && (
+                    <p className="text-sm font-bold text-black/70">
+                      Cargando datos...
+                    </p>
+                  )}
+
+                  {!cargandoDashboard && (
+                    <>
+                      {tareasPendientesActivas.slice(0, 3).map((t) => (
                     <div
                       key={t.id}
                       className="bg-white/20 backdrop-blur-md rounded-2xl p-3 flex items-center gap-3"
@@ -940,10 +981,12 @@ export default function DashboardPage() {
                     </div>
                   ))}
 
-                  {tareasPendientesActivas.length === 0 && (
+                      {tareasPendientesActivas.length === 0 && (
                     <p className="text-sm font-bold text-black/70">
                       No hay tareas pendientes para tus empresas asignadas.
                     </p>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -963,7 +1006,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-3">
-                {alertasCriticas.slice(0, 10).map((alerta) => (
+                {cargandoDashboard ? (
+                  <CargandoDatos />
+                ) : (
+                  <>
+                    {alertasCriticas.slice(0, 10).map((alerta) => (
                   <div
                     key={alerta.id}
                     className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-[#0f172a]/80 border border-white/10 rounded-2xl p-4"
@@ -990,10 +1037,12 @@ export default function DashboardPage() {
                   </div>
                 ))}
 
-                {alertasCriticas.length === 0 && (
+                    {alertasCriticas.length === 0 && (
                   <div className="rounded-2xl bg-green-500/10 border border-green-500/20 p-5 text-green-400 text-sm font-bold">
                     No hay procesos vencidos ni próximos a vencer.
                   </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1008,7 +1057,11 @@ export default function DashboardPage() {
               </div>
 
               <div className="space-y-3">
-                {responsablesAtrasados.slice(0, 8).map((responsable) => (
+                {cargandoDashboard ? (
+                  <CargandoDatos />
+                ) : (
+                  <>
+                    {responsablesAtrasados.slice(0, 8).map((responsable) => (
                   <div
                     key={responsable.responsable}
                     className="rounded-2xl border border-white/10 bg-[#0f172a]/80 p-4"
@@ -1027,10 +1080,12 @@ export default function DashboardPage() {
                   </div>
                 ))}
 
-                {responsablesAtrasados.length === 0 && (
+                    {responsablesAtrasados.length === 0 && (
                   <p className="text-sm text-gray-500">
                     No hay responsables con procesos vencidos.
                   </p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1048,7 +1103,7 @@ export default function DashboardPage() {
                 </p>
               </div>
 
-              {empresaConMasMovimientos && (
+              {!cargandoDashboard && empresaConMasMovimientos && (
                 <div className="rounded-2xl bg-cyan-500/10 border border-cyan-500/20 px-4 py-3 text-sm">
                   <p className="text-[10px] uppercase font-black text-gray-500">
                     Mayor actividad
@@ -1061,7 +1116,11 @@ export default function DashboardPage() {
             </div>
 
             <div className="space-y-3">
-              {resumenPorEmpresa.map((empresa) => (
+              {cargandoDashboard ? (
+                <CargandoDatos />
+              ) : (
+                <>
+                  {resumenPorEmpresa.map((empresa) => (
                 <div
                   key={empresa.id}
                   className="grid grid-cols-2 md:grid-cols-6 gap-4 items-center rounded-2xl border border-white/10 bg-[#0f172a]/80 p-4"
@@ -1083,10 +1142,12 @@ export default function DashboardPage() {
                 </div>
               ))}
 
-              {resumenPorEmpresa.length === 0 && (
+                  {resumenPorEmpresa.length === 0 && (
                 <p className="text-sm text-gray-500">
                   No hay empresas asignadas para mostrar resumen.
                 </p>
+                  )}
+                </>
               )}
             </div>
           </section>
@@ -1137,16 +1198,26 @@ function SemaforoBadge({
   );
 }
 
+function CargandoDatos() {
+  return (
+    <div className="min-h-[100px] h-full flex items-center justify-center text-sm font-medium text-gray-500">
+      Cargando datos...
+    </div>
+  );
+}
+
 function ExecutiveCard({
   title,
   value,
   icon,
   color,
+  loading = false,
 }: {
   title: string;
   value: number;
   icon: React.ReactNode;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -1156,7 +1227,13 @@ function ExecutiveCard({
       <p className="text-[10px] uppercase font-black tracking-wider text-gray-500 min-h-[2rem]">
         {title}
       </p>
-      <p className={`text-3xl font-black mt-1 ${color}`}>{value}</p>
+      <p className={`text-3xl font-black mt-1 ${color}`}>
+        {loading ? (
+          <span className="text-sm text-gray-500">Cargando...</span>
+        ) : (
+          value
+        )}
+      </p>
     </div>
   );
 }
@@ -1185,11 +1262,13 @@ function StatCard({
   value,
   icon,
   color,
+  loading = false,
 }: {
   title: string;
   value: string | number;
   icon: React.ReactNode;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <motion.div
@@ -1204,7 +1283,13 @@ function StatCard({
         <p className="text-gray-500 text-xs font-bold uppercase tracking-widest">
           {title}
         </p>
-        <h2 className={`text-3xl font-black mt-1 ${color}`}>{value}</h2>
+        <h2 className={`text-3xl font-black mt-1 ${color}`}>
+          {loading ? (
+            <span className="text-sm text-gray-500">Cargando...</span>
+          ) : (
+            value
+          )}
+        </h2>
       </div>
     </motion.div>
   );
