@@ -36,6 +36,7 @@ interface Proveedor {
 
 export default function ProveedoresPage() {
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [rolActual, setRolActual] = useState("");
@@ -108,6 +109,7 @@ export default function ProveedoresPage() {
 
       await obtenerEmpresas(user.id, perfil.rol || "");
       await obtenerProveedores(user.id, perfil.rol || "");
+      setAutorizado(true);
     } catch (error) {
       console.error(error);
       toast.error("Error cargando proveedores");
@@ -286,11 +288,11 @@ export default function ProveedoresPage() {
     );
   }, [proveedores, busqueda]);
 
-  if (loading) {
+  if (loading || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
-        Cargando proveedores...
+        Validando acceso...
       </div>
     );
   }
