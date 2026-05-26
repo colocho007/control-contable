@@ -145,11 +145,25 @@ setIsr(0);
 
   async function eliminarEmpresa(id: number) {
 
-    await supabase
+    const confirmarInactivacion = window.confirm(
+      "¿Deseas inactivar esta empresa?"
+    );
+
+    if (!confirmarInactivacion) {
+      return;
+    }
+
+    const { error } = await supabase
       .from("empresas")
-      .delete()
+      .update({ estado: "Inactiva" })
       .eq("id", id);
 
+    if (error) {
+      alert("Error al inactivar la empresa: " + error.message);
+      return;
+    }
+
+    alert("Empresa inactivada correctamente.");
     obtenerEmpresas();
   }
 
