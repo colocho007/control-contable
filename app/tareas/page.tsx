@@ -34,6 +34,7 @@ export default function TareasPage() {
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [userProfile, setUserProfile] = useState<Perfil | null>(null);
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
 
   const [busqueda, setBusqueda] = useState("");
@@ -90,6 +91,7 @@ const initApp = async () => {
     const user = acceso.user!;
     const profile = acceso.perfil!;
 
+    setAutorizado(true);
     setUserProfile(profile);
 
     let query = supabase
@@ -424,10 +426,10 @@ const tareasFiltradas = useMemo(() => {
   });
 }, [tareas, busqueda, filtroEstado, empresasPermitidasIds]);
 
-if (loading) {
+if (loading || !autorizado) {
   return (
     <div className="flex h-screen bg-[#020617] items-center justify-center text-cyan-400 font-mono italic">
-      BOOTING_SYSTEM...
+      Validando acceso...
     </div>
   );
 }
