@@ -76,7 +76,8 @@ export default function AdminPage() {
   const [usuarioModulos, setUsuarioModulos] = useState<UsuarioModulo[]>([]);
 const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
 
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoAdmin, setCargandoAdmin] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
@@ -92,7 +93,8 @@ const [activoSeleccionado, setActivoSeleccionado] = useState(true);
 
   async function iniciar() {
     try {
-      setLoading(true);
+      setValidandoAcceso(true);
+      setCargandoAdmin(false);
 
      const validacion = await validarUsuarioActivo();
 
@@ -117,13 +119,15 @@ if (!ROLES_ADMIN.includes(rolActual)) {
   return;
 }
 
-await cargarDatos();
 setAutorizado(true);
+setValidandoAcceso(false);
+setCargandoAdmin(true);
+await cargarDatos();
     } catch (error) {
       console.error(error);
       toast.error("Error cargando panel administrador");
     } finally {
-      setLoading(false);
+      setCargandoAdmin(false);
     }
   }
 
@@ -503,7 +507,7 @@ async function quitarAsignacion(id: number) {
     };
   }, [usuarios, empresas, asignaciones]);
 
-  if (loading || !autorizado) {
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
@@ -552,16 +556,25 @@ async function quitarAsignacion(id: number) {
               </p>
             </div>
 
-            <button
-              onClick={cargarDatos}
-              disabled={procesando}
-              className="h-12 px-5 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-sm font-bold text-gray-300 flex items-center gap-2 disabled:opacity-50"
-            >
-              <RefreshCcw size={16} />
-              Actualizar
-            </button>
+            {!cargandoAdmin && (
+              <button
+                onClick={cargarDatos}
+                disabled={procesando}
+                className="h-12 px-5 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-sm font-bold text-gray-300 flex items-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCcw size={16} />
+                Actualizar
+              </button>
+            )}
           </header>
 
+          {cargandoAdmin ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
+              <Loader2 className="animate-spin mr-2" />
+              Cargando datos administrativos...
+            </section>
+          ) : (
+            <>
           <section className="grid md:grid-cols-4 gap-5 mb-10">
             <CardResumen
               icon={<Users size={22} />}
@@ -918,6 +931,8 @@ El Panel Admin no se puede desactivar desde aquí para evitar perder el acceso.
               </div>
             </div>
           </section>
+            </>
+          )}
         </div>
       </main>
 
