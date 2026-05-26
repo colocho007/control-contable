@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
 import { History, Search, Clock, User as UserIcon } from "lucide-react";
 
 interface Log {
@@ -14,29 +16,57 @@ interface Log {
 }
 
 export default function HistorialPage() {
+  const router = useRouter();
   const [logs, setLogs] = useState<Log[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState("");
 
   useEffect(() => {
-    obtenerLogs();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let activo = true;
 
-    // Suscripción en tiempo real: Si ocurre una acción nueva, aparece arriba
-    const channel = supabase
-      .channel("realtime-logs")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "logs" },
-        (payload) => {
-          setLogs((current) => [payload.new as Log, ...current]);
-        }
-      )
-      .subscribe();
+    async function iniciar() {
+      const validacion = await validarUsuarioActivo();
+
+      if (!validacion.ok) {
+        router.replace("/login");
+        return;
+      }
+
+      const rolNormalizado = (validacion.perfil?.rol || "").trim().toLowerCase();
+
+      if (!["admin", "supervisor", "jefe"].includes(rolNormalizado)) {
+        router.replace("/dashboard");
+        return;
+      }
+
+      await obtenerLogs();
+
+      if (!activo) return;
+
+      // Suscripción en tiempo real: Si ocurre una acción nueva, aparece arriba
+      channel = supabase
+        .channel("realtime-logs")
+        .on(
+          "postgres_changes",
+          { event: "INSERT", schema: "public", table: "logs" },
+          (payload) => {
+            setLogs((current) => [payload.new as Log, ...current]);
+          }
+        )
+        .subscribe();
+    }
+
+    iniciar();
 
     return () => {
-      supabase.removeChannel(channel);
+      activo = false;
+
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
-  }, []);
+  }, [router]);
 
   async function obtenerLogs() {
     try {
