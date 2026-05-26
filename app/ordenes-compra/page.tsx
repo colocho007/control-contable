@@ -221,7 +221,6 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
     setUsuarios(data || []);
   }
 
-  // 🚀 CORRECCIÓN APLICADA: Dejamos que Supabase traiga todo y el Frontend filtra inteligentemente
  async function obtenerOrdenes(usuarioId: string, rol: string) {
   const rolNormalizado = normalizarRol(rol);
   const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rolNormalizado);
@@ -231,43 +230,66 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
     return;
   }
 
-  const { data, error } = await supabase
+  if (rolNormalizado === "firmante_oc") {
+    const { data: ordenesAsignadas, error: firmasError } = await supabase
+      .from("ordenes_compra")
+      .select("id, firmas_asignadas:ordenes_compra_firmas!inner(firmante_id)")
+      .in("empresa_id", idsPermitidos)
+      .eq("firmas_asignadas.firmante_id", usuarioId);
+
+    if (firmasError) throw firmasError;
+
+    const idsOrdenesAsignadas = Array.from(
+      new Set(
+        (ordenesAsignadas || [])
+          .map((orden) => Number(orden.id))
+          .filter((id) => Number.isFinite(id))
+      )
+    );
+
+    if (!idsOrdenesAsignadas.length) {
+      setOrdenes([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("ordenes_compra")
+      .select("*, ordenes_compra_firmas(*)")
+      .in("empresa_id", idsPermitidos)
+      .in("id", idsOrdenesAsignadas)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+
+    setOrdenes((data || []) as OrdenCompra[]);
+    return;
+  }
+
+  if (
+    !ROLES_ADMIN.includes(rolNormalizado) &&
+    rolNormalizado !== "empleado" &&
+    rolNormalizado !== "iniciador_gestion"
+  ) {
+    setOrdenes([]);
+    return;
+  }
+
+  let query = supabase
     .from("ordenes_compra")
     .select("*, ordenes_compra_firmas(*)")
-    .in("empresa_id", idsPermitidos)
-    .order("created_at", { ascending: false });
+    .in("empresa_id", idsPermitidos);
+
+  if (rolNormalizado === "iniciador_gestion") {
+    query = query.eq("creado_por", usuarioId);
+  }
+
+  const { data, error } = await query.order("created_at", {
+    ascending: false,
+  });
 
   if (error) throw error;
 
-  const ordenesData = (data || []) as OrdenCompra[];
-
-  if (ROLES_ADMIN.includes(rolNormalizado)) {
-    setOrdenes(ordenesData);
-    return;
-  }
-
-  if (rolNormalizado === "empleado") {
-    setOrdenes(ordenesData);
-    return;
-  }
-
-  if (rolNormalizado === "iniciador_gestion") {
-    setOrdenes(ordenesData.filter((orden) => orden.creado_por === usuarioId));
-    return;
-  }
-
-  if (rolNormalizado === "firmante_oc") {
-    setOrdenes(
-      ordenesData.filter((orden) =>
-        orden.ordenes_compra_firmas?.some(
-          (firma) => firma.firmante_id === usuarioId
-        )
-      )
-    );
-    return;
-  }
-
-  setOrdenes([]);
+  setOrdenes((data || []) as OrdenCompra[]);
 }
 
   async function refrescarOrdenes() {
