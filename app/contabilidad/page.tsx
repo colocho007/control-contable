@@ -5,8 +5,7 @@ import { useEffect, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import {
   Plus,
   Trash2,
@@ -61,27 +60,37 @@ const [userId, setUserId] = useState<string | null>(null);
 
 useEffect(() => {
   async function iniciar() {
-    const modulo = await validarModuloActivo("contabilidad");
+    const acceso = await validarAccesoModuloUsuario("contabilidad");
 
-    if (!modulo.ok) {
-      alert("El módulo de Contabilidad está desactivado.");
+    if (!acceso.ok) {
+      if (
+        acceso.motivo === "sin_sesion" ||
+        acceso.motivo === "sin_perfil" ||
+        acceso.motivo === "usuario_inactivo"
+      ) {
+        if (acceso.motivo === "usuario_inactivo") {
+          alert("Tu usuario está inactivo. Contacta al administrador.");
+        }
+
+        router.replace("/login");
+        return;
+      }
+
+      if (
+        acceso.motivo === "modulo_inactivo" ||
+        acceso.motivo === "modulo_no_encontrado"
+      ) {
+        alert("El módulo de Contabilidad está desactivado.");
+      } else {
+        alert("No tienes acceso al módulo de Contabilidad.");
+      }
+
       router.replace("/dashboard");
       return;
     }
 
- const validacion = await validarUsuarioActivo();
-
-if (!validacion.ok) {
-  if (validacion.motivo === "usuario_inactivo") {
-    alert("Tu usuario está inactivo. Contacta al administrador.");
-  }
-
-  router.replace("/login");
-  return;
-}
-
-const user = validacion.user!;
-const perfil = validacion.perfil!;
+const user = acceso.user!;
+const perfil = acceso.perfil!;
 
 const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
 
