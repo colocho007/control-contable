@@ -44,6 +44,8 @@ export default function ContabilidadPage() {
   const [listaEmpresas, setListaEmpresas] = useState<Empresa[]>([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
   const [rolActual, setRolActual] = useState("");
 const [userId, setUserId] = useState<string | null>(null);
@@ -94,16 +96,18 @@ const perfil = acceso.perfil!;
 
 const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
 
-setRolActual(rolNormalizado);
-setUserId(user.id);
-
 if (!["admin", "supervisor", "jefe", "empleado"].includes(rolNormalizado)) {
   router.replace("/dashboard");
   return;
 }
 
+setRolActual(rolNormalizado);
+setUserId(user.id);
+
     const idsPermitidos = await obtenerEmpresas(user.id, perfil.rol || "");
     await obtenerMovimientos(idsPermitidos);
+    setAutorizado(true);
+    setValidandoAcceso(false);
   }
 
   iniciar();
@@ -295,6 +299,14 @@ const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
       ? "Todas las empresas"
       : listaEmpresas.find((emp) => String(emp.id) === empresaFiltro)?.nombre ||
         "empresa seleccionada";
+
+  if (validandoAcceso || !autorizado) {
+    return (
+      <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        Validando acceso...
+      </div>
+    );
+  }
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
