@@ -432,6 +432,7 @@ async function obtenerResumenChequeras(usuarioId: string, rol: string) {
 }
 
 async function obtenerHistorialCheques(usuarioId: string, rol: string) {
+  const rolNormalizado = (rol || "").trim().toLowerCase();
   const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
 
   if (!idsPermitidos.length) {
@@ -439,10 +440,19 @@ async function obtenerHistorialCheques(usuarioId: string, rol: string) {
     return;
   }
 
-  const { data: chequesPermitidos, error: chequesError } = await supabase
+  let queryChequesPermitidos = supabase
     .from("cheques")
     .select("id")
     .in("empresa_id", idsPermitidos);
+
+  if (!ROLES_JEFATURA.includes(rolNormalizado)) {
+    queryChequesPermitidos = queryChequesPermitidos.or(
+      `creado_por.eq.${usuarioId},responsable_actual.eq.${usuarioId}`
+    );
+  }
+
+  const { data: chequesPermitidos, error: chequesError } =
+    await queryChequesPermitidos;
 
   if (chequesError) throw chequesError;
 
