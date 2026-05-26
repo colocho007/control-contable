@@ -178,7 +178,7 @@ const [form, setForm] = useState({
 
     await Promise.all([
       obtenerEmpresas(user.id, perfil.rol || ""),
-      obtenerUsuarios(),
+      obtenerUsuarios(perfil.rol || ""),
       obtenerOrdenes(user.id, perfil.rol || ""),
     ]);
     setAutorizado(true);
@@ -211,10 +211,15 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
 }
  
 
-  async function obtenerUsuarios() {
+  async function obtenerUsuarios(rol: string) {
+    if (!ROLES_CREADORES.includes(normalizarRol(rol))) {
+      setUsuarios([]);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("perfiles")
-      .select("id,nombre,rol")
+      .select("id,nombre,rol,activo")
       .order("nombre", { ascending: true });
 
     if (error) throw error;
