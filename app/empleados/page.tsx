@@ -28,6 +28,8 @@ export default function EmpleadosPage() {
   const router = useRouter();
   const [empleados, setEmpleados] = useState<Perfil[]>([]);
   const [loading, setLoading] = useState(false);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   
   // ✅ NUEVO: Estado para proteger la interfaz según el rol
@@ -83,7 +85,9 @@ export default function EmpleadosPage() {
     setCurrentUserId(user.id);
     setRolActual(rolNormalizado);
 
-    obtenerEmpleados();
+    await obtenerEmpleados();
+    setAutorizado(true);
+    setValidandoAcceso(false);
   }
 
   iniciar();
@@ -153,6 +157,14 @@ export default function EmpleadosPage() {
     } catch (error: any) {
       toast.error("Error al desactivar usuario: " + error.message, { id: toastId });
     }
+  }
+
+  if (validandoAcceso || !autorizado) {
+    return (
+      <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        Validando acceso...
+      </div>
+    );
   }
 
   return (
