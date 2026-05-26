@@ -3,7 +3,10 @@ import { validarModuloActivo } from "./validarModuloActivo";
 import { validarUsuarioActivo } from "./validarUsuarioActivo";
 
 export async function validarAccesoModuloUsuario(clave: string) {
-  const validacion = await validarUsuarioActivo();
+  const [validacion, modulo] = await Promise.all([
+    validarUsuarioActivo(),
+    validarModuloActivo(clave),
+  ]);
 
   if (!validacion.ok) {
     return {
@@ -14,8 +17,6 @@ export async function validarAccesoModuloUsuario(clave: string) {
       motivo: validacion.motivo,
     };
   }
-
-  const modulo = await validarModuloActivo(clave);
 
   if (!modulo.ok) {
     return {
