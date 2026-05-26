@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { Trash2, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 import {
@@ -59,27 +58,37 @@ const initApp = async () => {
   try {
     setLoading(true);
 
-    const modulo = await validarModuloActivo("tareas");
+    const acceso = await validarAccesoModuloUsuario("tareas");
 
-    if (!modulo.ok) {
-      toast.error("El módulo de Tareas está desactivado.");
+    if (!acceso.ok) {
+      if (
+        acceso.motivo === "sin_sesion" ||
+        acceso.motivo === "sin_perfil" ||
+        acceso.motivo === "usuario_inactivo"
+      ) {
+        if (acceso.motivo === "usuario_inactivo") {
+          toast.error("Tu usuario está inactivo. Contacta al administrador.");
+        }
+
+        router.push("/login");
+        return;
+      }
+
+      if (
+        acceso.motivo === "modulo_inactivo" ||
+        acceso.motivo === "modulo_no_encontrado"
+      ) {
+        toast.error("El módulo de Tareas está desactivado.");
+      } else {
+        toast.error("No tienes acceso al módulo de Tareas.");
+      }
+
       router.push("/dashboard");
       return;
     }
 
-    const validacion = await validarUsuarioActivo();
-
-    if (!validacion.ok) {
-      if (validacion.motivo === "usuario_inactivo") {
-        toast.error("Tu usuario está inactivo. Contacta al administrador.");
-      }
-
-      router.push("/login");
-      return;
-    }
-
-    const user = validacion.user!;
-    const profile = validacion.perfil!;
+    const user = acceso.user!;
+    const profile = acceso.perfil!;
 
     setUserProfile(profile);
 
