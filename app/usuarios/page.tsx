@@ -13,153 +13,166 @@ function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
 }
 
-interface Usuario {
+interface Perfil {
   id: string;
   nombre: string;
-  correo: string;
   rol: string;
+  activo: boolean | null;
+  created_at: string | null;
 }
 
 export default function UsuariosPage() {
   const router = useRouter();
-  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [perfiles, setPerfiles] = useState<Perfil[]>([]);
   const [loading, setLoading] = useState(true);
+  const [procesando, setProcesando] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  
-  // Estado del formulario unificado
-  const [form, setForm] = useState({ nombre: "", correo: "", rol: "trabajador" });
 
-  // 1. Verificación de Seguridad y Carga de Datos
- useEffect(() => {
-  const inicializar = async () => {
-    try {
-      const acceso = await validarAccesoModuloUsuario("usuarios");
+  const [form, setForm] = useState({
+    nombre: "",
+    uid: "",
+    rol: "empleado",
+  });
 
-      if (!acceso.ok) {
-        if (
-          acceso.motivo === "sin_sesion" ||
-          acceso.motivo === "sin_perfil" ||
-          acceso.motivo === "usuario_inactivo"
-        ) {
-          if (acceso.motivo === "usuario_inactivo") {
-            alert("Tu usuario está inactivo. Contacta al administrador.");
+  useEffect(() => {
+    const inicializar = async () => {
+      try {
+        const acceso = await validarAccesoModuloUsuario("usuarios");
+
+        if (!acceso.ok) {
+          if (
+            acceso.motivo === "sin_sesion" ||
+            acceso.motivo === "sin_perfil" ||
+            acceso.motivo === "usuario_inactivo"
+          ) {
+            if (acceso.motivo === "usuario_inactivo") {
+              alert("Tu usuario está inactivo. Contacta al administrador.");
+            }
+
+            router.replace("/login");
+            return;
           }
 
-          router.replace("/login");
+          if (
+            acceso.motivo === "modulo_inactivo" ||
+            acceso.motivo === "modulo_no_encontrado"
+          ) {
+            alert("El módulo de Usuarios está desactivado.");
+          } else {
+            alert("No tienes acceso al módulo de Usuarios.");
+          }
+
+          router.replace("/dashboard");
           return;
         }
 
-        if (
-          acceso.motivo === "modulo_inactivo" ||
-          acceso.motivo === "modulo_no_encontrado"
-        ) {
-          alert("El módulo de Usuarios está desactivado.");
-        } else {
-          alert("No tienes acceso al módulo de Usuarios.");
+        const rolNormalizado = normalizarRol(acceso.perfil?.rol);
+
+        if (!ROLES_PERMITIDOS.includes(rolNormalizado)) {
+          router.replace("/dashboard");
+          return;
         }
 
-        router.replace("/dashboard");
-        return;
+        setCurrentUserId(acceso.user!.id);
+        await obtenerPerfiles();
+        setAutorizado(true);
+      } catch (error) {
+        console.error("Error de inicialización:", error);
+      } finally {
+        setLoading(false);
       }
+    };
 
-      const perfil = acceso.perfil!;
+    inicializar();
+  }, [router]);
 
-      const rolNormalizado = normalizarRol(perfil?.rol);
-
-      if (!ROLES_PERMITIDOS.includes(rolNormalizado)) {
-        router.replace("/dashboard");
-        return;
-      }
-
-      setCurrentUserId(acceso.user!.id);
-      await obtenerUsuarios();
-      setAutorizado(true);
-    } catch (error) {
-      console.error("Error de inicialización:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  inicializar();
-}, [router]);
-
-  const obtenerUsuarios = async () => {
+  async function obtenerPerfiles() {
     const { data, error } = await supabase
-      .from("usuarios")
-      .select("*")
+      .from("perfiles")
+      .select("id,nombre,rol,activo,created_at")
       .eq("activo", true)
-      .order("creado_en", { ascending: false });
+      .order("created_at", { ascending: false });
 
-    if (error) console.error("Error al obtener usuarios:", error.message);
-    else setUsuarios(data || []);
-  };
-
-  // 2. Validación y Creación (Optimista)
-  async function crearUsuario() {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    
-    if (!form.nombre || !form.correo) return alert("Completa todos los campos");
-    if (!emailRegex.test(form.correo)) return alert("Correo no válido");
-
-    try {
-      const { data, error } = await supabase
-        .from("usuarios")
-        .insert([{ ...form, activo: true }])
-        .select();
-
-      if (error) throw error;
-
-      // Actualización optimista: añadir al estado sin recargar de la DB
-      if (data) {
-        setUsuarios([data[0], ...usuarios]);
-        setForm({ nombre: "", correo: "", rol: "trabajador" });
-      }
-    } catch (error: any) {
-      alert("Error al crear: " + error.message);
-    }
-  }
-
-  // 3. Desactivación (Optimista)
-  async function eliminarUsuario(id: string) {
-    if (id === currentUserId) {
-      alert("No puedes desactivar tu propio usuario.");
+    if (error) {
+      console.error("Error al obtener perfiles:", error.message);
       return;
     }
 
-    if (!confirm("¿Estás seguro de desactivar este usuario?")) return;
+    setPerfiles(data || []);
+  }
+
+  async function crearPerfil() {
+    if (!form.nombre.trim() || !form.uid.trim()) {
+      alert("Completa el nombre y el UID existente de Supabase Auth.");
+      return;
+    }
+
+    setProcesando(true);
 
     try {
-      // Quitar de la UI inmediatamente
-      setUsuarios(usuarios.filter(u => u.id !== id));
+      const { error } = await supabase.from("perfiles").insert([
+        {
+          id: form.uid.trim(),
+          nombre: form.nombre.trim(),
+          rol: form.rol,
+          activo: true,
+        },
+      ]);
 
+      if (error) throw error;
+
+      setForm({ nombre: "", uid: "", rol: "empleado" });
+      await obtenerPerfiles();
+      alert("Perfil de usuario creado correctamente.");
+    } catch (error: any) {
+      alert("Error al crear perfil de usuario: " + error.message);
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function desactivarPerfil(id: string) {
+    if (id === currentUserId) {
+      alert("No puedes desactivar tu propio perfil de usuario.");
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "¿Estás seguro de desactivar este perfil de usuario? Perderá acceso al sistema."
+      )
+    ) {
+      return;
+    }
+
+    setProcesando(true);
+
+    try {
       const { error } = await supabase
-        .from("usuarios")
-        .update({
-          activo: false,
-          desactivado_at: new Date().toISOString(),
-          desactivado_por: currentUserId,
-          motivo_desactivacion: "Desactivado desde módulo Usuarios",
-        })
+        .from("perfiles")
+        .update({ activo: false })
         .eq("id", id);
 
       if (error) throw error;
 
-      alert("Usuario desactivado correctamente.");
+      await obtenerPerfiles();
+      alert("Perfil de usuario desactivado correctamente.");
     } catch (error: any) {
-      alert("No se pudo desactivar: " + error.message);
-      obtenerUsuarios(); // Si falla, revertir y sincronizar con la DB
+      alert("No se pudo desactivar el perfil: " + error.message);
+    } finally {
+      setProcesando(false);
     }
   }
 
-  // Pantalla de Carga
-  if (loading || !autorizado) return (
-    <div className="flex h-screen bg-[#020617] items-center justify-center text-white">
-      <Loader2 className="animate-spin text-cyan-500" size={48} />
-      <span className="ml-3">Validando acceso...</span>
-    </div>
-  );
+  if (loading || !autorizado) {
+    return (
+      <div className="flex h-screen bg-[#020617] items-center justify-center text-white">
+        <Loader2 className="animate-spin text-cyan-500" size={48} />
+        <span className="ml-3">Validando acceso...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
@@ -167,11 +180,14 @@ export default function UsuariosPage() {
       <main className="flex-1 p-8">
         <div className="max-w-7xl mx-auto">
           <header className="mb-10">
-            <h1 className="text-5xl font-black italic tracking-tighter">USUARIOS</h1>
-            <p className="text-gray-400 mt-2">Panel de administración de personal</p>
+            <h1 className="text-5xl font-black italic tracking-tighter">
+              USUARIOS
+            </h1>
+            <p className="text-gray-400 mt-2">
+              Administración de perfiles de usuario del sistema
+            </p>
           </header>
 
-          {/* Formulario */}
           <section className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
             <div className="grid md:grid-cols-3 gap-4">
               <input
@@ -182,55 +198,86 @@ export default function UsuariosPage() {
                 className="input-style"
               />
               <input
-                type="email"
-                placeholder="correo@empresa.com"
-                value={form.correo}
-                onChange={(e) => setForm({ ...form, correo: e.target.value })}
-                className="input-style"
+                type="text"
+                placeholder="UID existente de Supabase Auth"
+                value={form.uid}
+                onChange={(e) => setForm({ ...form, uid: e.target.value })}
+                className="input-style font-mono"
               />
               <select
                 value={form.rol}
                 onChange={(e) => setForm({ ...form, rol: e.target.value })}
                 className="input-style"
               >
-                <option value="trabajador">Trabajador</option>
+                <option value="empleado">Empleado</option>
                 <option value="supervisor">Supervisor</option>
-                <option value="jefe">Jefe / Admin</option>
+                <option value="jefe">Jefe</option>
+                <option value="admin">Administrador</option>
               </select>
             </div>
+            <p className="text-xs text-cyan-500/70 mt-3">
+              El UID debe existir previamente en Supabase Authentication.
+            </p>
             <button
-              onClick={crearUsuario}
-              className="mt-5 bg-cyan-500 hover:bg-cyan-400 transition-all hover:scale-[1.02] active:scale-95 px-8 py-4 rounded-2xl flex items-center gap-2 font-bold text-black"
+              onClick={crearPerfil}
+              disabled={procesando}
+              className="mt-5 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-95 px-8 py-4 rounded-2xl flex items-center gap-2 font-bold text-black"
             >
-              <Plus size={20} /> Crear Nuevo Usuario
+              <Plus size={20} /> Crear Perfil de Usuario
             </button>
           </section>
 
-          {/* Grid de Usuarios */}
           <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {usuarios.map((usuario) => (
-              <div key={usuario.id} className="group bg-white/5 border border-white/10 rounded-3xl p-6 hover:border-cyan-500/50 transition-colors">
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
+            {perfiles.map((perfil) => (
+              <div
+                key={perfil.id}
+                className="group bg-white/5 border border-white/10 rounded-3xl p-6 hover:border-cyan-500/50 transition-colors"
+              >
+                <div className="flex justify-between items-start gap-4">
+                  <div className="flex-1 min-w-0">
                     <div className="bg-cyan-500/10 w-12 h-12 rounded-xl flex items-center justify-center mb-4 group-hover:bg-cyan-500/20 transition-colors">
                       <Users className="text-cyan-400" size={24} />
                     </div>
-                    <h2 className="text-xl font-bold truncate">{usuario.nombre}</h2>
-                    <p className="text-gray-400 text-sm mt-1 truncate">{usuario.correo}</p>
-                    <span className="inline-block bg-cyan-500/20 text-cyan-400 text-xs mt-4 px-3 py-1 rounded-full font-black uppercase tracking-wider">
-                      {usuario.rol}
-                    </span>
+                    <h2 className="text-xl font-bold truncate">
+                      {perfil.nombre}
+                    </h2>
+                    <p className="text-gray-400 text-xs mt-1 font-mono truncate">
+                      UID: {perfil.id}
+                    </p>
+                    {perfil.created_at && (
+                      <p className="text-gray-500 text-xs mt-2">
+                        Creado:{" "}
+                        {new Date(perfil.created_at).toLocaleDateString("es-GT")}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-2 mt-4">
+                      <span className="inline-block bg-cyan-500/20 text-cyan-400 text-xs px-3 py-1 rounded-full font-black uppercase tracking-wider">
+                        {perfil.rol}
+                      </span>
+                      <span className="inline-block bg-green-500/10 text-green-400 text-xs px-3 py-1 rounded-full font-black uppercase tracking-wider">
+                        Activo
+                      </span>
+                    </div>
                   </div>
                   <button
-                    onClick={() => eliminarUsuario(usuario.id)}
-                    className="bg-red-500/10 hover:bg-red-500/30 text-red-400 p-3 rounded-2xl transition-all"
-                    title="Desactivar usuario"
+                    onClick={() => desactivarPerfil(perfil.id)}
+                    disabled={procesando || perfil.id === currentUserId}
+                    className="bg-red-500/10 hover:bg-red-500/30 disabled:opacity-30 disabled:cursor-not-allowed text-red-400 p-3 rounded-2xl transition-all"
+                    title={
+                      perfil.id === currentUserId
+                        ? "No puedes desactivar tu propio perfil"
+                        : "Desactivar perfil de usuario"
+                    }
                   >
                     <Trash2 size={20} />
                   </button>
                 </div>
               </div>
             ))}
+
+            {perfiles.length === 0 && (
+              <p className="text-gray-500">No hay perfiles activos registrados.</p>
+            )}
           </section>
         </div>
       </main>
@@ -240,7 +287,7 @@ export default function UsuariosPage() {
           height: 3.5rem;
           padding: 0 1.25rem;
           border-radius: 1rem;
-          background: #0B1120;
+          background: #0b1120;
           border: 1px solid rgba(255, 255, 255, 0.1);
           outline: none;
           transition: border-color 0.2s;
