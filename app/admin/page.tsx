@@ -31,6 +31,7 @@ interface UsuarioEmpresa {
   id: number;
   usuario_id: string;
   empresa_id: number;
+  activo?: boolean | null;
   usuario?: string | null;
   rol?: string | null;
   empresa?: string | null;
@@ -51,6 +52,7 @@ interface UsuarioModulo {
 }
 
 const ROLES_ADMIN = ["admin"];
+const MOTIVO_CAMBIO_PERMISOS = "Actualización de permisos desde Admin";
 const ROLES_SISTEMA = [
   "admin",
   "jefe",
@@ -190,59 +192,143 @@ async function guardarPermisosUsuario() {
     return;
   }
 
+  if (!perfilActual?.id) {
+    toast.error("No se pudo identificar al administrador actual");
+    return;
+  }
+
   setProcesando(true);
   const toastId = toast.loading("Guardando permisos del usuario...");
 
   try {
- const { error: rolError } = await supabase
-  .from("perfiles")
-  .update({
-    rol: rolSeleccionado,
-    activo: activoSeleccionado,
-  })
-  .eq("id", usuarioEditando);
+    const datosAuditoria = {
+      actualizado_at: new Date().toISOString(),
+      actualizado_por: perfilActual.id,
+      motivo_cambio: MOTIVO_CAMBIO_PERMISOS,
+    };
+
+    const { error: rolError } = await supabase
+      .from("perfiles")
+      .update({
+        rol: rolSeleccionado,
+        activo: activoSeleccionado,
+      })
+      .eq("id", usuarioEditando);
 
     if (rolError) throw rolError;
 
-    const { error: deleteError } = await supabase
+    const { data: empresasExistentes, error: empresasExistentesError } =
+      await supabase
       .from("usuario_empresas")
-      .delete()
+      .select("id,empresa_id")
       .eq("usuario_id", usuarioEditando);
 
-    if (deleteError) throw deleteError;
+    if (empresasExistentesError) throw empresasExistentesError;
 
-    if (empresasSeleccionadas.length > 0) {
-      const nuevasAsignaciones = empresasSeleccionadas.map((empresaId) => ({
+    const empresasSeleccionadasSet = new Set(empresasSeleccionadas.map(Number));
+    const idsEmpresasActivas = (empresasExistentes || [])
+      .filter((asignacion) =>
+        empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
+      )
+      .map((asignacion) => asignacion.id);
+    const idsEmpresasInactivas = (empresasExistentes || [])
+      .filter(
+        (asignacion) =>
+          !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
+      )
+      .map((asignacion) => asignacion.id);
+
+    if (idsEmpresasActivas.length > 0) {
+      const { error: activarEmpresasError } = await supabase
+        .from("usuario_empresas")
+        .update({ activo: true, ...datosAuditoria })
+        .in("id", idsEmpresasActivas);
+
+      if (activarEmpresasError) throw activarEmpresasError;
+    }
+
+    if (idsEmpresasInactivas.length > 0) {
+      const { error: desactivarEmpresasError } = await supabase
+        .from("usuario_empresas")
+        .update({ activo: false, ...datosAuditoria })
+        .in("id", idsEmpresasInactivas);
+
+      if (desactivarEmpresasError) throw desactivarEmpresasError;
+    }
+
+    const empresasRegistradasSet = new Set(
+      (empresasExistentes || []).map((asignacion) => Number(asignacion.empresa_id))
+    );
+    const nuevasAsignaciones = empresasSeleccionadas
+      .filter((empresaId) => !empresasRegistradasSet.has(Number(empresaId)))
+      .map((empresaId) => ({
         usuario_id: usuarioEditando,
         empresa_id: empresaId,
+        activo: true,
+        ...datosAuditoria,
       }));
 
+    if (nuevasAsignaciones.length > 0) {
       const { error: insertError } = await supabase
         .from("usuario_empresas")
         .insert(nuevasAsignaciones);
 
       if (insertError) throw insertError;
     }
-    const { error: deleteModulosError } = await supabase
-  .from("usuario_modulos")
-  .delete()
-  .eq("usuario_id", usuarioEditando);
 
-if (deleteModulosError) throw deleteModulosError;
+    const { data: modulosExistentes, error: modulosExistentesError } =
+      await supabase
+        .from("usuario_modulos")
+        .select("id,modulo_clave")
+        .eq("usuario_id", usuarioEditando);
 
-if (modulosSeleccionados.length > 0) {
-  const nuevosModulos = modulosSeleccionados.map((moduloClave) => ({
-    usuario_id: usuarioEditando,
-    modulo_clave: moduloClave,
-    activo: true,
-  }));
+    if (modulosExistentesError) throw modulosExistentesError;
 
-  const { error: insertModulosError } = await supabase
-    .from("usuario_modulos")
-    .insert(nuevosModulos);
+    const modulosSeleccionadosSet = new Set(modulosSeleccionados);
+    const idsModulosActivos = (modulosExistentes || [])
+      .filter((modulo) => modulosSeleccionadosSet.has(modulo.modulo_clave))
+      .map((modulo) => modulo.id);
+    const idsModulosInactivos = (modulosExistentes || [])
+      .filter((modulo) => !modulosSeleccionadosSet.has(modulo.modulo_clave))
+      .map((modulo) => modulo.id);
 
-  if (insertModulosError) throw insertModulosError;
-}
+    if (idsModulosActivos.length > 0) {
+      const { error: activarModulosError } = await supabase
+        .from("usuario_modulos")
+        .update({ activo: true, ...datosAuditoria })
+        .in("id", idsModulosActivos);
+
+      if (activarModulosError) throw activarModulosError;
+    }
+
+    if (idsModulosInactivos.length > 0) {
+      const { error: desactivarModulosError } = await supabase
+        .from("usuario_modulos")
+        .update({ activo: false, ...datosAuditoria })
+        .in("id", idsModulosInactivos);
+
+      if (desactivarModulosError) throw desactivarModulosError;
+    }
+
+    const modulosRegistradosSet = new Set(
+      (modulosExistentes || []).map((modulo) => modulo.modulo_clave)
+    );
+    const nuevosModulos = modulosSeleccionados
+      .filter((moduloClave) => !modulosRegistradosSet.has(moduloClave))
+      .map((moduloClave) => ({
+        usuario_id: usuarioEditando,
+        modulo_clave: moduloClave,
+        activo: true,
+        ...datosAuditoria,
+      }));
+
+    if (nuevosModulos.length > 0) {
+      const { error: insertModulosError } = await supabase
+        .from("usuario_modulos")
+        .insert(nuevosModulos);
+
+      if (insertModulosError) throw insertModulosError;
+    }
 
     await cargarDatos();
 
@@ -286,6 +372,7 @@ setModulosSeleccionados([]);
           id,
           usuario_id,
           empresa_id,
+          activo,
           perfiles:usuario_id (
             nombre,
             rol
@@ -294,6 +381,7 @@ setModulosSeleccionados([]);
             nombre
           )
         `)
+        .or("activo.eq.true,activo.is.null")
         .order("id", { ascending: false }),
         supabase
   .from("modulos_sistema")
@@ -321,6 +409,7 @@ setModulosSeleccionados([]);
       id: item.id,
       usuario_id: item.usuario_id,
       empresa_id: item.empresa_id,
+      activo: item.activo !== false,
       usuario: item.perfiles?.nombre || "Usuario sin nombre",
       rol: item.perfiles?.rol || "Sin rol",
       empresa: item.empresas?.nombre || "Empresa sin nombre",
@@ -329,7 +418,14 @@ setModulosSeleccionados([]);
     setAsignaciones(limpias);
   }
 async function quitarAsignacion(id: number) {
-  const confirmar = window.confirm("¿Quitar esta empresa del usuario?");
+  if (!perfilActual?.id) {
+    toast.error("No se pudo identificar al administrador actual");
+    return;
+  }
+
+  const confirmar = window.confirm(
+    "¿Quitar esta empresa del usuario? La asignación quedará inactiva."
+  );
 
   if (!confirmar) return;
 
@@ -339,14 +435,19 @@ async function quitarAsignacion(id: number) {
   try {
     const { error } = await supabase
       .from("usuario_empresas")
-      .delete()
+      .update({
+        activo: false,
+        actualizado_at: new Date().toISOString(),
+        actualizado_por: perfilActual.id,
+        motivo_cambio: MOTIVO_CAMBIO_PERMISOS,
+      })
       .eq("id", id);
 
     if (error) throw error;
 
     await cargarDatos();
 
-    toast.success("Asignación eliminada", { id: toastId });
+    toast.success("Asignación retirada correctamente", { id: toastId });
   } catch (error: any) {
     console.error(error);
     toast.error(error.message || "Error al quitar asignación", {
