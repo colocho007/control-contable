@@ -52,35 +52,67 @@ export default function Sidebar() {
 
         const user = validacion.user!;
         const perfil = validacion.perfil!;
+        const rolPerfilNormalizado = (perfil.rol || "").trim().toLowerCase();
 
         setRol(perfil.rol);
 
-        const { data: modulosData, error: modulosError } = await supabase
+        const consultaModulosActivos = supabase
           .from("modulos_sistema")
           .select("clave,activo")
           .eq("activo", true);
-        
 
-        if (modulosError) {
-          console.error("Error cargando módulos en Sidebar:", modulosError);
+        if (rolPerfilNormalizado === "admin") {
+          const { data: modulosData, error: modulosError } =
+            await consultaModulosActivos;
+
+          if (modulosError) {
+            console.error("Error cargando módulos en Sidebar:", modulosError);
+            setModulosActivos([]);
+          } else {
+            setModulosActivos(
+              (modulosData || []).map((modulo: ModuloSistema) => modulo.clave)
+            );
+          }
+
+          setModulosUsuario([]);
+          return;
+        }
+
+        const [modulosResultado, usuarioModulosResultado] = await Promise.all([
+          consultaModulosActivos,
+          supabase
+            .from("usuario_modulos")
+            .select("modulo_clave,activo")
+            .eq("usuario_id", user.id)
+            .eq("activo", true),
+        ]);
+
+        if (modulosResultado.error) {
+          console.error(
+            "Error cargando módulos en Sidebar:",
+            modulosResultado.error
+          );
+          setModulosActivos([]);
         } else {
           setModulosActivos(
-            (modulosData || []).map((modulo: ModuloSistema) => modulo.clave)
+            (modulosResultado.data || []).map(
+              (modulo: ModuloSistema) => modulo.clave
+            )
           );
-          const { data: usuarioModulosData, error: usuarioModulosError } =
-  await supabase
-    .from("usuario_modulos")
-    .select("modulo_clave,activo")
-    .eq("usuario_id", user.id)
-    .eq("activo", true);
+        }
 
-if (usuarioModulosError) {
-  console.error("Error cargando módulos del usuario:", usuarioModulosError);
-} else {
-  setModulosUsuario(
-    (usuarioModulosData || []).map((modulo) => modulo.modulo_clave)
-  );
-}
+        if (usuarioModulosResultado.error) {
+          console.error(
+            "Error cargando módulos del usuario:",
+            usuarioModulosResultado.error
+          );
+          setModulosUsuario([]);
+        } else {
+          setModulosUsuario(
+            (usuarioModulosResultado.data || []).map(
+              (modulo) => modulo.modulo_clave
+            )
+          );
         }
       } catch (error) {
         console.error("Error cargando perfil en Sidebar:", error);
