@@ -167,7 +167,8 @@ const [historialCheques, setHistorialCheques] = useState<
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoCheques, setCargandoCheques] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [now, setNow] = useState(new Date());
@@ -232,7 +233,8 @@ const [formChequera, setFormChequera] = useState({
 
 async function iniciar() {
   try {
-    setLoading(true);
+    setValidandoAcceso(true);
+    setCargandoCheques(false);
 
     const acceso = await validarAccesoModuloUsuario("cheques");
 
@@ -268,34 +270,36 @@ async function iniciar() {
 
     setUserId(user.id);
     setPerfilActual(perfil);
+    setCargandoCheques(true);
     setAutorizado(true);
+    setValidandoAcceso(false);
 
-await Promise.all([
-  obtenerEmpresas(user.id, perfil.rol || ""),
-  obtenerUsuarios(),
-  obtenerCheques(user.id, perfil.rol || ""),
-  obtenerFondos(user.id, perfil.rol || ""),
-  obtenerChequeras(user.id, perfil.rol || ""),
-  obtenerChequesFisicos(user.id, perfil.rol || ""),
-  obtenerResumenChequeras(user.id, perfil.rol || ""),
-]);
+    const idsPermitidos = await obtenerEmpresasPermitidas(
+      user.id,
+      perfil.rol || ""
+    );
 
-await obtenerHistorialCheques(user.id, perfil.rol || "");
+    setEmpresasPermitidasIds(idsPermitidos);
 
-
-// await obtenerHistorialCheques(user.id, perfil.rol || "");
+    await Promise.all([
+      obtenerEmpresas(idsPermitidos),
+      obtenerUsuarios(),
+      obtenerCheques(idsPermitidos, user.id, perfil.rol || ""),
+      obtenerFondos(idsPermitidos),
+      obtenerChequeras(idsPermitidos),
+      obtenerChequesFisicos(idsPermitidos),
+      obtenerResumenChequeras(idsPermitidos),
+      obtenerHistorialCheques(idsPermitidos, user.id, perfil.rol || ""),
+    ]);
 
   } catch (error) {
     console.error(error);
     toast.error("Error cargando módulo de cheques");
   } finally {
-    setLoading(false);
+    setCargandoCheques(false);
   }
 }
-async function obtenerEmpresas(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-  setEmpresasPermitidasIds(idsPermitidos);
-
+async function obtenerEmpresas(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setEmpresas([]);
     return;
@@ -322,12 +326,12 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
     setUsuarios(data || []);
   }
 
-  async function obtenerCheques(usuarioId: string, rol: string) {
+  async function obtenerCheques(
+    idsPermitidos: number[],
+    usuarioId: string,
+    rol: string
+  ) {
     const rolNormalizado = (rol || "").trim().toLowerCase();
-    const idsPermitidos = await obtenerEmpresasPermitidas(
-      usuarioId,
-      rolNormalizado
-    );
 
     let query = supabase
       .from("cheques")
@@ -354,9 +358,7 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
     setCheques(data || []);
   }
 
-  async function obtenerFondos(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+  async function obtenerFondos(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setFondos([]);
     return;
@@ -374,9 +376,7 @@ async function obtenerEmpresas(usuarioId: string, rol: string) {
   setFondos(data || []);
 }
 
-async function obtenerChequeras(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+async function obtenerChequeras(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setChequeras([]);
     return;
@@ -394,9 +394,7 @@ async function obtenerChequeras(usuarioId: string, rol: string) {
   setChequeras(data || []);
 }
 
-async function obtenerChequesFisicos(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+async function obtenerChequesFisicos(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setChequesFisicos([]);
     return;
@@ -414,9 +412,7 @@ async function obtenerChequesFisicos(usuarioId: string, rol: string) {
   setChequesFisicos(data || []);
 }
 
-async function obtenerResumenChequeras(usuarioId: string, rol: string) {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+async function obtenerResumenChequeras(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setResumenChequeras([]);
     return;
@@ -433,9 +429,12 @@ async function obtenerResumenChequeras(usuarioId: string, rol: string) {
   setResumenChequeras(data || []);
 }
 
-async function obtenerHistorialCheques(usuarioId: string, rol: string) {
+async function obtenerHistorialCheques(
+  idsPermitidos: number[],
+  usuarioId: string,
+  rol: string
+) {
   const rolNormalizado = (rol || "").trim().toLowerCase();
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
 
   if (!idsPermitidos.length) {
     setHistorialCheques([]);
@@ -479,12 +478,14 @@ async function obtenerHistorialCheques(usuarioId: string, rol: string) {
 async function refrescarModuloCheques() {
   if (!userId || !perfilActual) return;
 
-  await obtenerCheques(userId, perfilActual.rol || "");
-  await obtenerFondos(userId, perfilActual.rol || "");
-  await obtenerChequeras(userId, perfilActual.rol || "");
-  await obtenerChequesFisicos(userId, perfilActual.rol || "");
-  await obtenerResumenChequeras(userId, perfilActual.rol || "");
-  await obtenerHistorialCheques(userId, perfilActual.rol || "");
+  await Promise.all([
+    obtenerCheques(empresasPermitidasIds, userId, perfilActual.rol || ""),
+    obtenerFondos(empresasPermitidasIds),
+    obtenerChequeras(empresasPermitidasIds),
+    obtenerChequesFisicos(empresasPermitidasIds),
+    obtenerResumenChequeras(empresasPermitidasIds),
+    obtenerHistorialCheques(empresasPermitidasIds, userId, perfilActual.rol || ""),
+  ]);
 }
 
   function calcularLimiteAutorizacion(fechaPago: string, prioridad: string) {
@@ -591,7 +592,7 @@ async function crearFondo() {
 
     if (error) throw error;
 
-    await obtenerFondos(userId, perfilActual.rol || "");
+    await obtenerFondos(empresasPermitidasIds);
 
     setFormFondo({
       empresaId: "",
@@ -671,10 +672,14 @@ async function crearChequera() {
 
     if (rpcError) throw rpcError;
 
-    await obtenerChequeras(userId, perfilActual.rol || "");
-    await obtenerChequesFisicos(userId, perfilActual.rol || "");
-    await obtenerResumenChequeras(userId, perfilActual.rol || "");
-    await obtenerHistorialCheques(userId, perfilActual.rol || "");
+    await obtenerChequeras(empresasPermitidasIds);
+    await obtenerChequesFisicos(empresasPermitidasIds);
+    await obtenerResumenChequeras(empresasPermitidasIds);
+    await obtenerHistorialCheques(
+      empresasPermitidasIds,
+      userId,
+      perfilActual.rol || ""
+    );
    
 
     setFormChequera({
@@ -980,9 +985,9 @@ async function autorizarCheque(cheque: Cheque) {
     );
 
   if (userId && perfilActual) {
-  await obtenerFondos(userId, perfilActual.rol || "");
-  await obtenerChequesFisicos(userId, perfilActual.rol || "");
-  await obtenerResumenChequeras(userId, perfilActual.rol || "");
+  await obtenerFondos(empresasPermitidasIds);
+  await obtenerChequesFisicos(empresasPermitidasIds);
+  await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
     toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
@@ -1070,9 +1075,9 @@ async function rechazarCheque(cheque: Cheque) {
     );
 
 if (userId && perfilActual) {
-  await obtenerFondos(userId, perfilActual.rol || "");
-  await obtenerChequesFisicos(userId, perfilActual.rol || "");
-  await obtenerResumenChequeras(userId, perfilActual.rol || "");
+  await obtenerFondos(empresasPermitidasIds);
+  await obtenerChequesFisicos(empresasPermitidasIds);
+  await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
     toast.success("Cheque rechazado y fondos liberados", { id: toastId });
@@ -1162,9 +1167,9 @@ const motivo = window.prompt("Indica el motivo de anulación:");
     );
 
 if (userId && perfilActual) {
-  await obtenerFondos(userId, perfilActual.rol || "");
-  await obtenerChequesFisicos(userId, perfilActual.rol || "");
-  await obtenerResumenChequeras(userId, perfilActual.rol || "");
+  await obtenerFondos(empresasPermitidasIds);
+  await obtenerChequesFisicos(empresasPermitidasIds);
+  await obtenerResumenChequeras(empresasPermitidasIds);
 }
     toast.success("Cheque anulado y fondos liberados", { id: toastId });
   } catch (error: any) {
@@ -1262,9 +1267,9 @@ fecha: new Date().toISOString().split("T")[0],
     );
 
 if (userId && perfilActual) {
-  await obtenerFondos(userId, perfilActual.rol || "");
-  await obtenerChequesFisicos(userId, perfilActual.rol || "");
-  await obtenerResumenChequeras(userId, perfilActual.rol || "");
+  await obtenerFondos(empresasPermitidasIds);
+  await obtenerChequesFisicos(empresasPermitidasIds);
+  await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
     toast.success("Cheque pagado y registrado en contabilidad", {
@@ -1433,7 +1438,7 @@ const puedeAprobar = ROLES_JEFATURA.includes(
   (perfilActual?.rol || "").trim().toLowerCase()
 );
 
-  if (loading || !autorizado) {
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
@@ -1473,52 +1478,67 @@ const puedeAprobar = ROLES_JEFATURA.includes(
     label="Pendientes"
     value={stats.pendientes}
     color="text-yellow-400"
+    loading={cargandoCheques}
   />
 
   <Stat
     label="Vencidos"
     value={stats.vencidos}
     color="text-red-400"
+    loading={cargandoCheques}
   />
 
   <Stat
     label="Autorizados"
     value={stats.autorizados}
     color="text-cyan-400"
+    loading={cargandoCheques}
   />
 
   <Stat
     label="Pagados"
     value={stats.pagados}
     color="text-green-400"
+    loading={cargandoCheques}
   />
 
   <Stat
     label="Rechazados"
     value={stats.rechazados}
     color="text-red-400"
+    loading={cargandoCheques}
   />
 
   <Stat
     label="Anulados"
     value={stats.anulados}
     color="text-yellow-400"
+    loading={cargandoCheques}
   />
 
   <StatMoney
     label="Comp. GTQ"
     value={money(stats.comprometidoGTQ, "GTQ")}
     color="text-cyan-300"
+    loading={cargandoCheques}
   />
 
   <StatMoney
     label="Comp. USD"
     value={money(stats.comprometidoUSD, "USD")}
     color="text-green-300"
+    loading={cargandoCheques}
   />
 </div>
           </header>
 
+          {cargandoCheques ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
+              <Loader2 className="animate-spin mr-2" />
+              Cargando datos de cheques...
+            </section>
+          ) : (
+            <>
           <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
             <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
               <Plus size={16} className="text-cyan-500" />
@@ -2121,6 +2141,8 @@ const puedeAprobar = ROLES_JEFATURA.includes(
               />
             ))}
           </section>
+            </>
+          )}
         </div>
       </main>
 
@@ -2153,17 +2175,25 @@ function Stat({
   label,
   value,
   color,
+  loading = false,
 }: {
   label: string;
   value: number;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 min-w-[130px]">
       <p className="text-gray-500 text-[9px] uppercase font-bold tracking-widest">
         {label}
       </p>
-      <h2 className={`text-2xl font-black mt-1 ${color}`}>{value}</h2>
+      <h2 className={`text-2xl font-black mt-1 ${color}`}>
+        {loading ? (
+          <span className="text-xs text-gray-500">Cargando...</span>
+        ) : (
+          value
+        )}
+      </h2>
     </div>
   );
 }
@@ -2172,17 +2202,25 @@ function StatMoney({
   label,
   value,
   color,
+  loading = false,
 }: {
   label: string;
   value: string;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 min-w-[130px]">
       <p className="text-gray-500 text-[9px] uppercase font-bold tracking-widest">
         {label}
       </p>
-      <h2 className={`text-lg font-black mt-1 ${color}`}>{value}</h2>
+      <h2 className={`text-lg font-black mt-1 ${color}`}>
+        {loading ? (
+          <span className="text-xs text-gray-500">Cargando...</span>
+        ) : (
+          value
+        )}
+      </h2>
     </div>
   );
 }
