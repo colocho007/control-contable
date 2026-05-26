@@ -24,6 +24,8 @@ import type {
 
 const COLORS = ["#ef4444", "#eab308", "#22c55e"];
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
+const esTareaCancelada = (estado: string | null | undefined) =>
+  estado === "Cancelada";
 
 export default function TareasPage() {
   const router = useRouter();
@@ -109,6 +111,7 @@ const initApp = async () => {
       .from("tareas")
       .select("*")
       .in("empresa_id", idsPermitidos)
+      .neq("estado", "Cancelada")
       .order("id", { ascending: false });
 
     if (!ROLES_ADMIN.includes(profile?.rol || "")) {
@@ -137,6 +140,7 @@ const initApp = async () => {
 
     const filtroEmpresas = `empresa_id=in.(${empresasPermitidasIds.join(",")})`;
     const puedeRecibirTarea = (tarea: Tarea) =>
+      !esTareaCancelada(tarea.estado) &&
       empresasPermitidasIds.includes(Number(tarea.empresa_id)) &&
       (ROLES_ADMIN.includes(userProfile?.rol || "") ||
         tarea.usuario_id === userProfile?.id);
@@ -311,13 +315,35 @@ const fetchCatalogos = async (idsPermitidos: number[], rol: string) => {
 };
 
   const eliminarTarea = async (id: number) => {
-    if (!window.confirm("¿Eliminar permanentemente?")) return;
+    if (!userProfile?.id) {
+      toast.error("No se pudo identificar al usuario actual");
+      return;
+    }
+
+    const tareaActual = tareas.find((t) => t.id === id);
+    const mensajeConfirmacion = tareaActual?.movimiento_generado
+      ? "Esta tarea ya generó un movimiento. Solo se cancelará la tarea y se conservará el historial financiero. ¿Deseas continuar?"
+      : "¿Deseas cancelar esta tarea? No se eliminará el registro ni su historial.";
+
+    if (!window.confirm(mensajeConfirmacion)) return;
+
     try {
-      const { error } = await supabase.from("tareas").delete().eq("id", id);
+      const { error } = await supabase
+        .from("tareas")
+        .update({
+          estado: "Cancelada",
+          cancelada_at: new Date().toISOString(),
+          cancelada_por: userProfile.id,
+          motivo_cancelacion: "Cancelada desde módulo Tareas",
+        })
+        .eq("id", id);
+
       if (error) throw error;
-      toast.success("Tarea eliminada");
+
+      setTareas((prev) => prev.filter((t) => t.id !== id));
+      toast.success("Tarea cancelada");
     } catch (error) {
-      toast.error("No se pudo eliminar la tarea");
+      toast.error("No se pudo cancelar la tarea");
     }
   };
 
@@ -382,6 +408,7 @@ setForm({
   const stats = useMemo(() => {
   const tareasPermitidas = tareas.filter(
     (t) =>
+      !esTareaCancelada(t.estado) &&
       t.empresa_id !== null &&
       empresasPermitidasIds.includes(Number(t.empresa_id))
   );
@@ -435,6 +462,7 @@ setForm({
 const tareasFiltradas = useMemo(() => {
   return tareas.filter((t) => {
     const perteneceAEmpresaPermitida =
+      !esTareaCancelada(t.estado) &&
       t.empresa_id !== null &&
       empresasPermitidasIds.includes(Number(t.empresa_id));
 
@@ -721,7 +749,12 @@ function TareaRow({ tarea, rol, isProcessing, onCompletar, onEliminar, onFileCha
           <div className="flex items-center gap-4">
             {tarea.archivo && <a href={tarea.archivo} target="_blank" rel="noreferrer" className="text-cyan-500 text-[9px] font-black hover:underline tracking-tighter">DATA_STREAM (ARCHIVO)</a>}
             {ROLES_ADMIN.includes(rol) && (
-              <button onClick={() => onEliminar(tarea.id)} className="text-gray-600 hover:text-red-500 transition-colors">
+              <button
+                onClick={() => onEliminar(tarea.id)}
+                className="text-gray-600 hover:text-red-500 transition-colors"
+                title="Cancelar tarea"
+                aria-label="Cancelar tarea"
+              >
                 <Trash2 size={16}/>
               </button>
             )}
