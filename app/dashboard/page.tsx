@@ -6,6 +6,8 @@ import { motion } from "framer-motion";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 import { toast, Toaster } from "react-hot-toast";
 
 import {
@@ -66,7 +68,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     inicializarDashboard();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     if (!autorizado) return;
@@ -93,45 +95,31 @@ export default function DashboardPage() {
   async function inicializarDashboard() {
     setLoading(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const validacion = await validarUsuarioActivo();
 
-   if (!user) {
-  setLoading(false);
-  router.push("/login");
-  return;
-}
+    if (!validacion.ok) {
+      if (validacion.motivo === "usuario_inactivo") {
+        alert("Tu usuario está inactivo. Contacta al administrador.");
+      }
 
+      setAutorizado(false);
+      setLoading(false);
+      router.replace("/login");
+      return;
+    }
 
+    const modulo = await validarModuloActivo("dashboard");
 
-const { data: p, error: perfilError } = await supabase
-  .from("perfiles")
-  .select("*")
-  .eq("id", user.id)
-  .single();
+    if (!modulo.ok) {
+      alert("El módulo Dashboard está desactivado.");
+      setAutorizado(false);
+      setLoading(false);
+      router.replace("/login");
+      return;
+    }
 
-if (perfilError || !p) {
-  console.error("Error obteniendo perfil:", perfilError);
-  setAutorizado(false);
-  setLoading(false);
-  return;
-}
-
-if (p.activo === false) {
-  toast.error("Tu usuario está inactivo. Contacta al administrador.");
-
-  await supabase.auth.signOut();
-
-  setAutorizado(false);
-  setLoading(false);
-
-  setTimeout(() => {
-    router.push("/login");
-  }, 800);
-
-  return;
-}
+    const user = validacion.user!;
+    const p = validacion.perfil!;
 
     // Admin normalizado para evitar errores si viene como Admin, ADMIN o con espacios
     const admin = (p.rol || "").trim().toLowerCase() === "admin";
