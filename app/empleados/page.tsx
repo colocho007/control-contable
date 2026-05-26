@@ -123,26 +123,26 @@ export default function EmpleadosPage() {
 
   async function eliminarEmpleado(id: string) {
     if (id === currentUserId) {
-      toast.error("Acción denegada: No puedes eliminar tu propio perfil.");
+      toast.error("Acción denegada: No puedes desactivar tu propio perfil.");
       return;
     }
 
-    if (!window.confirm("¿Estás seguro de eliminar este acceso? El usuario perderá sus permisos.")) return;
+    if (!window.confirm("¿Estás seguro de desactivar este usuario? Perderá sus permisos.")) return;
     
-    const toastId = toast.loading("Eliminando credenciales...");
+    const toastId = toast.loading("Desactivando usuario...");
 
     try {
       const { error } = await supabase
         .from("perfiles")
-        .delete()
+        .update({ activo: false })
         .eq("id", id);
 
       if (error) throw error;
       
-      toast.success("Acceso revocado", { id: toastId });
+      toast.success("Usuario desactivado correctamente", { id: toastId });
       obtenerEmpleados();
     } catch (error: any) {
-      toast.error("Error al eliminar", { id: toastId });
+      toast.error("Error al desactivar usuario: " + error.message, { id: toastId });
     }
   }
 
