@@ -30,6 +30,12 @@ export default function FinanzasPage() {
   const [movimientos, setMovimientos] =
     useState<Movimiento[]>([]);
 
+  const [validandoAcceso, setValidandoAcceso] =
+    useState(true);
+
+  const [autorizado, setAutorizado] =
+    useState(false);
+
   const [tipo, setTipo] =
     useState("Ingreso");
 
@@ -87,7 +93,9 @@ async function iniciarPagina() {
     return;
   }
 
-  obtenerMovimientos();
+  await obtenerMovimientos();
+  setAutorizado(true);
+  setValidandoAcceso(false);
 }
 
   async function obtenerMovimientos() {
@@ -173,6 +181,14 @@ async function iniciarPagina() {
 
   const balance =
     ingresos - egresos;
+
+  if (validandoAcceso || !autorizado) {
+    return (
+      <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        Validando acceso...
+      </div>
+    );
+  }
 
   return (
 
