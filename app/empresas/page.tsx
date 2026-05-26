@@ -32,6 +32,12 @@ export default function EmpresasPage() {
   const [empresas, setEmpresas] =
     useState<Empresa[]>([]);
 
+  const [validandoAcceso, setValidandoAcceso] =
+    useState(true);
+
+  const [autorizado, setAutorizado] =
+    useState(false);
+
   const [nombre, setNombre] =
     useState("");
 
@@ -95,7 +101,9 @@ useEffect(() => {
       return;
     }
 
-    obtenerEmpresas();
+    await obtenerEmpresas();
+    setAutorizado(true);
+    setValidandoAcceso(false);
   }
 
   iniciar();
@@ -174,6 +182,14 @@ setIsr(0);
 
     alert("Empresa inactivada correctamente.");
     obtenerEmpresas();
+  }
+
+  if (validandoAcceso || !autorizado) {
+    return (
+      <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        Validando acceso...
+      </div>
+    );
   }
 
   return (
