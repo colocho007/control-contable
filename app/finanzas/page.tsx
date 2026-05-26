@@ -22,6 +22,10 @@ interface Movimiento {
   monto: number;
   empresa: string;
   fecha: string;
+  estado?: string | null;
+  anulado_por?: string | null;
+  anulado_at?: string | null;
+  motivo_anulacion?: string | null;
 }
 
 export default function FinanzasPage() {
@@ -35,6 +39,9 @@ export default function FinanzasPage() {
 
   const [autorizado, setAutorizado] =
     useState(false);
+
+  const [userId, setUserId] =
+    useState<string | null>(null);
 
   const [tipo, setTipo] =
     useState("Ingreso");
@@ -93,6 +100,7 @@ async function iniciarPagina() {
     return;
   }
 
+  setUserId(acceso.user!.id);
   await obtenerMovimientos();
   setAutorizado(true);
   setValidandoAcceso(false);
@@ -144,19 +152,57 @@ async function iniciarPagina() {
   async function eliminarMovimiento(
     id: number
   ) {
+    if (!userId) {
+      alert("Sesion no valida.");
+      return;
+    }
 
-    await supabase
+    const confirmar = window.confirm(
+      "Seguro que deseas anular este movimiento? No se borrara, quedara como anulado."
+    );
+
+    if (!confirmar) return;
+
+    const motivo = "Anulado desde Finanzas";
+
+    const { error } = await supabase
       .from("movimientos")
-      .delete()
+      .update({
+        estado: "anulado",
+        anulado_por: userId,
+        anulado_at: new Date().toISOString(),
+        motivo_anulacion: motivo,
+      })
       .eq("id", id);
 
-    obtenerMovimientos();
+    if (error) {
+      alert("Error al anular movimiento.");
+      return;
+    }
+
+    await supabase.from("movimientos_historial").insert([
+      {
+        movimiento_id: id,
+        accion: "Movimiento anulado",
+        comentario: motivo,
+        usuario_id: userId,
+      },
+    ]);
+
+    alert("Movimiento anulado correctamente.");
+    await obtenerMovimientos();
   }
 
   // KPIs
 
+  const movimientosActivos =
+    movimientos.filter(
+      (m) =>
+        (m.estado || "activo") !== "anulado"
+    );
+
   const ingresos =
-    movimientos
+    movimientosActivos
       .filter(
         (m) =>
           m.tipo === "Ingreso"
@@ -168,7 +214,7 @@ async function iniciarPagina() {
       );
 
   const egresos =
-    movimientos
+    movimientosActivos
       .filter(
         (m) =>
           m.tipo === "Egreso"
@@ -370,7 +416,7 @@ async function iniciarPagina() {
 
           <div className="space-y-4">
 
-            {movimientos.map((mov) => (
+            {movimientosActivos.map((mov) => (
 
               <div
                 key={mov.id}
