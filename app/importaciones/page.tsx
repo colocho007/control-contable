@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { validarModuloActivo } from "../../lib/validarModuloActivo";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
@@ -207,6 +208,14 @@ export default function ImportacionesPage() {
   async function iniciar() {
     try {
       setLoading(true);
+
+      const modulo = await validarModuloActivo("importaciones");
+
+      if (!modulo.ok) {
+        toast.error("El módulo de Importaciones está desactivado.");
+        window.location.href = "/dashboard";
+        return;
+      }
 
       const validacion = await validarUsuarioActivo();
 
