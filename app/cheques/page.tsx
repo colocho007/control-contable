@@ -168,6 +168,7 @@ const [historialCheques, setHistorialCheques] = useState<
   const [userId, setUserId] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [procesandoId, setProcesandoId] = useState<number | null>(null);
   const [now, setNow] = useState(new Date());
 
@@ -267,6 +268,7 @@ async function iniciar() {
 
     setUserId(user.id);
     setPerfilActual(perfil);
+    setAutorizado(true);
 
 await Promise.all([
   obtenerEmpresas(user.id, perfil.rol || ""),
@@ -1431,11 +1433,11 @@ const puedeAprobar = ROLES_JEFATURA.includes(
   (perfilActual?.rol || "").trim().toLowerCase()
 );
 
-  if (loading) {
+  if (loading || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
-        Cargando cheques...
+        Validando acceso...
       </div>
     );
   }
