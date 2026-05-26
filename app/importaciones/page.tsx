@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
@@ -209,26 +208,35 @@ export default function ImportacionesPage() {
     try {
       setLoading(true);
 
-      const modulo = await validarModuloActivo("importaciones");
+      const acceso = await validarAccesoModuloUsuario("importaciones");
 
-      if (!modulo.ok) {
-        toast.error("El módulo de Importaciones está desactivado.");
+      if (!acceso.ok) {
+        if (
+          acceso.motivo === "sin_sesion" ||
+          acceso.motivo === "usuario_inactivo" ||
+          acceso.motivo === "sin_perfil"
+        ) {
+          toast.error("Sesión no válida");
+          window.location.href = "/login";
+          return;
+        }
+
+        if (
+          acceso.motivo === "modulo_inactivo" ||
+          acceso.motivo === "modulo_no_encontrado"
+        ) {
+          toast.error("El módulo de Importaciones está desactivado.");
+          window.location.href = "/dashboard";
+          return;
+        }
+
+        toast.error("No tienes acceso al módulo de Importaciones.");
         window.location.href = "/dashboard";
         return;
       }
 
-      const validacion = await validarUsuarioActivo();
-
-      if (!validacion.ok) {
-        toast.error("Sesión no válida");
-        window.location.href = "/login";
-        return;
-      }
-
-
-
-      const user = validacion.user!;
-      const perfil = validacion.perfil!;
+      const user = acceso.user!;
+      const perfil = acceso.perfil!;
 
       setUserId(user.id);
       setRolActual(perfil.rol || "");
