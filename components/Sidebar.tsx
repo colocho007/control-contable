@@ -187,6 +187,12 @@ const menusAdmin = [
     icon: Users,
     clave: "empleados",
   },
+  {
+    name: "Usuarios",
+    path: "/usuarios",
+    icon: Users,
+    clave: "usuarios",
+  },
 ];
 
   // Ruta exclusiva del admin principal

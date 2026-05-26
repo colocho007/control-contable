@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { Users, Plus, Trash2, ShieldAlert, Loader2 } from "lucide-react";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { Users, Plus, Trash2, Loader2 } from "lucide-react";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
 
@@ -24,7 +24,7 @@ export default function UsuariosPage() {
   const router = useRouter();
   const [usuarios, setUsuarios] = useState<Usuario[]>([]);
   const [loading, setLoading] = useState(true);
-  const [perfilActual, setPerfilActual] = useState<any>(null);
+  const [autorizado, setAutorizado] = useState(false);
   
   // Estado del formulario unificado
   const [form, setForm] = useState({ nombre: "", correo: "", rol: "trabajador" });
@@ -33,22 +33,46 @@ export default function UsuariosPage() {
  useEffect(() => {
   const inicializar = async () => {
     try {
-      const validacion = await validarUsuarioActivo();
+      const acceso = await validarAccesoModuloUsuario("usuarios");
 
-      if (!validacion.ok) {
-        router.replace("/login");
+      if (!acceso.ok) {
+        if (
+          acceso.motivo === "sin_sesion" ||
+          acceso.motivo === "sin_perfil" ||
+          acceso.motivo === "usuario_inactivo"
+        ) {
+          if (acceso.motivo === "usuario_inactivo") {
+            alert("Tu usuario está inactivo. Contacta al administrador.");
+          }
+
+          router.replace("/login");
+          return;
+        }
+
+        if (
+          acceso.motivo === "modulo_inactivo" ||
+          acceso.motivo === "modulo_no_encontrado"
+        ) {
+          alert("El módulo de Usuarios está desactivado.");
+        } else {
+          alert("No tienes acceso al módulo de Usuarios.");
+        }
+
+        router.replace("/dashboard");
         return;
       }
 
-      const perfil = validacion.perfil!;
-
-      setPerfilActual(perfil);
+      const perfil = acceso.perfil!;
 
       const rolNormalizado = normalizarRol(perfil?.rol);
 
-      if (ROLES_PERMITIDOS.includes(rolNormalizado)) {
-        await obtenerUsuarios();
+      if (!ROLES_PERMITIDOS.includes(rolNormalizado)) {
+        router.replace("/dashboard");
+        return;
       }
+
+      await obtenerUsuarios();
+      setAutorizado(true);
     } catch (error) {
       console.error("Error de inicialización:", error);
     } finally {
@@ -115,25 +139,12 @@ export default function UsuariosPage() {
   }
 
   // Pantalla de Carga
-  if (loading) return (
+  if (loading || !autorizado) return (
     <div className="flex h-screen bg-[#020617] items-center justify-center text-white">
       <Loader2 className="animate-spin text-cyan-500" size={48} />
+      <span className="ml-3">Validando acceso...</span>
     </div>
   );
-
-  // Pantalla de Seguridad (Acceso Denegado)
-  if (!ROLES_PERMITIDOS.includes(normalizarRol(perfilActual?.rol))) {
-    return (
-      <div className="flex bg-[#020617] min-h-screen text-white">
-        <Sidebar />
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-          <ShieldAlert size={80} className="text-red-500 mb-4" />
-          <h1 className="text-3xl font-bold">Acceso Restringido</h1>
-          <p className="text-gray-400 mt-2">No tienes permisos para gestionar usuarios.</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
