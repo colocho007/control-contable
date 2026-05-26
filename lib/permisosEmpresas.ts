@@ -23,11 +23,12 @@ export async function obtenerEmpresasPermitidas(
       .filter((id) => Number.isFinite(id));
   }
 
-  // Otros roles: solo empresas asignadas
+  // Otros roles: solo asignaciones actualmente activas.
   const { data, error } = await supabase
     .from("usuario_empresas")
     .select("empresa_id")
-    .eq("usuario_id", usuarioId);
+    .eq("usuario_id", usuarioId)
+    .eq("activo", true);
 
   if (error) {
     console.error("Error obteniendo empresas del usuario:", error);
