@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { Loader2, Plus, Search, Truck } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
@@ -72,23 +71,37 @@ export default function ProveedoresPage() {
     try {
       setLoading(true);
 
-      const modulo = await validarModuloActivo("proveedores");
+      const acceso = await validarAccesoModuloUsuario("proveedores");
 
-      if (!modulo.ok) {
-        toast.error("El módulo de Proveedores está desactivado.");
+      if (!acceso.ok) {
+        if (
+          acceso.motivo === "sin_sesion" ||
+          acceso.motivo === "sin_perfil" ||
+          acceso.motivo === "usuario_inactivo"
+        ) {
+          if (acceso.motivo === "usuario_inactivo") {
+            toast.error("Tu usuario está inactivo. Contacta al administrador.");
+          }
+
+          window.location.href = "/login";
+          return;
+        }
+
+        if (
+          acceso.motivo === "modulo_inactivo" ||
+          acceso.motivo === "modulo_no_encontrado"
+        ) {
+          toast.error("El módulo de Proveedores está desactivado.");
+        } else {
+          toast.error("No tienes acceso al módulo de Proveedores.");
+        }
+
         window.location.href = "/dashboard";
         return;
       }
 
-      const validacion = await validarUsuarioActivo();
-
-      if (!validacion.ok) {
-        window.location.href = "/login";
-        return;
-      }
-
-      const user = validacion.user!;
-      const perfil = validacion.perfil!;
+      const user = acceso.user!;
+      const perfil = acceso.perfil!;
 
       setUserId(user.id);
       setRolActual(perfil.rol || "");
