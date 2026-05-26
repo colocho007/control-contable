@@ -75,6 +75,7 @@ export default function AdminPage() {
 const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
 const [usuarioEditando, setUsuarioEditando] = useState("");
@@ -115,6 +116,7 @@ if (!ROLES_ADMIN.includes(rolActual)) {
 }
 
 await cargarDatos();
+setAutorizado(true);
     } catch (error) {
       console.error(error);
       toast.error("Error cargando panel administrador");
@@ -400,11 +402,11 @@ async function quitarAsignacion(id: number) {
     };
   }, [usuarios, empresas, asignaciones]);
 
-  if (loading) {
+  if (loading || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
-        Cargando panel administrador...
+        Validando acceso...
       </div>
     );
   }
