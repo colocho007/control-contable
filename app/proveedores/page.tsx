@@ -35,13 +35,14 @@ interface Proveedor {
 }
 
 export default function ProveedoresPage() {
-  const [loading, setLoading] = useState(true);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoProveedores, setCargandoProveedores] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
-  const [rolActual, setRolActual] = useState("");
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [busqueda, setBusqueda] = useState("");
 
@@ -70,7 +71,8 @@ export default function ProveedoresPage() {
 
   async function iniciar() {
     try {
-      setLoading(true);
+      setValidandoAcceso(true);
+      setCargandoProveedores(false);
 
       const acceso = await validarAccesoModuloUsuario("proveedores");
 
@@ -105,22 +107,30 @@ export default function ProveedoresPage() {
       const perfil = acceso.perfil!;
 
       setUserId(user.id);
-      setRolActual(perfil.rol || "");
-
-      await obtenerEmpresas(user.id, perfil.rol || "");
-      await obtenerProveedores(user.id, perfil.rol || "");
+      setCargandoProveedores(true);
       setAutorizado(true);
+      setValidandoAcceso(false);
+
+      const idsPermitidos = await obtenerEmpresasPermitidas(
+        user.id,
+        perfil.rol || ""
+      );
+
+      setEmpresasPermitidasIds(idsPermitidos);
+
+      await Promise.all([
+        obtenerEmpresas(idsPermitidos),
+        obtenerProveedores(idsPermitidos),
+      ]);
     } catch (error) {
       console.error(error);
       toast.error("Error cargando proveedores");
     } finally {
-      setLoading(false);
+      setCargandoProveedores(false);
     }
   }
 
-  async function obtenerEmpresas(usuarioId: string, rol: string) {
-    const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+  async function obtenerEmpresas(idsPermitidos: number[]) {
     if (!idsPermitidos.length) {
       setEmpresas([]);
       return;
@@ -137,9 +147,7 @@ export default function ProveedoresPage() {
     setEmpresas(data || []);
   }
 
-  async function obtenerProveedores(usuarioId: string, rol: string) {
-    const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
+  async function obtenerProveedores(idsPermitidos: number[]) {
     if (!idsPermitidos.length) {
       setProveedores([]);
       return;
@@ -221,7 +229,7 @@ export default function ProveedoresPage() {
 
       if (error) throw error;
 
-      await obtenerProveedores(userId, rolActual);
+      await obtenerProveedores(empresasPermitidasIds);
 
       setForm({
         empresaId: "",
@@ -288,7 +296,7 @@ export default function ProveedoresPage() {
     );
   }, [proveedores, busqueda]);
 
-  if (loading || !autorizado) {
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
@@ -328,7 +336,7 @@ export default function ProveedoresPage() {
                   Total
                 </p>
                 <h2 className="text-2xl font-black mt-1 text-cyan-400">
-                  {proveedores.length}
+                  {cargandoProveedores ? "..." : proveedores.length}
                 </h2>
               </div>
 
@@ -337,7 +345,9 @@ export default function ProveedoresPage() {
                   Activos
                 </p>
                 <h2 className="text-2xl font-black mt-1 text-green-400">
-                  {proveedores.filter((p) => p.estado === "Activo").length}
+                  {cargandoProveedores
+                    ? "..."
+                    : proveedores.filter((p) => p.estado === "Activo").length}
                 </h2>
               </div>
 
@@ -346,12 +356,21 @@ export default function ProveedoresPage() {
                   Suspendidos
                 </p>
                 <h2 className="text-2xl font-black mt-1 text-yellow-400">
-                  {proveedores.filter((p) => p.estado === "Suspendido").length}
+                  {cargandoProveedores
+                    ? "..."
+                    : proveedores.filter((p) => p.estado === "Suspendido").length}
                 </h2>
               </div>
             </div>
           </header>
 
+          {cargandoProveedores ? (
+            <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
+              <Loader2 className="animate-spin mr-2" />
+              Cargando datos de proveedores...
+            </section>
+          ) : (
+            <>
           <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
             <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
               <Plus size={16} className="text-cyan-500" />
@@ -565,6 +584,8 @@ export default function ProveedoresPage() {
               </div>
             )}
           </section>
+            </>
+          )}
         </div>
       </main>
 
