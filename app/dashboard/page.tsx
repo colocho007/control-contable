@@ -6,8 +6,7 @@ import { motion } from "framer-motion";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { validarModuloActivo } from "../../lib/validarModuloActivo";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { toast, Toaster } from "react-hot-toast";
 
 import {
@@ -95,11 +94,24 @@ export default function DashboardPage() {
   async function inicializarDashboard() {
     setLoading(true);
 
-    const validacion = await validarUsuarioActivo();
+    const acceso = await validarAccesoModuloUsuario("dashboard");
 
-    if (!validacion.ok) {
-      if (validacion.motivo === "usuario_inactivo") {
-        alert("Tu usuario está inactivo. Contacta al administrador.");
+    if (!acceso.ok) {
+      if (
+        acceso.motivo === "sin_sesion" ||
+        acceso.motivo === "sin_perfil" ||
+        acceso.motivo === "usuario_inactivo"
+      ) {
+        if (acceso.motivo === "usuario_inactivo") {
+          alert("Tu usuario está inactivo. Contacta al administrador.");
+        }
+      } else if (
+        acceso.motivo === "modulo_inactivo" ||
+        acceso.motivo === "modulo_no_encontrado"
+      ) {
+        alert("El módulo Dashboard está desactivado.");
+      } else {
+        alert("No tienes acceso al módulo Dashboard.");
       }
 
       setAutorizado(false);
@@ -108,18 +120,8 @@ export default function DashboardPage() {
       return;
     }
 
-    const modulo = await validarModuloActivo("dashboard");
-
-    if (!modulo.ok) {
-      alert("El módulo Dashboard está desactivado.");
-      setAutorizado(false);
-      setLoading(false);
-      router.replace("/login");
-      return;
-    }
-
-    const user = validacion.user!;
-    const p = validacion.perfil!;
+    const user = acceso.user!;
+    const p = acceso.perfil!;
 
     // Admin normalizado para evitar errores si viene como Admin, ADMIN o con espacios
     const admin = (p.rol || "").trim().toLowerCase() === "admin";
