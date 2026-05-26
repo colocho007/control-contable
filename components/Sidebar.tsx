@@ -205,12 +205,6 @@ const menusAdmin = [
     clave: "finanzas",
   },
   {
-    name: "Empleados",
-    path: "/empleados",
-    icon: Users,
-    clave: "empleados",
-  },
-  {
     name: "Usuarios",
     path: "/usuarios",
     icon: Users,
