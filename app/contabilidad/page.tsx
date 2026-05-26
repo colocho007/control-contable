@@ -45,6 +45,7 @@ export default function ContabilidadPage() {
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoContabilidad, setCargandoContabilidad] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
   const [rolActual, setRolActual] = useState("");
@@ -103,21 +104,34 @@ if (!["admin", "supervisor", "jefe", "empleado"].includes(rolNormalizado)) {
 
 setRolActual(rolNormalizado);
 setUserId(user.id);
-
-    const idsPermitidos = await obtenerEmpresas(user.id, perfil.rol || "");
-    await obtenerMovimientos(idsPermitidos);
+    setCargandoContabilidad(true);
     setAutorizado(true);
     setValidandoAcceso(false);
+
+    try {
+      const idsPermitidos = await obtenerEmpresasPermitidas(
+        user.id,
+        perfil.rol || ""
+      );
+
+      setEmpresasPermitidasIds(idsPermitidos);
+
+      await Promise.all([
+        obtenerEmpresas(idsPermitidos),
+        obtenerMovimientos(idsPermitidos),
+      ]);
+    } catch (error) {
+      console.error("Error cargando datos de Contabilidad:", error);
+      alert("Error al cargar datos de Contabilidad.");
+    } finally {
+      setCargandoContabilidad(false);
+    }
   }
 
   iniciar();
 }, [router]);
 
-  async function obtenerEmpresas(usuarioId: string, rol: string) {
-    const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-
-    setEmpresasPermitidasIds(idsPermitidos);
-
+  async function obtenerEmpresas(idsPermitidos: number[]) {
     if (!idsPermitidos.length) {
       setListaEmpresas([]);
       return idsPermitidos;
@@ -327,6 +341,9 @@ const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
               </p>
             </div>
 
+            {cargandoContabilidad ? (
+              <div className="text-sm text-cyan-400">Cargando empresas...</div>
+            ) : (
             <div className="flex flex-col gap-2">
               <label className="text-[10px] font-black text-gray-500 uppercase ml-2">
                 Ver empresa
@@ -355,8 +372,15 @@ const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
                 ))}
               </select>
             </div>
+            )}
           </header>
 
+          {cargandoContabilidad ? (
+            <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-10 text-center text-cyan-400">
+              Cargando datos de contabilidad...
+            </section>
+          ) : (
+            <>
           {rolActual === "empleado" && (
   <div className="mb-8 bg-green-500/10 border border-green-500/20 rounded-2xl p-5">
     <h2 className="text-green-400 font-black text-sm uppercase">
@@ -697,6 +721,8 @@ const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
               </div>
             ))}
           </div>
+            </>
+          )}
         </div>
       </main>
     </div>
