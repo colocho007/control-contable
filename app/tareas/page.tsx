@@ -90,13 +90,25 @@ const initApp = async () => {
 
     const user = acceso.user!;
     const profile = acceso.perfil!;
+    const idsPermitidos = await obtenerEmpresasPermitidas(
+      user.id,
+      profile?.rol || ""
+    );
 
+    setEmpresasPermitidasIds(idsPermitidos);
     setAutorizado(true);
     setUserProfile(profile);
+
+    if (!idsPermitidos.length) {
+      setTareas([]);
+      await fetchCatalogos(idsPermitidos, profile?.rol || "");
+      return;
+    }
 
     let query = supabase
       .from("tareas")
       .select("*")
+      .in("empresa_id", idsPermitidos)
       .order("id", { ascending: false });
 
     if (!ROLES_ADMIN.includes(profile?.rol || "")) {
@@ -108,7 +120,7 @@ const initApp = async () => {
 
     setTareas(tData || []);
 
-    await fetchCatalogos(user.id, profile?.rol || "");
+    await fetchCatalogos(idsPermitidos, profile?.rol || "");
   } catch (error) {
     toast.error("Error al sincronizar datos iniciales");
     console.error(error);
@@ -121,39 +133,56 @@ const initApp = async () => {
 }, [router]);
 
   useEffect(() => {
-    if (!userProfile) return;
+    if (!autorizado || !userProfile || !empresasPermitidasIds.length) return;
+
+    const filtroEmpresas = `empresa_id=in.(${empresasPermitidasIds.join(",")})`;
+    const puedeRecibirTarea = (tarea: Tarea) =>
+      empresasPermitidasIds.includes(Number(tarea.empresa_id)) &&
+      (ROLES_ADMIN.includes(userProfile?.rol || "") ||
+        tarea.usuario_id === userProfile?.id);
 
     const channel = supabase
       .channel(`tareas-safe-channel`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "tareas" },
+        { event: "INSERT", schema: "public", table: "tareas", filter: filtroEmpresas },
         (payload) => {
           const nueva = payload.new as Tarea;
           // 🚀 También protegido aquí por si acaso
-          if (ROLES_ADMIN.includes(userProfile?.rol || "") || nueva.usuario_id === userProfile?.id) {
+          if (puedeRecibirTarea(nueva)) {
             setTareas((prev) => (prev.some(t => t.id === nueva.id) ? prev : [nueva, ...prev]));
             toast.success("Nueva tarea detectada");
           }
         }
       )
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tareas" }, (payload) => {
-        setTareas((prev) => prev.map(t => t.id === payload.new.id ? (payload.new as Tarea) : t));
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "tareas", filter: filtroEmpresas }, (payload) => {
+        const actualizada = payload.new as Tarea;
+
+        if (!puedeRecibirTarea(actualizada)) {
+          setTareas((prev) => prev.filter((t) => t.id !== actualizada.id));
+          return;
+        }
+
+        setTareas((prev) => prev.map(t => t.id === actualizada.id ? actualizada : t));
       })
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "tareas" }, (payload) => {
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "tareas", filter: filtroEmpresas }, (payload) => {
         setTareas((prev) => prev.filter(t => t.id !== payload.old.id));
       })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [userProfile]);
+  }, [autorizado, userProfile, empresasPermitidasIds]);
 
-const fetchCatalogos = async (usuarioId: string, rol: string) => {
-  const idsPermitidos = await obtenerEmpresasPermitidas(usuarioId, rol);
-  setEmpresasPermitidasIds(idsPermitidos);
+const fetchCatalogos = async (idsPermitidos: number[], rol: string) => {
+  const puedeAsignar = ROLES_ADMIN.includes(rol);
 
   const [resU, resEmpresas] = await Promise.all([
-    supabase.from("perfiles").select("*"),
+    puedeAsignar
+      ? supabase
+          .from("perfiles")
+          .select("id,nombre,rol,activo")
+          .order("nombre", { ascending: true })
+      : Promise.resolve({ data: [], error: null }),
     idsPermitidos.length
       ? supabase
           .from("empresas")
