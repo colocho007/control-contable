@@ -439,9 +439,24 @@ async function obtenerHistorialCheques(usuarioId: string, rol: string) {
     return;
   }
 
+  const { data: chequesPermitidos, error: chequesError } = await supabase
+    .from("cheques")
+    .select("id")
+    .in("empresa_id", idsPermitidos);
+
+  if (chequesError) throw chequesError;
+
+  const idsChequesPermitidos = (chequesPermitidos || []).map((cheque) => cheque.id);
+
+  if (!idsChequesPermitidos.length) {
+    setHistorialCheques([]);
+    return;
+  }
+
   const { data, error } = await supabase
     .from("cheques_historial")
     .select("*")
+    .in("cheque_id", idsChequesPermitidos)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
