@@ -96,6 +96,8 @@ const ROLES_CREADORES = ["admin", "supervisor", "jefe", "iniciador_gestion"];
 const ROLES_FIRMANTES = ["admin", "supervisor", "jefe", "firmante_oc"];
 const REFERENCIA_BORRADOR_ORDEN = "nueva-orden";
 const TITULO_BORRADOR_ORDEN = "Borrador de orden de compra";
+const COLUMNAS_BORRADOR_ORDEN =
+  "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
@@ -172,6 +174,7 @@ export default function OrdenesCompraPage() {
   const formActualRef = useRef(form);
   const firmantesActualesRef = useRef(firmantesSeleccionados);
   const ordenCreadaIdRef = useRef<number | null>(null);
+  const borradorOrigenIdRef = useRef<string | number | null>(null);
   const borradorConsumidoRef = useRef(false);
   const autoguardadoSuspendidoRef = useRef(false);
   const timeoutBorradorRef = useRef<number | null>(null);
@@ -428,6 +431,7 @@ function continuarConBorrador() {
       )
     : [];
 
+  borradorOrigenIdRef.current = borradorActivo.id;
   setForm(formularioRecuperado);
   setFirmantesSeleccionados(firmantes);
   setBorradorRevisado(true);
@@ -441,6 +445,7 @@ async function descartarBorradorPendiente() {
 
   try {
     await descartarBorrador(borradorActivo.id);
+    borradorOrigenIdRef.current = null;
     setBorradorActivo(null);
     setBorradorRevisado(true);
     toast.success("Borrador descartado.");
@@ -478,19 +483,72 @@ async function guardarBorradorActual(
   const operacion = (async () => {
     try {
       const empresaId = Number(formulario.empresaId);
+      const empresaIdBorrador =
+        formulario.empresaId && Number.isFinite(empresaId)
+          ? empresaId
+          : null;
+      const datosBorrador = {
+        ...formulario,
+        firmantesSeleccionados: firmantes,
+      };
+      const borradorOrigenId = borradorOrigenIdRef.current;
+
+      if (borradorOrigenId !== null) {
+        const ordenExistente = await obtenerOrdenCreadaDesdeBorrador(
+          borradorOrigenId
+        );
+
+        if (ordenExistente) {
+          bloquearBorradorConsumido(
+            "Esta orden ya fue creada desde este borrador."
+          );
+          toast.error("Esta orden ya fue creada desde este borrador.");
+          return;
+        }
+
+        const { data: borradorActualizado, error } = await supabase
+          .from("borradores_trabajo")
+          .update({
+            empresa_id: empresaIdBorrador,
+            ruta: "/ordenes-compra",
+            titulo: TITULO_BORRADOR_ORDEN,
+            datos: datosBorrador,
+            actualizado_at: new Date().toISOString(),
+          })
+          .eq("id", borradorOrigenId)
+          .eq("usuario_id", userId!)
+          .eq("estado", "borrador")
+          .select(COLUMNAS_BORRADOR_ORDEN)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!borradorActualizado) {
+          const ordenCreada = await obtenerOrdenCreadaDesdeBorrador(
+            borradorOrigenId
+          );
+
+          if (ordenCreada) {
+            bloquearBorradorConsumido(
+              "Esta orden ya fue creada desde este borrador."
+            );
+            toast.error("Esta orden ya fue creada desde este borrador.");
+          }
+
+          return;
+        }
+
+        setBorradorActivo(borradorActualizado as BorradorTrabajo);
+        return;
+      }
+
       const borrador = await guardarBorradorTrabajo({
         modulo: "ordenes",
         ruta: "/ordenes-compra",
         titulo: TITULO_BORRADOR_ORDEN,
-        empresa_id:
-          formulario.empresaId && Number.isFinite(empresaId)
-            ? empresaId
-            : null,
+        empresa_id: empresaIdBorrador,
         referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
-        datos: {
-          ...formulario,
-          firmantesSeleccionados: firmantes,
-        },
+        datos: datosBorrador,
       });
 
       setBorradorActivo(borrador);
@@ -568,6 +626,7 @@ async function marcarBorradorRequiereRevision(
 }
 
 function bloquearBorradorConsumido(mensaje: string) {
+  borradorOrigenIdRef.current = null;
   borradorConsumidoRef.current = true;
   suspenderAutoguardado();
   setMensajeBorradorBloqueado(mensaje);
@@ -819,37 +878,51 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
     let borradorParaOrden: BorradorTrabajo | null = null;
+    let borradorIdParaOrden: string | number | null =
+      borradorOrigenIdRef.current;
 
     try {
       await esperarAutoguardadoEnCurso();
 
-      borradorParaOrden = await obtenerBorradorActivo({
+      const borradorActivoActual = await obtenerBorradorActivo({
         modulo: "ordenes",
         referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
       });
 
-      if (borradorParaOrden) {
+      if (borradorIdParaOrden === null) {
+        borradorParaOrden = borradorActivoActual;
+        borradorIdParaOrden = borradorActivoActual?.id ?? null;
+      } else if (
+        borradorActivoActual &&
+        String(borradorActivoActual.id) === String(borradorIdParaOrden)
+      ) {
+        borradorParaOrden = borradorActivoActual;
+      }
+
+      if (borradorIdParaOrden !== null) {
         const ordenExistente = await obtenerOrdenCreadaDesdeBorrador(
-          borradorParaOrden.id
+          borradorIdParaOrden
         );
 
         if (ordenExistente) {
-          try {
-            await marcarBorradorCompletado(borradorParaOrden.id);
-          } catch (error) {
-            console.error("Error cerrando borrador ya consumido:", error);
-
+          if (borradorParaOrden) {
             try {
-              await marcarBorradorRequiereRevision(
-                Number(ordenExistente.id),
-                "Se intento reutilizar un borrador que ya genero una orden.",
-                borradorParaOrden
-              );
-            } catch (errorRevision) {
-              console.error(
-                "Error marcando borrador consumido para revision:",
-                errorRevision
-              );
+              await marcarBorradorCompletado(borradorIdParaOrden);
+            } catch (error) {
+              console.error("Error cerrando borrador ya consumido:", error);
+
+              try {
+                await marcarBorradorRequiereRevision(
+                  Number(ordenExistente.id),
+                  "Se intento reutilizar un borrador que ya genero una orden.",
+                  borradorParaOrden
+                );
+              } catch (errorRevision) {
+                console.error(
+                  "Error marcando borrador consumido para revision:",
+                  errorRevision
+                );
+              }
             }
           }
 
@@ -867,7 +940,8 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
   .from("ordenes_compra")
   .insert([
     {
-      borrador_id: borradorParaOrden ? String(borradorParaOrden.id) : null,
+      borrador_id:
+        borradorIdParaOrden !== null ? String(borradorIdParaOrden) : null,
       empresa_id: Number(form.empresaId),
       empresa: empresaSeleccionada.nombre,
 
@@ -921,14 +995,14 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
 
       if (ordenError) {
         if (
-          borradorParaOrden &&
+          borradorIdParaOrden !== null &&
           esErrorDeBorradorDuplicado(ordenError)
         ) {
           let ordenExistente: { id: number } | null = null;
 
           try {
             ordenExistente = await obtenerOrdenCreadaDesdeBorrador(
-              borradorParaOrden.id
+              borradorIdParaOrden
             );
           } catch (error) {
             console.error(
@@ -938,7 +1012,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
           }
 
           try {
-            await marcarBorradorCompletado(borradorParaOrden.id);
+            await marcarBorradorCompletado(borradorIdParaOrden);
           } catch (error) {
             console.error("Error completando borrador duplicado:", error);
 
@@ -952,7 +1026,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
               await marcarBorradorRequiereRevision(
                 Number(ordenExistente.id),
                 "Se intento reutilizar un borrador que ya genero una orden.",
-                borradorParaOrden
+                borradorParaOrden || undefined
               );
             } catch (errorRevision) {
               console.error("Error cerrando borrador duplicado:", errorRevision);
@@ -1034,6 +1108,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       const formularioVacio = crearFormularioOrdenVacio();
       formActualRef.current = formularioVacio;
       firmantesActualesRef.current = [];
+      borradorOrigenIdRef.current = null;
       setForm(formularioVacio);
       setFirmantesSeleccionados([]);
       ordenFinalizada = true;
