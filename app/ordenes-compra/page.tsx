@@ -166,8 +166,11 @@ export default function OrdenesCompraPage() {
     useState<BorradorTrabajo | null>(null);
   const [borradorRevisado, setBorradorRevisado] = useState(false);
   const [procesandoBorrador, setProcesandoBorrador] = useState(false);
+  const [ordenCreadaRequiereRevisionId, setOrdenCreadaRequiereRevisionId] =
+    useState<number | null>(null);
   const formActualRef = useRef(form);
   const firmantesActualesRef = useRef(firmantesSeleccionados);
+  const ordenCreadaIdRef = useRef<number | null>(null);
   const autoguardadoSuspendidoRef = useRef(false);
   const timeoutBorradorRef = useRef<number | null>(null);
   const guardadoEnCursoRef = useRef<Promise<void> | null>(null);
@@ -382,6 +385,7 @@ async function guardarBorradorActual(
   firmantes = firmantesActualesRef.current
 ) {
   if (
+    ordenCreadaIdRef.current !== null ||
     autoguardadoSuspendidoRef.current ||
     !autorizado ||
     !ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol)) ||
@@ -442,23 +446,103 @@ async function guardarBorradorActual(
   }
 }
 
-async function completarBorradorOrdenCreada() {
-  try {
-    const borrador = await obtenerBorradorActivo({
-      modulo: "ordenes",
-      referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
-    });
+async function marcarBorradorRequiereRevision(
+  ordenId: number,
+  motivoRevision: string
+) {
+  let borrador = borradorActivo;
 
-    if (borrador) {
+  try {
+    borrador =
+      (await obtenerBorradorActivo({
+        modulo: "ordenes",
+        referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+      })) || borrador;
+  } catch (error) {
+    if (!borrador) throw error;
+  }
+
+  if (!borrador) return;
+
+  const datosAnteriores =
+    borrador.datos &&
+    typeof borrador.datos === "object" &&
+    !Array.isArray(borrador.datos)
+      ? borrador.datos
+      : {};
+
+  const { error } = await supabase
+    .from("borradores_trabajo")
+    .update({
+      estado: "requiere_revision",
+      actualizado_at: new Date().toISOString(),
+      datos: {
+        ...datosAnteriores,
+        ordenCreadaId: ordenId,
+        requiereRevision: true,
+        motivoRevision,
+      },
+    })
+    .eq("id", borrador.id)
+    .eq("usuario_id", userId!)
+    .eq("estado", "borrador");
+
+  if (error) throw error;
+
+  setBorradorActivo(null);
+}
+
+function bloquearOrdenCreadaParaRevision(ordenId: number) {
+  setOrdenCreadaRequiereRevisionId(ordenId);
+  setBorradorActivo(null);
+  setBorradorRevisado(true);
+}
+
+async function completarBorradorOrdenCreada(ordenId: number) {
+  for (let intento = 0; intento < 2; intento += 1) {
+    try {
+      const borrador = await obtenerBorradorActivo({
+        modulo: "ordenes",
+        referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+      });
+
+      if (!borrador) {
+        setBorradorActivo(null);
+        return true;
+      }
+
       await marcarBorradorCompletado(borrador.id);
       setBorradorActivo(null);
+      return true;
+    } catch (error) {
+      console.error("Error completando borrador de orden creada:", error);
     }
-  } catch (error) {
-    console.error("Error completando borrador de orden creada:", error);
-    toast.error(
-      "La orden fue creada, pero no se pudo cerrar su borrador pendiente."
-    );
   }
+
+  try {
+    await marcarBorradorRequiereRevision(
+      ordenId,
+      "No fue posible completar el borrador luego de crear la orden."
+    );
+  } catch (error) {
+    console.error("Error marcando borrador para revision:", error);
+  }
+
+  bloquearOrdenCreadaParaRevision(ordenId);
+  return false;
+}
+
+async function registrarCreacionParcialParaRevision(
+  ordenId: number,
+  motivoRevision: string
+) {
+  try {
+    await marcarBorradorRequiereRevision(ordenId, motivoRevision);
+  } catch (error) {
+    console.error("Error marcando borrador de orden parcial:", error);
+  }
+
+  bloquearOrdenCreadaParaRevision(ordenId);
 }
 
 function suspenderAutoguardado() {
@@ -712,6 +796,8 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
 
       if (ordenError) throw ordenError;
 
+      ordenCreadaIdRef.current = Number(ordenCreada.id);
+
       const obtenerTipoFirma = (index: number) => {
   if (index === 0) return "responsable_servicio";
   if (index === 1) return "autorizador";
@@ -737,7 +823,9 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       if (firmasError) throw firmasError;
 
-      await supabase.from("ordenes_compra_historial").insert([
+      const { error: historialError } = await supabase
+        .from("ordenes_compra_historial")
+        .insert([
         {
           orden_id: ordenCreada.id,
           accion: "Orden creada",
@@ -748,7 +836,25 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         },
       ]);
 
-      await completarBorradorOrdenCreada();
+      if (historialError) throw historialError;
+
+      const borradorCerrado = await completarBorradorOrdenCreada(
+        ordenCreadaIdRef.current
+      );
+
+      if (!borradorCerrado) {
+        try {
+          await refrescarOrdenes();
+        } catch (error) {
+          console.error("Error actualizando listado de orden en revision:", error);
+        }
+
+        toast.error(
+          "La orden fue creada, pero el borrador requiere revisión. No se debe reutilizar para crear otra orden.",
+          { id: toastId }
+        );
+        return;
+      }
 
       const formularioVacio = crearFormularioOrdenVacio();
       formActualRef.current = formularioVacio;
@@ -756,15 +862,36 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       setForm(formularioVacio);
       setFirmantesSeleccionados([]);
       ordenFinalizada = true;
-      await refrescarOrdenes();
+
+      try {
+        await refrescarOrdenes();
+      } catch (error) {
+        console.error("Error actualizando listado despues de crear orden:", error);
+        toast.error("La orden fue creada, pero no se pudo actualizar el listado.");
+      }
+
       toast.success("Orden enviada a firmas", { id: toastId });
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || "Error al crear orden", { id: toastId });
-    } finally {
-      autoguardadoSuspendidoRef.current = false;
 
-      if (!ordenFinalizada) {
+      if (ordenCreadaIdRef.current !== null) {
+        await registrarCreacionParcialParaRevision(
+          ordenCreadaIdRef.current,
+          "La orden fue creada, pero fallo el registro de firmas o historial."
+        );
+        toast.error(
+          "La orden fue creada parcialmente y requiere revisión. No la reintentes desde el borrador.",
+          { id: toastId }
+        );
+      } else {
+        toast.error(error.message || "Error al crear orden", { id: toastId });
+      }
+    } finally {
+      if (ordenFinalizada) {
+        ordenCreadaIdRef.current = null;
+        autoguardadoSuspendidoRef.current = false;
+      } else if (ordenCreadaIdRef.current === null) {
+        autoguardadoSuspendidoRef.current = false;
         void guardarBorradorActual();
       }
     }
@@ -932,6 +1059,7 @@ const puedeCrear = ROLES_CREADORES.includes(rolActual);
 
 useEffect(() => {
   if (
+    ordenCreadaIdRef.current !== null ||
     autoguardadoSuspendidoRef.current ||
     !autorizado ||
     !puedeCrear ||
@@ -956,6 +1084,7 @@ useEffect(() => {
 
 useEffect(() => {
   if (
+    ordenCreadaIdRef.current !== null ||
     autoguardadoSuspendidoRef.current ||
     !autorizado ||
     !puedeCrear ||
@@ -1171,7 +1300,22 @@ const stats = useMemo(() => {
   </div>
 )}
 
-{puedeCrear && borradorActivo && !borradorRevisado && (
+{puedeCrear && ordenCreadaRequiereRevisionId !== null && (
+  <section className="mb-8 bg-red-500/10 border border-red-500/30 rounded-2xl p-6">
+    <h2 className="text-red-400 font-black text-sm uppercase">
+      Orden pendiente de revisión
+    </h2>
+    <p className="text-gray-200 mt-2">
+      La orden #{ordenCreadaRequiereRevisionId} fue creada, pero requiere
+      revisión. No se debe reutilizar este formulario para crear otra orden.
+    </p>
+  </section>
+)}
+
+{puedeCrear &&
+  ordenCreadaRequiereRevisionId === null &&
+  borradorActivo &&
+  !borradorRevisado && (
   <section className="mb-8 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-6">
     <h2 className="text-yellow-400 font-black text-sm uppercase">
       Borrador pendiente
@@ -1200,7 +1344,7 @@ const stats = useMemo(() => {
   </section>
 )}
 
-{puedeCrear && borradorRevisado && (
+{puedeCrear && ordenCreadaRequiereRevisionId === null && borradorRevisado && (
   <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
     <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
       <Plus size={16} className="text-cyan-500" />
