@@ -1,103 +1,354 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
-import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
-import { History, Search, Clock, User as UserIcon } from "lucide-react";
+import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import {
+  Building2,
+  CalendarDays,
+  Clock,
+  History,
+  Layers,
+  RefreshCcw,
+  ShieldAlert,
+  User as UserIcon,
+} from "lucide-react";
 
-interface Log {
+interface Empresa {
   id: number;
-  usuario: string;
+  nombre: string;
+}
+
+type MetadatosAuditoria =
+  | string
+  | number
+  | boolean
+  | null
+  | MetadatosAuditoria[]
+  | { [clave: string]: MetadatosAuditoria };
+
+interface AuditoriaEvento {
+  id: string | number;
+  creado_at: string;
+  usuario_id: string;
+  usuario_nombre_snapshot: string | null;
+  empresa_id: number | null;
+  modulo: string;
   accion: string;
-  tarea: string;
-  fecha: string;
+  entidad_tipo: string | null;
+  entidad_id: string | number | null;
+  estado_anterior: string | null;
+  estado_nuevo: string | null;
+  motivo: string | null;
+  descripcion: string | null;
+  metadatos: MetadatosAuditoria | null;
+  sensible: boolean;
+  visible_usuario: boolean;
+  visible_calendario: boolean;
+  origen: string | null;
+}
+
+interface FiltrosHistorial {
+  fechaDesde: string;
+  fechaHasta: string;
+  empresaId: string;
+  modulo: string;
+  usuarioId: string;
+  accion: string;
+  entidadTipo: string;
+  sensible: string;
+  visibleCalendario: string;
+}
+
+const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
+const LIMITE_EVENTOS = 200;
+const COLUMNAS_AUDITORIA =
+  "id,creado_at,usuario_id,usuario_nombre_snapshot,empresa_id,modulo,accion,entidad_tipo,entidad_id,estado_anterior,estado_nuevo,motivo,descripcion,metadatos,sensible,visible_usuario,visible_calendario,origen";
+const FILTROS_INICIALES: FiltrosHistorial = {
+  fechaDesde: "",
+  fechaHasta: "",
+  empresaId: "",
+  modulo: "",
+  usuarioId: "",
+  accion: "",
+  entidadTipo: "",
+  sensible: "",
+  visibleCalendario: "",
+};
+
+function etiqueta(valor: string | null) {
+  return valor ? valor.replaceAll("_", " ") : "Sin dato";
+}
+
+function fechaHora(valor: string) {
+  return new Date(valor).toLocaleString("es-GT", {
+    dateStyle: "short",
+    timeStyle: "short",
+  });
 }
 
 export default function HistorialPage() {
   const router = useRouter();
-  const [logs, setLogs] = useState<Log[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [eventos, setEventos] = useState<AuditoriaEvento[]>([]);
+  const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>(
+    []
+  );
+  const [filtros, setFiltros] =
+    useState<FiltrosHistorial>(FILTROS_INICIALES);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
-  const [busqueda, setBusqueda] = useState("");
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  const [avisoCarga, setAvisoCarga] = useState<string | null>(null);
 
   useEffect(() => {
-    let channel: ReturnType<typeof supabase.channel> | null = null;
     let activo = true;
 
     async function iniciar() {
-      const validacion = await validarUsuarioActivo();
+      try {
+        const acceso = await validarAccesoModuloUsuario("historial");
 
-      if (!validacion.ok) {
-        router.replace("/login");
-        return;
-      }
+        if (!activo) return;
 
-      const rolNormalizado = (validacion.perfil?.rol || "").trim().toLowerCase();
+        if (!acceso.ok) {
+          const debeVolverAlLogin = [
+            "sin_sesion",
+            "sin_perfil",
+            "usuario_inactivo",
+          ].includes(acceso.motivo || "");
 
-      if (!["admin", "supervisor", "jefe"].includes(rolNormalizado)) {
-        router.replace("/dashboard");
-        return;
-      }
-
-      setAutorizado(true);
-      await obtenerLogs();
-
-      if (!activo) return;
-
-      // Suscripción en tiempo real: Si ocurre una acción nueva, aparece arriba
-      channel = supabase
-        .channel("realtime-logs")
-        .on(
-          "postgres_changes",
-          { event: "INSERT", schema: "public", table: "logs" },
-          (payload) => {
-            setLogs((current) => [payload.new as Log, ...current]);
+          if (!debeVolverAlLogin) {
+            window.alert("No tienes acceso al modulo Historial.");
           }
-        )
-        .subscribe();
+
+          router.replace(debeVolverAlLogin ? "/login" : "/dashboard");
+          return;
+        }
+
+        const rolNormalizado = (acceso.perfil?.rol || "").trim().toLowerCase();
+
+        if (!ROLES_PERMITIDOS.includes(rolNormalizado)) {
+          router.replace("/dashboard");
+          return;
+        }
+
+        const idsPermitidos = await obtenerEmpresasPermitidas(
+          acceso.user!.id,
+          acceso.perfil?.rol || ""
+        );
+
+        if (!activo) return;
+
+        setEmpresasPermitidasIds(idsPermitidos);
+        setAutorizado(true);
+        setValidandoAcceso(false);
+
+        await Promise.all([
+          cargarEmpresas(idsPermitidos),
+          cargarEventos(idsPermitidos, FILTROS_INICIALES),
+        ]);
+      } catch (error) {
+        console.error("Error validando acceso a historial:", error);
+
+        if (activo) {
+          setValidandoAcceso(false);
+          router.replace("/dashboard");
+        }
+      }
     }
 
-    iniciar();
+    void iniciar();
 
     return () => {
       activo = false;
-
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
     };
   }, [router]);
 
-  async function obtenerLogs() {
+  async function cargarEmpresas(idsPermitidos: number[]) {
+    if (!idsPermitidos.length) {
+      setEmpresas([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("empresas")
+      .select("id,nombre")
+      .in("id", idsPermitidos)
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      console.error("Error cargando empresas para historial:", error);
+      setAvisoCarga(
+        "No se pudo cargar el catalogo de empresas para los filtros."
+      );
+      return;
+    }
+
+    setEmpresas((data || []) as Empresa[]);
+  }
+
+  async function cargarEventos(
+    idsPermitidos: number[],
+    filtrosAplicados: FiltrosHistorial
+  ) {
+    setCargandoHistorial(true);
+    setErrorCarga(null);
+
     try {
-      const { data, error } = await supabase
-        .from("logs")
-        .select("*")
-        .order("fecha", { ascending: false })
-        .limit(100); // Limitamos a los últimos 100 por rendimiento
+      let query = supabase.from("auditoria_eventos").select(COLUMNAS_AUDITORIA);
+
+      if (filtrosAplicados.empresaId === "general") {
+        query = query.is("empresa_id", null);
+      } else if (filtrosAplicados.empresaId) {
+        const empresaId = Number(filtrosAplicados.empresaId);
+
+        if (
+          !Number.isFinite(empresaId) ||
+          !idsPermitidos.includes(empresaId)
+        ) {
+          setEventos([]);
+          return;
+        }
+
+        query = query.eq("empresa_id", empresaId);
+      } else if (idsPermitidos.length) {
+        query = query.or(
+          `empresa_id.is.null,empresa_id.in.(${idsPermitidos.join(",")})`
+        );
+      } else {
+        query = query.is("empresa_id", null);
+      }
+
+      if (filtrosAplicados.fechaDesde) {
+        query = query.gte(
+          "creado_at",
+          `${filtrosAplicados.fechaDesde}T00:00:00.000`
+        );
+      }
+
+      if (filtrosAplicados.fechaHasta) {
+        query = query.lte(
+          "creado_at",
+          `${filtrosAplicados.fechaHasta}T23:59:59.999`
+        );
+      }
+
+      if (filtrosAplicados.modulo) {
+        query = query.eq("modulo", filtrosAplicados.modulo);
+      }
+
+      if (filtrosAplicados.usuarioId) {
+        query = query.eq("usuario_id", filtrosAplicados.usuarioId);
+      }
+
+      if (filtrosAplicados.accion) {
+        query = query.eq("accion", filtrosAplicados.accion);
+      }
+
+      if (filtrosAplicados.entidadTipo) {
+        query = query.eq("entidad_tipo", filtrosAplicados.entidadTipo);
+      }
+
+      if (filtrosAplicados.sensible) {
+        query = query.eq(
+          "sensible",
+          filtrosAplicados.sensible === "true"
+        );
+      }
+
+      if (filtrosAplicados.visibleCalendario) {
+        query = query.eq(
+          "visible_calendario",
+          filtrosAplicados.visibleCalendario === "true"
+        );
+      }
+
+      const { data, error } = await query
+        .order("creado_at", { ascending: false })
+        .limit(LIMITE_EVENTOS);
 
       if (error) throw error;
-      if (data) setLogs(data);
-    } catch (err) {
-      console.error("Error cargando historial:", err);
+
+      setEventos((data || []) as AuditoriaEvento[]);
+    } catch (error) {
+      console.error("Error cargando auditoria_eventos:", error);
+      setErrorCarga("No se pudo cargar el historial general.");
+      setEventos([]);
     } finally {
-      setLoading(false);
+      setCargandoHistorial(false);
     }
   }
 
-  // Filtrado en memoria para respuesta instantánea
-  const logsFiltrados = useMemo(() => {
-    return logs.filter(
-      (log) =>
-        log.usuario.toLowerCase().includes(busqueda.toLowerCase()) ||
-        log.accion.toLowerCase().includes(busqueda.toLowerCase()) ||
-        log.tarea.toLowerCase().includes(busqueda.toLowerCase())
-    );
-  }, [logs, busqueda]);
+  function aplicarFiltros(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void cargarEventos(empresasPermitidasIds, filtros);
+  }
 
-  if (!autorizado) {
+  function limpiarFiltros() {
+    setFiltros(FILTROS_INICIALES);
+    void cargarEventos(empresasPermitidasIds, FILTROS_INICIALES);
+  }
+
+  const empresasPorId = useMemo(
+    () => new Map(empresas.map((empresa) => [Number(empresa.id), empresa.nombre])),
+    [empresas]
+  );
+
+  const modulos = useMemo(() => {
+    const valores = new Set(eventos.map((evento) => evento.modulo));
+    if (filtros.modulo) valores.add(filtros.modulo);
+    return Array.from(valores).sort();
+  }, [eventos, filtros.modulo]);
+
+  const acciones = useMemo(() => {
+    const valores = new Set(eventos.map((evento) => evento.accion));
+    if (filtros.accion) valores.add(filtros.accion);
+    return Array.from(valores).sort();
+  }, [eventos, filtros.accion]);
+
+  const entidades = useMemo(() => {
+    const valores = new Set(
+      eventos
+        .map((evento) => evento.entidad_tipo)
+        .filter((valor): valor is string => Boolean(valor))
+    );
+    if (filtros.entidadTipo) valores.add(filtros.entidadTipo);
+    return Array.from(valores).sort();
+  }, [eventos, filtros.entidadTipo]);
+
+  const usuarios = useMemo(() => {
+    const valores = new Map<string, string>();
+    eventos.forEach((evento) => {
+      valores.set(
+        evento.usuario_id,
+        evento.usuario_nombre_snapshot || evento.usuario_id
+      );
+    });
+
+    if (filtros.usuarioId && !valores.has(filtros.usuarioId)) {
+      valores.set(filtros.usuarioId, filtros.usuarioId);
+    }
+
+    return Array.from(valores.entries()).sort((a, b) =>
+      a[1].localeCompare(b[1])
+    );
+  }, [eventos, filtros.usuarioId]);
+
+  const resumen = useMemo(
+    () => ({
+      total: eventos.length,
+      sensibles: eventos.filter((evento) => evento.sensible).length,
+      calendario: eventos.filter((evento) => evento.visible_calendario).length,
+      modulos: new Set(eventos.map((evento) => evento.modulo)).size,
+    }),
+    [eventos]
+  );
+
+  if (validandoAcceso || !autorizado) {
     return (
       <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
         Validando acceso...
@@ -109,75 +360,425 @@ export default function HistorialPage() {
     <div className="flex bg-[#020617] min-h-screen text-white font-sans">
       <Sidebar />
 
-      <main className="flex-1 p-8">
-        <div className="max-w-5xl mx-auto">
-          {/* Header con icono */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
+      <main className="flex-1 p-6 md:p-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between mb-8 gap-4">
             <div>
-              <h1 className="text-5xl font-black flex items-center gap-4">
-                <History className="text-cyan-500" size={48} />
-                Historial
+              <h1 className="text-4xl md:text-5xl font-black flex items-center gap-4">
+                <History className="text-cyan-500" size={46} />
+                Historial general
               </h1>
-              <p className="text-gray-400 mt-2">Seguimiento de actividades del sistema</p>
+              <p className="text-gray-400 mt-2">
+                Bitacora central de operaciones del sistema
+              </p>
             </div>
 
-            {/* Buscador dinámico */}
-            <div className="relative w-full md:w-80">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={20} />
-              <input
-                type="text"
-                placeholder="Buscar en el registro..."
-                className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-12 pr-4 outline-none focus:border-cyan-500/50 transition-all"
-                value={busqueda}
-                onChange={(e) => setBusqueda(e.target.value)}
-              />
-            </div>
+            <button
+              type="button"
+              onClick={() => void cargarEventos(empresasPermitidasIds, filtros)}
+              disabled={cargandoHistorial}
+              className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
+            >
+              <RefreshCcw size={18} className={cargandoHistorial ? "animate-spin" : ""} />
+              Actualizar
+            </button>
           </div>
 
-          {loading ? (
-            <div className="flex justify-center py-20">
-              <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-cyan-500"></div>
-            </div>
-          ) : (
-            <div className="relative border-l border-white/10 ml-4 space-y-8 pb-10">
-              {logsFiltrados.length > 0 ? (
-                logsFiltrados.map((log) => (
-                  <div key={log.id} className="relative pl-8 group">
-                    {/* Puntito de la línea de tiempo */}
-                    <div className="absolute left-[-5px] top-2 w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)] group-hover:scale-150 transition-transform" />
-                    
-                    <div className="bg-white/5 border border-white/10 rounded-3xl p-6 hover:bg-white/[0.08] transition-all">
-                      <div className="flex justify-between items-start flex-wrap gap-2 mb-3">
-                        <div className="flex items-center gap-2">
-                          <UserIcon size={16} className="text-cyan-400" />
-                          <h2 className="text-xl font-bold text-cyan-400">{log.usuario}</h2>
-                        </div>
-                        <div className="flex items-center gap-2 text-gray-500 text-sm">
-                          <Clock size={14} />
-                          {log.fecha ? new Date(log.fecha).toLocaleString() : "Sin fecha"}
-                        </div>
-                      </div>
+          <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+            <TarjetaResumen
+              titulo="Eventos mostrados"
+              valor={resumen.total}
+              icono={<History size={22} />}
+            />
+            <TarjetaResumen
+              titulo="Sensibles"
+              valor={resumen.sensibles}
+              icono={<ShieldAlert size={22} />}
+            />
+            <TarjetaResumen
+              titulo="En calendario"
+              valor={resumen.calendario}
+              icono={<CalendarDays size={22} />}
+            />
+            <TarjetaResumen
+              titulo="Modulos activos"
+              valor={resumen.modulos}
+              icono={<Layers size={22} />}
+            />
+          </section>
 
-                      <div className="flex flex-col gap-1">
-                        <p className="text-lg text-gray-200">
-                          {log.accion}
-                        </p>
-                        {log.tarea && (
-                          <div className="inline-flex mt-2 items-center bg-cyan-500/10 text-cyan-400 px-3 py-1 rounded-lg text-sm w-fit border border-cyan-500/20">
-                            Tarea: {log.tarea}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="pl-8 text-gray-500 italic">No se encontraron registros...</div>
-              )}
+          <form
+            onSubmit={aplicarFiltros}
+            className="bg-white/5 border border-white/10 rounded-3xl p-5 mb-8"
+          >
+            <div className="flex items-center gap-2 mb-5">
+              <History size={18} className="text-cyan-400" />
+              <h2 className="font-bold text-lg">Filtros</h2>
+            </div>
+
+            <div className="grid md:grid-cols-2 xl:grid-cols-5 gap-4">
+              <Campo label="Fecha desde">
+                <input
+                  type="date"
+                  value={filtros.fechaDesde}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      fechaDesde: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                />
+              </Campo>
+
+              <Campo label="Fecha hasta">
+                <input
+                  type="date"
+                  value={filtros.fechaHasta}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      fechaHasta: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                />
+              </Campo>
+
+              <Campo label="Empresa">
+                <select
+                  value={filtros.empresaId}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      empresaId: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todas las permitidas</option>
+                  <option value="general">General del sistema</option>
+                  {empresas.map((empresa) => (
+                    <option value={empresa.id} key={empresa.id}>
+                      {empresa.nombre}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Modulo">
+                <select
+                  value={filtros.modulo}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      modulo: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todos</option>
+                  {modulos.map((modulo) => (
+                    <option value={modulo} key={modulo}>
+                      {etiqueta(modulo)}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Usuario / nombre">
+                <select
+                  value={filtros.usuarioId}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      usuarioId: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todos</option>
+                  {usuarios.map(([id, nombre]) => (
+                    <option value={id} key={id}>
+                      {nombre}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Accion">
+                <select
+                  value={filtros.accion}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      accion: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todas</option>
+                  {acciones.map((accion) => (
+                    <option value={accion} key={accion}>
+                      {etiqueta(accion)}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Entidad tipo">
+                <select
+                  value={filtros.entidadTipo}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      entidadTipo: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todas</option>
+                  {entidades.map((entidad) => (
+                    <option value={entidad} key={entidad}>
+                      {etiqueta(entidad)}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Sensible">
+                <select
+                  value={filtros.sensible}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      sensible: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todos</option>
+                  <option value="true">Sensibles</option>
+                  <option value="false">No sensibles</option>
+                </select>
+              </Campo>
+
+              <Campo label="Visible calendario">
+                <select
+                  value={filtros.visibleCalendario}
+                  onChange={(event) =>
+                    setFiltros((actual) => ({
+                      ...actual,
+                      visibleCalendario: event.target.value,
+                    }))
+                  }
+                  className="campo-historial"
+                >
+                  <option value="">Todos</option>
+                  <option value="true">Si</option>
+                  <option value="false">No</option>
+                </select>
+              </Campo>
+            </div>
+
+            <div className="flex flex-wrap gap-3 mt-5">
+              <button
+                type="submit"
+                disabled={cargandoHistorial}
+                className="bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-2.5 font-bold disabled:opacity-50"
+              >
+                Aplicar filtros
+              </button>
+              <button
+                type="button"
+                onClick={limpiarFiltros}
+                disabled={cargandoHistorial}
+                className="bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-5 py-2.5 text-gray-200 disabled:opacity-50"
+              >
+                Limpiar filtros
+              </button>
+              <span className="text-xs text-gray-500 self-center">
+                Maximo {LIMITE_EVENTOS} eventos por consulta
+              </span>
+            </div>
+          </form>
+
+          {avisoCarga && (
+            <div className="border border-amber-400/30 bg-amber-400/10 text-amber-200 rounded-2xl px-5 py-4 mb-5">
+              {avisoCarga}
             </div>
           )}
+
+          {errorCarga && (
+            <div className="border border-red-400/30 bg-red-400/10 text-red-200 rounded-2xl px-5 py-4 mb-5">
+              {errorCarga}
+            </div>
+          )}
+
+          <section className="bg-white/5 border border-white/10 rounded-3xl overflow-hidden">
+            {cargandoHistorial ? (
+              <div className="flex items-center justify-center gap-3 py-20 text-gray-300">
+                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-cyan-500" />
+                Cargando historial...
+              </div>
+            ) : eventos.length === 0 ? (
+              <div className="py-20 text-center text-gray-400">
+                No se encontraron eventos de auditoria para los filtros aplicados.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-white/5 text-gray-400 uppercase text-xs">
+                    <tr>
+                      <th className="text-left px-5 py-4">Fecha / hora</th>
+                      <th className="text-left px-5 py-4">Modulo / accion</th>
+                      <th className="text-left px-5 py-4">Empresa</th>
+                      <th className="text-left px-5 py-4">Usuario</th>
+                      <th className="text-left px-5 py-4">Entidad</th>
+                      <th className="text-left px-5 py-4">Estado</th>
+                      <th className="text-left px-5 py-4">Descripcion</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {eventos.map((evento) => (
+                      <tr key={evento.id} className="align-top hover:bg-white/[0.03]">
+                        <td className="px-5 py-4 whitespace-nowrap text-gray-300">
+                          <div className="flex items-center gap-2">
+                            <Clock size={14} className="text-cyan-400" />
+                            {fechaHora(evento.creado_at)}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4">
+                          <div className="font-semibold text-cyan-300 capitalize">
+                            {etiqueta(evento.modulo)}
+                          </div>
+                          <div className="text-gray-300 capitalize">
+                            {etiqueta(evento.accion)}
+                          </div>
+                          {evento.sensible && (
+                            <span className="inline-block mt-2 text-[11px] rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-200 px-2 py-0.5">
+                              Sensible
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-gray-200">
+                          <div className="flex items-center gap-2">
+                            <Building2 size={14} className="text-gray-400" />
+                            {evento.empresa_id === null
+                              ? "General"
+                              : empresasPorId.get(Number(evento.empresa_id)) ||
+                                `Empresa #${evento.empresa_id}`}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-gray-200">
+                          <div className="flex items-center gap-2">
+                            <UserIcon size={14} className="text-gray-400" />
+                            {evento.usuario_nombre_snapshot || "Usuario"}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1 break-all">
+                            {evento.usuario_id}
+                          </div>
+                        </td>
+                        <td className="px-5 py-4 text-gray-200">
+                          <div className="capitalize">{etiqueta(evento.entidad_tipo)}</div>
+                          {evento.entidad_id !== null && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              #{String(evento.entidad_id)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-gray-200">
+                          {evento.estado_anterior || evento.estado_nuevo ? (
+                            <span>
+                              {evento.estado_anterior || "-"} {" -> "}
+                              {evento.estado_nuevo || "-"}
+                            </span>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                        <td className="px-5 py-4 min-w-64">
+                          <p className="text-gray-200">
+                            {evento.descripcion || etiqueta(evento.accion)}
+                          </p>
+                          {evento.motivo && (
+                            <p className="text-xs text-gray-400 mt-1">
+                              Motivo: {evento.motivo}
+                            </p>
+                          )}
+                          {evento.metadatos !== null && (
+                            <details className="mt-3">
+                              <summary className="cursor-pointer text-cyan-300 text-xs">
+                                Ver detalles
+                              </summary>
+                              <pre className="text-xs text-gray-300 bg-black/20 border border-white/10 rounded-xl p-3 mt-2 max-w-sm overflow-x-auto whitespace-pre-wrap">
+                                {JSON.stringify(evento.metadatos, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </div>
       </main>
+
+      <style jsx>{`
+        .campo-historial {
+          width: 100%;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 0.75rem;
+          padding: 0.65rem 0.75rem;
+          color: white;
+          outline: none;
+        }
+        .campo-historial:focus {
+          border-color: rgba(6, 182, 212, 0.6);
+        }
+        .campo-historial option {
+          background: #0f172a;
+        }
+      `}</style>
     </div>
+  );
+}
+
+function TarjetaResumen({
+  titulo,
+  valor,
+  icono,
+}: {
+  titulo: string;
+  valor: number;
+  icono: ReactNode;
+}) {
+  return (
+    <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+      <div className="flex items-center justify-between text-cyan-400 mb-3">
+        <span className="text-sm font-semibold text-gray-400">{titulo}</span>
+        {icono}
+      </div>
+      <div className="text-3xl font-black">{valor}</div>
+    </div>
+  );
+}
+
+function Campo({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <label className="flex flex-col gap-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+      {label}
+      {children}
+    </label>
   );
 }
