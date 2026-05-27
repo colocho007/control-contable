@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   FileSpreadsheet,
   History,
+  FolderOpen,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -189,6 +190,12 @@ export default function Sidebar() {
   icon: FileSpreadsheet,
   clave: "importaciones",
 },
+  {
+    name: "Documentos",
+    path: "/documentos",
+    icon: FolderOpen,
+    clave: "documentos",
+  },
 ];
 
   // Rutas administrativas normales
@@ -236,6 +243,12 @@ const menusAdmin = [
       path: "/ordenes-compra",
       icon: ClipboardList,
       clave: "ordenes",
+    },
+    {
+      name: "Documentos",
+      path: "/documentos",
+      icon: FolderOpen,
+      clave: "documentos",
     },
   ];
 
