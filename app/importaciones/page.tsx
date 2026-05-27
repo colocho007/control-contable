@@ -5,6 +5,7 @@ import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
 import {
@@ -832,6 +833,66 @@ monto_gtq: montoGtq,
     }
   }
 
+  async function registrarAuditoriaImportacion(
+    filasInsertadas: FilaPreview[],
+    resultado: "confirmada" | "parcial" = "confirmada"
+  ) {
+    const empresasAfectadas = Array.from(
+      new Set(
+        filasInsertadas
+          .map((fila) => Number(fila.data.empresa_id))
+          .filter((empresaId) => Number.isFinite(empresaId) && empresaId > 0)
+      )
+    );
+
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: empresasAfectadas.length === 1 ? empresasAfectadas[0] : null,
+        modulo: "importaciones",
+        accion:
+          resultado === "confirmada"
+            ? "confirmar_importacion"
+            : "importacion_parcial",
+        entidad_tipo: configActual.tabla,
+        descripcion:
+          resultado === "confirmada"
+            ? "Importación confirmada"
+            : "Importación ejecutada parcialmente",
+        sensible: true,
+        visible_usuario: true,
+        origen: "modulo_importaciones",
+        metadatos: {
+          tipo_importacion: tipo,
+          tabla_afectada: configActual.tabla,
+          resultado,
+          empresas_afectadas: empresasAfectadas,
+          filas_totales: preview.length,
+          filas_exitosas: filasInsertadas.length,
+          filas_insertadas: filasInsertadas.length,
+          filas_con_error: filasConError.length,
+          filas_pendientes_ejecucion:
+            resultado === "parcial"
+              ? Math.max(filasValidas.length - filasInsertadas.length, 0)
+              : 0,
+          archivo_origen: nombreArchivo || null,
+          columnas_configuradas: configActual.columnas,
+          resumen_errores:
+            filasConError.length > 0
+              ? "Se excluyeron filas por errores de validacion."
+              : null,
+        },
+      });
+
+      return true;
+    } catch (auditoriaError) {
+      console.error(
+        "La importación fue ejecutada, pero no se pudo registrar la auditoría:",
+        auditoriaError
+      );
+      return false;
+    }
+  }
+
 async function confirmarImportacion() {
   if (!userId) {
     toast.error("Sesión no válida");
@@ -850,43 +911,62 @@ async function confirmarImportacion() {
     const tabla = configActual.tabla;
 
     if (tipo === "cheques") {
-      let importados = 0;
+      const filasImportadas: FilaPreview[] = [];
 
-      for (const fila of filasValidas) {
-        const registro = fila.data;
+      try {
+        for (const fila of filasValidas) {
+          const registro = fila.data;
 
-        const { data, error } = await supabase
-          .from("cheques")
-          .insert([registro])
-          .select()
-          .single();
+          const { data, error } = await supabase
+            .from("cheques")
+            .insert([registro])
+            .select()
+            .single();
 
-        if (error) throw error;
+          if (error) throw error;
 
-        if (
-          String(registro.forma_pago || "").trim().toLowerCase() ===
-            "cheque" &&
-          registro.cheque_fisico_id
-        ) {
-          const { error: chequeFisicoError } = await supabase
-            .from("cheques_fisicos")
-            .update({
-              estado: "Reservado",
-              cheque_pago_id: data.id,
-            })
-            .eq("id", Number(registro.cheque_fisico_id));
+          filasImportadas.push(fila);
 
-          if (chequeFisicoError) throw chequeFisicoError;
+          if (
+            String(registro.forma_pago || "").trim().toLowerCase() ===
+              "cheque" &&
+            registro.cheque_fisico_id
+          ) {
+            const { error: chequeFisicoError } = await supabase
+              .from("cheques_fisicos")
+              .update({
+                estado: "Reservado",
+                cheque_pago_id: data.id,
+              })
+              .eq("id", Number(registro.cheque_fisico_id));
+
+            if (chequeFisicoError) throw chequeFisicoError;
+          }
+        }
+      } catch (error) {
+        if (filasImportadas.length > 0) {
+          await registrarAuditoriaImportacion(filasImportadas, "parcial");
         }
 
-        importados++;
+        throw error;
       }
+
+      const auditoriaRegistrada = await registrarAuditoriaImportacion(
+        filasImportadas
+      );
 
       await cargarDatosCheques(empresasPermitidasIds);
 
-      toast.success(`Se importaron ${importados} cheques / pagos`, {
-        id: toastId,
-      });
+      if (auditoriaRegistrada) {
+        toast.success(`Se importaron ${filasImportadas.length} cheques / pagos`, {
+          id: toastId,
+        });
+      } else {
+        toast.error(
+          "Cheques importados, pero no se pudo registrar la auditoría.",
+          { id: toastId }
+        );
+      }
 
       setPreview([]);
       setNombreArchivo("");
@@ -899,10 +979,19 @@ async function confirmarImportacion() {
 
     if (error) throw error;
 
-    toast.success(
-      `Se importaron ${filasValidas.length} registros en ${configActual.label}`,
-      { id: toastId }
-    );
+    const auditoriaRegistrada = await registrarAuditoriaImportacion(filasValidas);
+
+    if (auditoriaRegistrada) {
+      toast.success(
+        `Se importaron ${filasValidas.length} registros en ${configActual.label}`,
+        { id: toastId }
+      );
+    } else {
+      toast.error(
+        "Datos importados, pero no se pudo registrar la auditoría.",
+        { id: toastId }
+      );
+    }
 
     setPreview([]);
     setNombreArchivo("");
