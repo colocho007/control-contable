@@ -882,11 +882,11 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
     let borradorParaOrden: BorradorTrabajo | null = null;
-    let borradorIdParaOrden: string | number | null =
-      borradorOrigenIdRef.current;
+    let borradorIdParaOrden: string | number | null = null;
 
     try {
       await esperarAutoguardadoEnCurso();
+      borradorIdParaOrden = borradorOrigenIdRef.current;
 
       const borradorActivoActual = await obtenerBorradorActivo({
         modulo: "ordenes",
