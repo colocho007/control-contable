@@ -853,6 +853,29 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     }
   }
 
+  async function registrarHistorialOrden(
+    evento: {
+      orden_id: number;
+      accion: string;
+      estado_anterior: string | null;
+      estado_nuevo: string;
+      comentario: string;
+      usuario_id: string;
+    },
+    contexto: string
+  ) {
+    const { error } = await supabase
+      .from("ordenes_compra_historial")
+      .insert([evento]);
+
+    if (error) {
+      console.error(`No se pudo registrar historial de ${contexto}:`, error);
+      return false;
+    }
+
+    return true;
+  }
+
   async function crearOrden() {
     if (!userId) {
       toast.error("Sesión no válida");
@@ -899,6 +922,8 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
     let auditoriaCentralRegistrada = true;
+    let historialCreacionRegistrado = true;
+    let etapaCreacion = "insertar_orden";
     let borradorParaOrden: BorradorTrabajo | null = null;
     let borradorIdParaOrden: string | number | null = null;
 
@@ -1068,30 +1093,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
       }
 
       ordenCreadaIdRef.current = Number(ordenCreada.id);
-      auditoriaCentralRegistrada = await registrarAuditoriaOrden(
-        {
-          empresa_id: ordenCreada.empresa_id,
-          modulo: "ordenes",
-          accion: "crear_orden",
-          entidad_tipo: "orden_compra",
-          entidad_id: ordenCreada.id,
-          estado_nuevo: ordenCreada.estado,
-          descripcion: "Orden de compra creada",
-          sensible: true,
-          visible_calendario: Boolean(ordenCreada.fecha_necesaria),
-          origen: "modulo_ordenes",
-          metadatos: {
-            proveedor: ordenCreada.proveedor,
-            monto: Number(ordenCreada.monto),
-            moneda: ordenCreada.moneda,
-            fecha_necesaria: ordenCreada.fecha_necesaria,
-            cantidad_firmantes: firmantesSeleccionados.length,
-            borrador_id:
-              borradorIdParaOrden !== null ? String(borradorIdParaOrden) : null,
-          },
-        },
-        "creacion de la orden"
-      );
+      etapaCreacion = "insertar_firmas";
 
       const obtenerTipoFirma = (index: number) => {
   if (index === 0) return "responsable_servicio";
@@ -1118,9 +1120,8 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       if (firmasError) throw firmasError;
 
-      const { error: historialError } = await supabase
-        .from("ordenes_compra_historial")
-        .insert([
+      etapaCreacion = "registrar_historial_orden";
+      historialCreacionRegistrado = await registrarHistorialOrden(
         {
           orden_id: ordenCreada.id,
           accion: "Orden creada",
@@ -1129,9 +1130,34 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           comentario: `Orden enviada a ${firmantesSeleccionados.length} firmante(s)`,
           usuario_id: userId,
         },
-      ]);
+        "creacion de orden"
+      );
 
-      if (historialError) throw historialError;
+      auditoriaCentralRegistrada = await registrarAuditoriaOrden(
+        {
+          empresa_id: ordenCreada.empresa_id,
+          modulo: "ordenes",
+          accion: "crear_orden",
+          entidad_tipo: "orden_compra",
+          entidad_id: ordenCreada.id,
+          estado_nuevo: ordenCreada.estado,
+          descripcion: "Orden de compra creada",
+          sensible: true,
+          visible_calendario: Boolean(ordenCreada.fecha_necesaria),
+          origen: "modulo_ordenes",
+          metadatos: {
+            proveedor: ordenCreada.proveedor,
+            monto: Number(ordenCreada.monto),
+            moneda: ordenCreada.moneda,
+            fecha_necesaria: ordenCreada.fecha_necesaria,
+            cantidad_firmantes: firmantesSeleccionados.length,
+            borrador_id:
+              borradorIdParaOrden !== null ? String(borradorIdParaOrden) : null,
+            historial_especifico_registrado: historialCreacionRegistrado,
+          },
+        },
+        "creacion de la orden"
+      );
 
       const borradorCerrado = await completarBorradorOrdenCreada(
         ordenCreadaIdRef.current
@@ -1166,7 +1192,12 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         toast.error("La orden fue creada, pero no se pudo actualizar el listado.");
       }
 
-      if (auditoriaCentralRegistrada) {
+      if (!historialCreacionRegistrado) {
+        toast.error(
+          "Orden creada, pero no se pudo registrar su historial especifico.",
+          { id: toastId }
+        );
+      } else if (auditoriaCentralRegistrada) {
         toast.success("Orden enviada a firmas", { id: toastId });
       } else {
         toast.error(
@@ -1178,6 +1209,34 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       console.error(error);
 
       if (ordenCreadaIdRef.current !== null) {
+        await registrarAuditoriaOrden(
+          {
+            empresa_id: Number(form.empresaId),
+            modulo: "ordenes",
+            accion: "creacion_orden_parcial",
+            entidad_tipo: "orden_compra",
+            entidad_id: ordenCreadaIdRef.current,
+            estado_nuevo: "pendiente_revision",
+            descripcion: "Creacion de orden quedo parcialmente aplicada",
+            sensible: true,
+            visible_calendario: Boolean(form.fechaNecesaria),
+            origen: "modulo_ordenes",
+            metadatos: {
+              proveedor: form.proveedor,
+              monto: Number(form.monto),
+              moneda: form.moneda,
+              fecha_necesaria: form.fechaNecesaria || null,
+              cantidad_firmantes: firmantesSeleccionados.length,
+              borrador_id:
+                borradorIdParaOrden !== null
+                  ? String(borradorIdParaOrden)
+                  : null,
+              etapa_fallida: etapaCreacion,
+              motivo_error: error.message || "Error no identificado",
+            },
+          },
+          "creacion parcial de la orden"
+        );
         await registrarCreacionParcialParaRevision(
           ordenCreadaIdRef.current,
           "La orden fue creada, pero fallo el registro de firmas o historial."
@@ -1224,6 +1283,11 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
     setProcesandoId(orden.id);
     const toastId = toast.loading("Confirmando firma...");
+    let firmaActualizada = false;
+    let ordenActualizada = false;
+    let operacionCompletada = false;
+    let etapaFallida = "actualizar_firma";
+    let estadoCalculado: string | null = null;
 
     try {
       const ahora = new Date().toISOString();
@@ -1238,12 +1302,16 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         .eq("id", firma.id);
 
       if (firmaError) throw firmaError;
+      firmaActualizada = true;
+      etapaFallida = "contar_firmas";
 
-      const { count: firmasReales } = await supabase
+      const { count: firmasReales, error: firmasConteoError } = await supabase
         .from("ordenes_compra_firmas")
         .select("*", { count: "exact", head: true })
         .eq("orden_id", orden.id)
         .eq("estado", "Firmado");
+
+      if (firmasConteoError) throw firmasConteoError;
 
       const nuevasFirmasCompletadas = firmasReales || 1;
       const estaAprobada = nuevasFirmasCompletadas >= orden.firmas_requeridas;
@@ -1251,7 +1319,9 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       const nuevoEstado = estaAprobada
         ? "Aprobada"
         : "Firmada parcialmente";
+      estadoCalculado = nuevoEstado;
 
+      etapaFallida = "actualizar_orden";
       const { error: ordenError } = await supabase
         .from("ordenes_compra")
         .update({
@@ -1262,6 +1332,19 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         .eq("id", orden.id);
 
       if (ordenError) throw ordenError;
+      ordenActualizada = true;
+
+      const historialRegistrado = await registrarHistorialOrden(
+        {
+          orden_id: orden.id,
+          accion: "Firma confirmada",
+          estado_anterior: orden.estado,
+          estado_nuevo: nuevoEstado,
+          comentario: `Firmó ${perfilActual?.nombre || "usuario"}`,
+          usuario_id: userId,
+        },
+        "firma de orden"
+      );
 
       const auditoriaCentralRegistrada = await registrarAuditoriaOrden(
         {
@@ -1281,25 +1364,21 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
             rol_firmante: perfilActual?.rol || null,
             firmas_completadas: nuevasFirmasCompletadas,
             firmas_requeridas: orden.firmas_requeridas,
+            historial_especifico_registrado: historialRegistrado,
           },
         },
         "firma de la orden"
       );
-
-      await supabase.from("ordenes_compra_historial").insert([
-        {
-          orden_id: orden.id,
-          accion: "Firma confirmada",
-          estado_anterior: orden.estado,
-          estado_nuevo: nuevoEstado,
-          comentario: `Firmó ${perfilActual?.nombre || "usuario"}`,
-          usuario_id: userId,
-        },
-      ]);
+      operacionCompletada = true;
 
       await refrescarOrdenes();
 
-      if (auditoriaCentralRegistrada) {
+      if (!historialRegistrado) {
+        toast.error(
+          "Firma aplicada, pero no se pudo registrar su historial especifico.",
+          { id: toastId }
+        );
+      } else if (auditoriaCentralRegistrada) {
         toast.success(
           estaAprobada ? "Orden aprobada completamente" : "Firma registrada",
           { id: toastId }
@@ -1312,7 +1391,38 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       }
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || "Error al firmar", { id: toastId });
+      if (firmaActualizada && !ordenActualizada) {
+        await registrarAuditoriaOrden(
+          {
+            empresa_id: orden.empresa_id,
+            modulo: "ordenes",
+            accion: "firma_orden_parcial",
+            entidad_tipo: "orden_compra",
+            entidad_id: orden.id,
+            descripcion: "Firma de orden quedo parcialmente aplicada",
+            sensible: true,
+            visible_calendario: Boolean(orden.fecha_necesaria),
+            origen: "modulo_ordenes",
+            metadatos: {
+              firmante_id: userId,
+              etapa_fallida: etapaFallida,
+              estado_calculado: estadoCalculado,
+              motivo_error: error.message || "Error no identificado",
+            },
+          },
+          "firma parcial de la orden"
+        );
+        toast.error(
+          "La firma fue aplicada parcialmente y la orden requiere revision.",
+          { id: toastId }
+        );
+      } else if (operacionCompletada) {
+        toast.error("Firma aplicada, pero no se pudo actualizar el listado.", {
+          id: toastId,
+        });
+      } else {
+        toast.error(error.message || "Error al firmar", { id: toastId });
+      }
     } finally {
       setProcesandoId(null);
     }
@@ -1339,6 +1449,10 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
     setProcesandoId(orden.id);
     const toastId = toast.loading("Registrando observación...");
+    let firmaActualizada = false;
+    let ordenActualizada = false;
+    let operacionCompletada = false;
+    let etapaFallida = "actualizar_firma";
 
     try {
       const ahora = new Date().toISOString();
@@ -1353,6 +1467,8 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         .eq("id", firma.id);
 
       if (firmaError) throw firmaError;
+      firmaActualizada = true;
+      etapaFallida = "actualizar_orden";
 
       const { error: ordenError } = await supabase
         .from("ordenes_compra")
@@ -1363,6 +1479,19 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         .eq("id", orden.id);
 
       if (ordenError) throw ordenError;
+      ordenActualizada = true;
+
+      const historialRegistrado = await registrarHistorialOrden(
+        {
+          orden_id: orden.id,
+          accion: "Orden observada",
+          estado_anterior: orden.estado,
+          estado_nuevo: "Observada",
+          comentario,
+          usuario_id: userId,
+        },
+        "observacion de orden"
+      );
 
       const auditoriaCentralRegistrada = await registrarAuditoriaOrden(
         {
@@ -1381,25 +1510,21 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           metadatos: {
             firmante_id: userId,
             rol_firmante: perfilActual?.rol || null,
+            historial_especifico_registrado: historialRegistrado,
           },
         },
         "observacion de la orden"
       );
-
-      await supabase.from("ordenes_compra_historial").insert([
-        {
-          orden_id: orden.id,
-          accion: "Orden observada",
-          estado_anterior: orden.estado,
-          estado_nuevo: "Observada",
-          comentario,
-          usuario_id: userId,
-        },
-      ]);
+      operacionCompletada = true;
 
       await refrescarOrdenes();
 
-      if (auditoriaCentralRegistrada) {
+      if (!historialRegistrado) {
+        toast.error(
+          "Orden observada, pero no se pudo registrar su historial especifico.",
+          { id: toastId }
+        );
+      } else if (auditoriaCentralRegistrada) {
         toast.success("Orden observada", { id: toastId });
       } else {
         toast.error(
@@ -1409,7 +1534,39 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       }
     } catch (error: any) {
       console.error(error);
-      toast.error(error.message || "Error al observar", { id: toastId });
+      if (firmaActualizada && !ordenActualizada) {
+        await registrarAuditoriaOrden(
+          {
+            empresa_id: orden.empresa_id,
+            modulo: "ordenes",
+            accion: "observacion_orden_parcial",
+            entidad_tipo: "orden_compra",
+            entidad_id: orden.id,
+            descripcion: "Observacion de orden quedo parcialmente aplicada",
+            sensible: true,
+            visible_calendario: Boolean(orden.fecha_necesaria),
+            origen: "modulo_ordenes",
+            metadatos: {
+              firmante_id: userId,
+              comentario,
+              etapa_fallida: etapaFallida,
+              motivo_error: error.message || "Error no identificado",
+            },
+          },
+          "observacion parcial de la orden"
+        );
+        toast.error(
+          "La observacion fue aplicada parcialmente y la orden requiere revision.",
+          { id: toastId }
+        );
+      } else if (operacionCompletada) {
+        toast.error(
+          "Orden observada, pero no se pudo actualizar el listado.",
+          { id: toastId }
+        );
+      } else {
+        toast.error(error.message || "Error al observar", { id: toastId });
+      }
     } finally {
       setProcesandoId(null);
     }
