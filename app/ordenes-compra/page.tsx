@@ -551,6 +551,10 @@ async function guardarBorradorActual(
         datos: datosBorrador,
       });
 
+      if (borrador.id && borradorOrigenIdRef.current === null) {
+        borradorOrigenIdRef.current = borrador.id;
+      }
+
       setBorradorActivo(borrador);
     } catch (error: any) {
       console.error("Error autoguardando borrador de orden:", error);
