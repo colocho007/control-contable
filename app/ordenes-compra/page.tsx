@@ -49,6 +49,7 @@ interface FirmaOC {
 
 interface OrdenCompra {
   id: number;
+  borrador_id: string | null;
   empresa_id: number | null;
   empresa: string;
 
@@ -166,11 +167,12 @@ export default function OrdenesCompraPage() {
     useState<BorradorTrabajo | null>(null);
   const [borradorRevisado, setBorradorRevisado] = useState(false);
   const [procesandoBorrador, setProcesandoBorrador] = useState(false);
-  const [ordenCreadaRequiereRevisionId, setOrdenCreadaRequiereRevisionId] =
-    useState<number | null>(null);
+  const [mensajeBorradorBloqueado, setMensajeBorradorBloqueado] =
+    useState<string | null>(null);
   const formActualRef = useRef(form);
   const firmantesActualesRef = useRef(firmantesSeleccionados);
   const ordenCreadaIdRef = useRef<number | null>(null);
+  const borradorConsumidoRef = useRef(false);
   const autoguardadoSuspendidoRef = useRef(false);
   const timeoutBorradorRef = useRef<number | null>(null);
   const guardadoEnCursoRef = useRef<Promise<void> | null>(null);
@@ -259,12 +261,82 @@ export default function OrdenesCompraPage() {
   }
 }
 
+async function obtenerOrdenCreadaDesdeBorrador(borradorId: string | number) {
+  const { data, error } = await supabase
+    .from("ordenes_compra")
+    .select("id")
+    .eq("borrador_id", String(borradorId))
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  return data as { id: number } | null;
+}
+
+function esErrorDeBorradorDuplicado(error: {
+  code?: string | null;
+  message?: string | null;
+  details?: string | null;
+}) {
+  const detalle = `${error.message || ""} ${error.details || ""}`;
+
+  return (
+    error.code === "23505" &&
+    (detalle.includes("borrador_id") ||
+      detalle.includes("idx_ordenes_compra_borrador_unico"))
+  );
+}
+
 async function recuperarBorradorOrden() {
   try {
     const borrador = await obtenerBorradorActivo({
       modulo: "ordenes",
       referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
     });
+
+    if (borrador) {
+      const ordenCreada = await obtenerOrdenCreadaDesdeBorrador(borrador.id);
+
+      if (ordenCreada) {
+        let borradorCerrado = false;
+
+        try {
+          await marcarBorradorCompletado(borrador.id);
+          borradorCerrado = true;
+        } catch (error) {
+          console.error("Error completando borrador ya utilizado:", error);
+
+          try {
+            await marcarBorradorRequiereRevision(
+              Number(ordenCreada.id),
+              "El borrador ya genero una orden registrada.",
+              borrador
+            );
+            borradorCerrado = true;
+          } catch (errorRevision) {
+            console.error(
+              "Error marcando para revision borrador ya utilizado:",
+              errorRevision
+            );
+          }
+        }
+
+        setBorradorActivo(null);
+        setBorradorRevisado(true);
+
+        if (!borradorCerrado) {
+          bloquearBorradorConsumido(
+            "Este borrador ya generó una orden y no puede reutilizarse."
+          );
+        }
+
+        toast.error(
+          "Este borrador ya generó una orden y no puede reutilizarse."
+        );
+        return;
+      }
+    }
 
     setBorradorActivo(borrador);
     setBorradorRevisado(!borrador);
@@ -386,6 +458,7 @@ async function guardarBorradorActual(
 ) {
   if (
     ordenCreadaIdRef.current !== null ||
+    borradorConsumidoRef.current ||
     autoguardadoSuspendidoRef.current ||
     !autorizado ||
     !ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol)) ||
@@ -448,9 +521,10 @@ async function guardarBorradorActual(
 
 async function marcarBorradorRequiereRevision(
   ordenId: number,
-  motivoRevision: string
+  motivoRevision: string,
+  borradorConocido?: BorradorTrabajo
 ) {
-  let borrador = borradorActivo;
+  let borrador = borradorConocido || borradorActivo;
 
   try {
     borrador =
@@ -463,6 +537,7 @@ async function marcarBorradorRequiereRevision(
   }
 
   if (!borrador) return;
+  const usuarioBorradorId = userId || borrador.usuario_id;
 
   const datosAnteriores =
     borrador.datos &&
@@ -484,7 +559,7 @@ async function marcarBorradorRequiereRevision(
       },
     })
     .eq("id", borrador.id)
-    .eq("usuario_id", userId!)
+    .eq("usuario_id", usuarioBorradorId)
     .eq("estado", "borrador");
 
   if (error) throw error;
@@ -492,10 +567,18 @@ async function marcarBorradorRequiereRevision(
   setBorradorActivo(null);
 }
 
-function bloquearOrdenCreadaParaRevision(ordenId: number) {
-  setOrdenCreadaRequiereRevisionId(ordenId);
+function bloquearBorradorConsumido(mensaje: string) {
+  borradorConsumidoRef.current = true;
+  suspenderAutoguardado();
+  setMensajeBorradorBloqueado(mensaje);
   setBorradorActivo(null);
   setBorradorRevisado(true);
+}
+
+function bloquearOrdenCreadaParaRevision(ordenId: number) {
+  bloquearBorradorConsumido(
+    `La orden #${ordenId} fue creada, pero requiere revisión. No se debe reutilizar este formulario para crear otra orden.`
+  );
 }
 
 async function completarBorradorOrdenCreada(ordenId: number) {
@@ -735,14 +818,56 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     suspenderAutoguardado();
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
+    let borradorParaOrden: BorradorTrabajo | null = null;
 
     try {
       await esperarAutoguardadoEnCurso();
+
+      borradorParaOrden = await obtenerBorradorActivo({
+        modulo: "ordenes",
+        referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+      });
+
+      if (borradorParaOrden) {
+        const ordenExistente = await obtenerOrdenCreadaDesdeBorrador(
+          borradorParaOrden.id
+        );
+
+        if (ordenExistente) {
+          try {
+            await marcarBorradorCompletado(borradorParaOrden.id);
+          } catch (error) {
+            console.error("Error cerrando borrador ya consumido:", error);
+
+            try {
+              await marcarBorradorRequiereRevision(
+                Number(ordenExistente.id),
+                "Se intento reutilizar un borrador que ya genero una orden.",
+                borradorParaOrden
+              );
+            } catch (errorRevision) {
+              console.error(
+                "Error marcando borrador consumido para revision:",
+                errorRevision
+              );
+            }
+          }
+
+          bloquearBorradorConsumido(
+            "Esta orden ya fue creada desde este borrador."
+          );
+          toast.error("Esta orden ya fue creada desde este borrador.", {
+            id: toastId,
+          });
+          return;
+        }
+      }
 
       const { data: ordenCreada, error: ordenError } = await supabase
   .from("ordenes_compra")
   .insert([
     {
+      borrador_id: borradorParaOrden ? String(borradorParaOrden.id) : null,
       empresa_id: Number(form.empresaId),
       empresa: empresaSeleccionada.nombre,
 
@@ -794,7 +919,57 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
   .select()
   .single();
 
-      if (ordenError) throw ordenError;
+      if (ordenError) {
+        if (
+          borradorParaOrden &&
+          esErrorDeBorradorDuplicado(ordenError)
+        ) {
+          let ordenExistente: { id: number } | null = null;
+
+          try {
+            ordenExistente = await obtenerOrdenCreadaDesdeBorrador(
+              borradorParaOrden.id
+            );
+          } catch (error) {
+            console.error(
+              "Error verificando la orden ya creada desde el borrador:",
+              error
+            );
+          }
+
+          try {
+            await marcarBorradorCompletado(borradorParaOrden.id);
+          } catch (error) {
+            console.error("Error completando borrador duplicado:", error);
+
+            try {
+              if (!ordenExistente) {
+                throw new Error(
+                  "No fue posible identificar la orden creada desde el borrador."
+                );
+              }
+
+              await marcarBorradorRequiereRevision(
+                Number(ordenExistente.id),
+                "Se intento reutilizar un borrador que ya genero una orden.",
+                borradorParaOrden
+              );
+            } catch (errorRevision) {
+              console.error("Error cerrando borrador duplicado:", errorRevision);
+            }
+          }
+
+          bloquearBorradorConsumido(
+            "Esta orden ya fue creada desde este borrador."
+          );
+          toast.error("Esta orden ya fue creada desde este borrador.", {
+            id: toastId,
+          });
+          return;
+        }
+
+        throw ordenError;
+      }
 
       ordenCreadaIdRef.current = Number(ordenCreada.id);
 
@@ -889,8 +1064,13 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
     } finally {
       if (ordenFinalizada) {
         ordenCreadaIdRef.current = null;
+        borradorConsumidoRef.current = false;
         autoguardadoSuspendidoRef.current = false;
-      } else if (ordenCreadaIdRef.current === null) {
+        setMensajeBorradorBloqueado(null);
+      } else if (
+        ordenCreadaIdRef.current === null &&
+        !borradorConsumidoRef.current
+      ) {
         autoguardadoSuspendidoRef.current = false;
         void guardarBorradorActual();
       }
@@ -1300,20 +1480,19 @@ const stats = useMemo(() => {
   </div>
 )}
 
-{puedeCrear && ordenCreadaRequiereRevisionId !== null && (
+{puedeCrear && mensajeBorradorBloqueado && (
   <section className="mb-8 bg-red-500/10 border border-red-500/30 rounded-2xl p-6">
     <h2 className="text-red-400 font-black text-sm uppercase">
       Orden pendiente de revisión
     </h2>
     <p className="text-gray-200 mt-2">
-      La orden #{ordenCreadaRequiereRevisionId} fue creada, pero requiere
-      revisión. No se debe reutilizar este formulario para crear otra orden.
+      {mensajeBorradorBloqueado}
     </p>
   </section>
 )}
 
 {puedeCrear &&
-  ordenCreadaRequiereRevisionId === null &&
+  !mensajeBorradorBloqueado &&
   borradorActivo &&
   !borradorRevisado && (
   <section className="mb-8 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-6">
@@ -1344,7 +1523,7 @@ const stats = useMemo(() => {
   </section>
 )}
 
-{puedeCrear && ordenCreadaRequiereRevisionId === null && borradorRevisado && (
+{puedeCrear && !mensajeBorradorBloqueado && borradorRevisado && (
   <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
     <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
       <Plus size={16} className="text-cyan-500" />

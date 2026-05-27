@@ -11,7 +11,9 @@ export type ValorJson =
 export type EstadoBorradorTrabajo =
   | "borrador"
   | "completado"
-  | "descartado";
+  | "descartado"
+  | "requiere_revision"
+  | "error_cierre";
 
 export interface BorradorTrabajo {
   id: string | number;
