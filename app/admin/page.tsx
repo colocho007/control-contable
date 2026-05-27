@@ -5,6 +5,10 @@ import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
 import {
+  registrarAuditoriaEvento,
+  type RegistrarAuditoriaEventoParams,
+} from "../../lib/auditoria";
+import {
   Loader2,
   ShieldCheck,
   Users,
@@ -66,6 +70,10 @@ const ROLES_SISTEMA = [
   "empleado",
 ];
 
+function estadoPerfil(rol: string | null | undefined, activo: boolean | null | undefined) {
+  return `rol=${rol || "sin_rol"};activo=${activo === false ? "inactivo" : "activo"}`;
+}
+
 export default function AdminPage() {
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [usuarios, setUsuarios] = useState<Perfil[]>([]);
@@ -86,6 +94,21 @@ const [rolSeleccionado, setRolSeleccionado] = useState("");
 const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState<number[]>([]);
 const [activoSeleccionado, setActivoSeleccionado] = useState(true);
 
+async function registrarAuditoriaAdmin(
+  params: RegistrarAuditoriaEventoParams,
+  contexto: string
+) {
+  try {
+    await registrarAuditoriaEvento(params);
+    return true;
+  } catch (error) {
+    console.error(
+      `El cambio de ${contexto} se guardó, pero no se pudo registrar la auditoría:`,
+      error
+    );
+    return false;
+  }
+}
 
   useEffect(() => {
     iniciar();
@@ -203,8 +226,10 @@ async function guardarPermisosUsuario() {
 
   setProcesando(true);
   const toastId = toast.loading("Guardando permisos del usuario...");
+  let auditoriaCompleta = true;
 
   try {
+    const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
     const datosAuditoria = {
       actualizado_at: new Date().toISOString(),
       actualizado_por: perfilActual.id,
@@ -221,10 +246,53 @@ async function guardarPermisosUsuario() {
 
     if (rolError) throw rolError;
 
+    const perfilActualizado =
+      !usuarioAnterior ||
+      usuarioAnterior.rol !== rolSeleccionado ||
+      usuarioAnterior.activo !== activoSeleccionado;
+
+    if (perfilActualizado) {
+      const auditoriaPerfil = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "actualizar_perfil",
+          entidad_tipo: "perfil",
+          entidad_id: usuarioEditando,
+          estado_anterior: usuarioAnterior
+            ? estadoPerfil(usuarioAnterior.rol, usuarioAnterior.activo)
+            : null,
+          estado_nuevo: estadoPerfil(rolSeleccionado, activoSeleccionado),
+          descripcion: "Perfil actualizado desde panel admin",
+          sensible: true,
+          metadatos: {
+            nombre: usuarioAnterior?.nombre ?? null,
+            campos_cambiados: {
+              ...(usuarioAnterior?.rol !== rolSeleccionado && {
+                rol: {
+                  anterior: usuarioAnterior?.rol ?? null,
+                  nuevo: rolSeleccionado,
+                },
+              }),
+              ...(usuarioAnterior?.activo !== activoSeleccionado && {
+                activo: {
+                  anterior: usuarioAnterior?.activo ?? null,
+                  nuevo: activoSeleccionado,
+                },
+              }),
+            },
+          },
+          origen: "panel_admin",
+        },
+        "perfil"
+      );
+
+      auditoriaCompleta = auditoriaCompleta && auditoriaPerfil;
+    }
+
     const { data: empresasExistentes, error: empresasExistentesError } =
       await supabase
       .from("usuario_empresas")
-      .select("id,empresa_id")
+      .select("id,empresa_id,activo")
       .eq("usuario_id", usuarioEditando);
 
     if (empresasExistentesError) throw empresasExistentesError;
@@ -241,6 +309,31 @@ async function guardarPermisosUsuario() {
           !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
       )
       .map((asignacion) => asignacion.id);
+    const empresasActivadas = Array.from(
+      new Set(
+        empresasSeleccionadas
+          .map(Number)
+          .filter(
+            (empresaId) =>
+              !(empresasExistentes || []).some(
+                (asignacion) =>
+                  Number(asignacion.empresa_id) === empresaId &&
+                  asignacion.activo === true
+              )
+          )
+      )
+    );
+    const empresasDesactivadas = Array.from(
+      new Set(
+        (empresasExistentes || [])
+          .filter(
+            (asignacion) =>
+              asignacion.activo !== false &&
+              !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
+          )
+          .map((asignacion) => Number(asignacion.empresa_id))
+      )
+    );
 
     if (idsEmpresasActivas.length > 0) {
       const { error: activarEmpresasError } = await supabase
@@ -280,10 +373,32 @@ async function guardarPermisosUsuario() {
       if (insertError) throw insertError;
     }
 
+    if (empresasActivadas.length > 0 || empresasDesactivadas.length > 0) {
+      const auditoriaEmpresas = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "actualizar_empresas_usuario",
+          entidad_tipo: "usuario_empresas",
+          entidad_id: usuarioEditando,
+          descripcion: "Empresas asignadas actualizadas",
+          sensible: true,
+          metadatos: {
+            empresas_seleccionadas: empresasSeleccionadas.map(Number),
+            empresas_activadas: empresasActivadas,
+            empresas_desactivadas: empresasDesactivadas,
+          },
+          origen: "panel_admin",
+        },
+        "empresas asignadas"
+      );
+
+      auditoriaCompleta = auditoriaCompleta && auditoriaEmpresas;
+    }
+
     const { data: modulosExistentes, error: modulosExistentesError } =
       await supabase
         .from("usuario_modulos")
-        .select("id,modulo_clave")
+        .select("id,modulo_clave,activo")
         .eq("usuario_id", usuarioEditando);
 
     if (modulosExistentesError) throw modulosExistentesError;
@@ -295,6 +410,28 @@ async function guardarPermisosUsuario() {
     const idsModulosInactivos = (modulosExistentes || [])
       .filter((modulo) => !modulosSeleccionadosSet.has(modulo.modulo_clave))
       .map((modulo) => modulo.id);
+    const modulosActivados = Array.from(
+      new Set(
+        modulosSeleccionados.filter(
+          (moduloClave) =>
+            !(modulosExistentes || []).some(
+              (modulo) =>
+                modulo.modulo_clave === moduloClave && modulo.activo === true
+            )
+        )
+      )
+    );
+    const modulosDesactivados = Array.from(
+      new Set(
+        (modulosExistentes || [])
+          .filter(
+            (modulo) =>
+              modulo.activo !== false &&
+              !modulosSeleccionadosSet.has(modulo.modulo_clave)
+          )
+          .map((modulo) => modulo.modulo_clave)
+      )
+    );
 
     if (idsModulosActivos.length > 0) {
       const { error: activarModulosError } = await supabase
@@ -334,6 +471,28 @@ async function guardarPermisosUsuario() {
       if (insertModulosError) throw insertModulosError;
     }
 
+    if (modulosActivados.length > 0 || modulosDesactivados.length > 0) {
+      const auditoriaModulos = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "actualizar_modulos_usuario",
+          entidad_tipo: "usuario_modulos",
+          entidad_id: usuarioEditando,
+          descripcion: "Módulos asignados actualizados",
+          sensible: true,
+          metadatos: {
+            modulos_seleccionados: modulosSeleccionados,
+            modulos_activados: modulosActivados,
+            modulos_desactivados: modulosDesactivados,
+          },
+          origen: "panel_admin",
+        },
+        "módulos asignados"
+      );
+
+      auditoriaCompleta = auditoriaCompleta && auditoriaModulos;
+    }
+
     await cargarDatos();
 
    setUsuarioEditando("");
@@ -342,7 +501,14 @@ setActivoSeleccionado(true);
 setEmpresasSeleccionadas([]);
 setModulosSeleccionados([]);
 
-    toast.success("Permisos actualizados correctamente", { id: toastId });
+    if (auditoriaCompleta) {
+      toast.success("Permisos actualizados correctamente", { id: toastId });
+    } else {
+      toast.error(
+        "Permisos guardados, pero no se pudo registrar toda la auditoría.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     console.error(error);
     toast.error(error.message || "Error al guardar permisos", { id: toastId });
@@ -434,6 +600,7 @@ async function quitarAsignacion(id: number) {
   if (!confirmar) return;
 
   setProcesando(true);
+  const asignacionRetirada = asignaciones.find((asignacion) => asignacion.id === id);
   const toastId = toast.loading("Quitando asignación...");
 
   try {
@@ -449,9 +616,36 @@ async function quitarAsignacion(id: number) {
 
     if (error) throw error;
 
+    const auditoriaRegistrada = await registrarAuditoriaAdmin(
+      {
+        empresa_id: asignacionRetirada?.empresa_id,
+        modulo: "admin",
+        accion: "retirar_empresa_usuario",
+        entidad_tipo: "usuario_empresas",
+        entidad_id: asignacionRetirada?.usuario_id ?? id,
+        estado_anterior: "activo",
+        estado_nuevo: "inactivo",
+        descripcion: "Empresa retirada de usuario",
+        sensible: true,
+        metadatos: {
+          asignacion_id: id,
+          usuario_id: asignacionRetirada?.usuario_id ?? null,
+        },
+        origen: "panel_admin",
+      },
+      "retiro de empresa"
+    );
+
     await cargarDatos();
 
-    toast.success("Asignación retirada correctamente", { id: toastId });
+    if (auditoriaRegistrada) {
+      toast.success("Asignación retirada correctamente", { id: toastId });
+    } else {
+      toast.error(
+        "Asignación retirada, pero no se pudo registrar la auditoría.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     console.error(error);
     toast.error(error.message || "Error al quitar asignación", {
@@ -477,18 +671,44 @@ async function quitarAsignacion(id: number) {
 
     if (error) throw error;
 
+    const auditoriaRegistrada = await registrarAuditoriaAdmin(
+      {
+        modulo: "admin",
+        accion: "actualizar_estado_modulo",
+        entidad_tipo: "modulo_sistema",
+        entidad_id: modulo.id,
+        estado_anterior: modulo.activo ? "activo" : "inactivo",
+        estado_nuevo: nuevoEstado ? "activo" : "inactivo",
+        descripcion: "Estado global de módulo actualizado",
+        sensible: true,
+        metadatos: {
+          clave: modulo.clave,
+          nombre: modulo.nombre,
+        },
+        origen: "panel_admin",
+      },
+      "estado global del módulo"
+    );
+
     setModulos((prev) =>
       prev.map((m) =>
         m.id === modulo.id ? { ...m, activo: nuevoEstado } : m
       )
     );
 
-    toast.success(
-      nuevoEstado
-        ? "Módulo activado correctamente"
-        : "Módulo desactivado correctamente",
-      { id: toastId }
-    );
+    if (auditoriaRegistrada) {
+      toast.success(
+        nuevoEstado
+          ? "Módulo activado correctamente"
+          : "Módulo desactivado correctamente",
+        { id: toastId }
+      );
+    } else {
+      toast.error(
+        "El estado del módulo cambió, pero no se pudo registrar la auditoría.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     console.error(error);
     toast.error(error.message || "Error al cambiar estado del módulo", {

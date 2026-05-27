@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { Users, Plus, Trash2, Loader2 } from "lucide-react";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
+const MOTIVO_DESACTIVACION = "Desactivado desde módulo Usuarios";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
@@ -111,20 +113,52 @@ export default function UsuariosPage() {
     setProcesando(true);
 
     try {
+      const perfilCreado = {
+        id: form.uid.trim(),
+        nombre: form.nombre.trim(),
+        rol: form.rol,
+        activo: true,
+      };
+
       const { error } = await supabase.from("perfiles").insert([
-        {
-          id: form.uid.trim(),
-          nombre: form.nombre.trim(),
-          rol: form.rol,
-          activo: true,
-        },
+        perfilCreado,
       ]);
 
       if (error) throw error;
 
+      let auditoriaRegistrada = true;
+
+      try {
+        await registrarAuditoriaEvento({
+          modulo: "usuarios",
+          accion: "crear_perfil",
+          entidad_tipo: "perfil",
+          entidad_id: perfilCreado.id,
+          estado_nuevo: "activo",
+          descripcion: "Perfil de usuario creado",
+          sensible: true,
+          metadatos: {
+            nombre: perfilCreado.nombre,
+            rol: perfilCreado.rol,
+            activo: perfilCreado.activo,
+          },
+          origen: "modulo_usuarios",
+        });
+      } catch (auditoriaError) {
+        auditoriaRegistrada = false;
+        console.error(
+          "El perfil fue creado, pero no se pudo registrar la auditoría:",
+          auditoriaError
+        );
+      }
+
       setForm({ nombre: "", uid: "", rol: "empleado" });
       await obtenerPerfiles();
-      alert("Perfil de usuario creado correctamente.");
+      alert(
+        auditoriaRegistrada
+          ? "Perfil de usuario creado correctamente."
+          : "Perfil creado, pero no se pudo registrar la auditoría. Contacta al administrador."
+      );
     } catch (error: any) {
       alert("Error al crear perfil de usuario: " + error.message);
     } finally {
@@ -149,6 +183,7 @@ export default function UsuariosPage() {
     setProcesando(true);
 
     try {
+      const perfilDesactivado = perfiles.find((perfil) => perfil.id === id);
       const { error } = await supabase
         .from("perfiles")
         .update({ activo: false })
@@ -156,8 +191,39 @@ export default function UsuariosPage() {
 
       if (error) throw error;
 
+      let auditoriaRegistrada = true;
+
+      try {
+        await registrarAuditoriaEvento({
+          modulo: "usuarios",
+          accion: "desactivar_perfil",
+          entidad_tipo: "perfil",
+          entidad_id: id,
+          estado_anterior: "activo",
+          estado_nuevo: "inactivo",
+          motivo: MOTIVO_DESACTIVACION,
+          descripcion: "Perfil de usuario desactivado",
+          sensible: true,
+          metadatos: {
+            nombre: perfilDesactivado?.nombre ?? null,
+            rol: perfilDesactivado?.rol ?? null,
+          },
+          origen: "modulo_usuarios",
+        });
+      } catch (auditoriaError) {
+        auditoriaRegistrada = false;
+        console.error(
+          "El perfil fue desactivado, pero no se pudo registrar la auditoría:",
+          auditoriaError
+        );
+      }
+
       await obtenerPerfiles();
-      alert("Perfil de usuario desactivado correctamente.");
+      alert(
+        auditoriaRegistrada
+          ? "Perfil de usuario desactivado correctamente."
+          : "Perfil desactivado, pero no se pudo registrar la auditoría. Contacta al administrador."
+      );
     } catch (error: any) {
       alert("No se pudo desactivar el perfil: " + error.message);
     } finally {
