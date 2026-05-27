@@ -298,59 +298,96 @@ async function guardarPermisosUsuario() {
     if (empresasExistentesError) throw empresasExistentesError;
 
     const empresasSeleccionadasSet = new Set(empresasSeleccionadas.map(Number));
-    const idsEmpresasActivas = (empresasExistentes || [])
-      .filter((asignacion) =>
+    const asignacionesEmpresaParaActivar = (empresasExistentes || []).filter(
+      (asignacion) =>
+        asignacion.activo !== true &&
         empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
-      )
-      .map((asignacion) => asignacion.id);
-    const idsEmpresasInactivas = (empresasExistentes || [])
+    );
+    const asignacionesEmpresaParaDesactivar = (empresasExistentes || [])
       .filter(
         (asignacion) =>
+          asignacion.activo !== false &&
           !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
-      )
-      .map((asignacion) => asignacion.id);
-    const empresasActivadas = Array.from(
-      new Set(
-        empresasSeleccionadas
-          .map(Number)
-          .filter(
-            (empresaId) =>
-              !(empresasExistentes || []).some(
-                (asignacion) =>
-                  Number(asignacion.empresa_id) === empresaId &&
-                  asignacion.activo === true
-              )
-          )
-      )
+      );
+    const idsEmpresasParaActivar = asignacionesEmpresaParaActivar.map(
+      (asignacion) => asignacion.id
     );
-    const empresasDesactivadas = Array.from(
-      new Set(
-        (empresasExistentes || [])
-          .filter(
-            (asignacion) =>
-              asignacion.activo !== false &&
-              !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
-          )
-          .map((asignacion) => Number(asignacion.empresa_id))
-      )
+    const idsEmpresasParaDesactivar = asignacionesEmpresaParaDesactivar.map(
+      (asignacion) => asignacion.id
     );
 
-    if (idsEmpresasActivas.length > 0) {
+    if (idsEmpresasParaActivar.length > 0) {
       const { error: activarEmpresasError } = await supabase
         .from("usuario_empresas")
         .update({ activo: true, ...datosAuditoria })
-        .in("id", idsEmpresasActivas);
+        .in("id", idsEmpresasParaActivar);
 
-      if (activarEmpresasError) throw activarEmpresasError;
+      if (activarEmpresasError) {
+        throw new Error(
+          "No se pudieron activar las empresas seleccionadas: " +
+            activarEmpresasError.message
+        );
+      }
+
+      const auditoriaEmpresasActivadas = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "activar_empresas_usuario",
+          entidad_tipo: "usuario_empresas",
+          entidad_id: usuarioEditando,
+          descripcion: "Empresas activadas para usuario",
+          sensible: true,
+          metadatos: {
+            asignacion_ids: idsEmpresasParaActivar,
+            empresa_ids: asignacionesEmpresaParaActivar.map(
+              (asignacion) => Number(asignacion.empresa_id)
+            ),
+            conteo: idsEmpresasParaActivar.length,
+          },
+          origen: "panel_admin",
+        },
+        "activacion de empresas asignadas"
+      );
+
+      auditoriaCompleta =
+        auditoriaCompleta && auditoriaEmpresasActivadas;
     }
 
-    if (idsEmpresasInactivas.length > 0) {
+    if (idsEmpresasParaDesactivar.length > 0) {
       const { error: desactivarEmpresasError } = await supabase
         .from("usuario_empresas")
         .update({ activo: false, ...datosAuditoria })
-        .in("id", idsEmpresasInactivas);
+        .in("id", idsEmpresasParaDesactivar);
 
-      if (desactivarEmpresasError) throw desactivarEmpresasError;
+      if (desactivarEmpresasError) {
+        throw new Error(
+          "No se pudieron desactivar las empresas retiradas: " +
+            desactivarEmpresasError.message
+        );
+      }
+
+      const auditoriaEmpresasDesactivadas = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "desactivar_empresas_usuario",
+          entidad_tipo: "usuario_empresas",
+          entidad_id: usuarioEditando,
+          descripcion: "Empresas desactivadas para usuario",
+          sensible: true,
+          metadatos: {
+            asignacion_ids: idsEmpresasParaDesactivar,
+            empresa_ids: asignacionesEmpresaParaDesactivar.map(
+              (asignacion) => Number(asignacion.empresa_id)
+            ),
+            conteo: idsEmpresasParaDesactivar.length,
+          },
+          origen: "panel_admin",
+        },
+        "desactivacion de empresas asignadas"
+      );
+
+      auditoriaCompleta =
+        auditoriaCompleta && auditoriaEmpresasDesactivadas;
     }
 
     const empresasRegistradasSet = new Set(
@@ -370,29 +407,34 @@ async function guardarPermisosUsuario() {
         .from("usuario_empresas")
         .insert(nuevasAsignaciones);
 
-      if (insertError) throw insertError;
-    }
+      if (insertError) {
+        throw new Error(
+          "No se pudieron insertar las nuevas empresas asignadas: " +
+            insertError.message
+        );
+      }
 
-    if (empresasActivadas.length > 0 || empresasDesactivadas.length > 0) {
-      const auditoriaEmpresas = await registrarAuditoriaAdmin(
+      const auditoriaEmpresasInsertadas = await registrarAuditoriaAdmin(
         {
           modulo: "admin",
-          accion: "actualizar_empresas_usuario",
+          accion: "insertar_empresas_usuario",
           entidad_tipo: "usuario_empresas",
           entidad_id: usuarioEditando,
-          descripcion: "Empresas asignadas actualizadas",
+          descripcion: "Nuevas empresas asignadas a usuario",
           sensible: true,
           metadatos: {
-            empresas_seleccionadas: empresasSeleccionadas.map(Number),
-            empresas_activadas: empresasActivadas,
-            empresas_desactivadas: empresasDesactivadas,
+            empresa_ids: nuevasAsignaciones.map(
+              (asignacion) => Number(asignacion.empresa_id)
+            ),
+            conteo: nuevasAsignaciones.length,
           },
           origen: "panel_admin",
         },
-        "empresas asignadas"
+        "insercion de empresas asignadas"
       );
 
-      auditoriaCompleta = auditoriaCompleta && auditoriaEmpresas;
+      auditoriaCompleta =
+        auditoriaCompleta && auditoriaEmpresasInsertadas;
     }
 
     const { data: modulosExistentes, error: modulosExistentesError } =
@@ -404,51 +446,94 @@ async function guardarPermisosUsuario() {
     if (modulosExistentesError) throw modulosExistentesError;
 
     const modulosSeleccionadosSet = new Set(modulosSeleccionados);
-    const idsModulosActivos = (modulosExistentes || [])
-      .filter((modulo) => modulosSeleccionadosSet.has(modulo.modulo_clave))
-      .map((modulo) => modulo.id);
-    const idsModulosInactivos = (modulosExistentes || [])
-      .filter((modulo) => !modulosSeleccionadosSet.has(modulo.modulo_clave))
-      .map((modulo) => modulo.id);
-    const modulosActivados = Array.from(
-      new Set(
-        modulosSeleccionados.filter(
-          (moduloClave) =>
-            !(modulosExistentes || []).some(
-              (modulo) =>
-                modulo.modulo_clave === moduloClave && modulo.activo === true
-            )
-        )
-      )
+    const asignacionesModuloParaActivar = (modulosExistentes || []).filter(
+      (modulo) =>
+        modulo.activo !== true &&
+        modulosSeleccionadosSet.has(modulo.modulo_clave)
     );
-    const modulosDesactivados = Array.from(
-      new Set(
-        (modulosExistentes || [])
-          .filter(
-            (modulo) =>
-              modulo.activo !== false &&
-              !modulosSeleccionadosSet.has(modulo.modulo_clave)
-          )
-          .map((modulo) => modulo.modulo_clave)
-      )
+    const asignacionesModuloParaDesactivar = (modulosExistentes || []).filter(
+      (modulo) =>
+        modulo.activo !== false &&
+        !modulosSeleccionadosSet.has(modulo.modulo_clave)
+    );
+    const idsModulosParaActivar = asignacionesModuloParaActivar.map(
+      (modulo) => modulo.id
+    );
+    const idsModulosParaDesactivar = asignacionesModuloParaDesactivar.map(
+      (modulo) => modulo.id
     );
 
-    if (idsModulosActivos.length > 0) {
+    if (idsModulosParaActivar.length > 0) {
       const { error: activarModulosError } = await supabase
         .from("usuario_modulos")
         .update({ activo: true, ...datosAuditoria })
-        .in("id", idsModulosActivos);
+        .in("id", idsModulosParaActivar);
 
-      if (activarModulosError) throw activarModulosError;
+      if (activarModulosError) {
+        throw new Error(
+          "No se pudieron activar los modulos seleccionados: " +
+            activarModulosError.message
+        );
+      }
+
+      const auditoriaModulosActivados = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "activar_modulos_usuario",
+          entidad_tipo: "usuario_modulos",
+          entidad_id: usuarioEditando,
+          descripcion: "Modulos activados para usuario",
+          sensible: true,
+          metadatos: {
+            asignacion_ids: idsModulosParaActivar,
+            modulo_claves: asignacionesModuloParaActivar.map(
+              (modulo) => modulo.modulo_clave
+            ),
+            conteo: idsModulosParaActivar.length,
+          },
+          origen: "panel_admin",
+        },
+        "activacion de modulos asignados"
+      );
+
+      auditoriaCompleta = auditoriaCompleta && auditoriaModulosActivados;
     }
 
-    if (idsModulosInactivos.length > 0) {
+    if (idsModulosParaDesactivar.length > 0) {
       const { error: desactivarModulosError } = await supabase
         .from("usuario_modulos")
         .update({ activo: false, ...datosAuditoria })
-        .in("id", idsModulosInactivos);
+        .in("id", idsModulosParaDesactivar);
 
-      if (desactivarModulosError) throw desactivarModulosError;
+      if (desactivarModulosError) {
+        throw new Error(
+          "No se pudieron desactivar los modulos retirados: " +
+            desactivarModulosError.message
+        );
+      }
+
+      const auditoriaModulosDesactivados = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin",
+          accion: "desactivar_modulos_usuario",
+          entidad_tipo: "usuario_modulos",
+          entidad_id: usuarioEditando,
+          descripcion: "Modulos desactivados para usuario",
+          sensible: true,
+          metadatos: {
+            asignacion_ids: idsModulosParaDesactivar,
+            modulo_claves: asignacionesModuloParaDesactivar.map(
+              (modulo) => modulo.modulo_clave
+            ),
+            conteo: idsModulosParaDesactivar.length,
+          },
+          origen: "panel_admin",
+        },
+        "desactivacion de modulos asignados"
+      );
+
+      auditoriaCompleta =
+        auditoriaCompleta && auditoriaModulosDesactivados;
     }
 
     const modulosRegistradosSet = new Set(
@@ -468,29 +553,34 @@ async function guardarPermisosUsuario() {
         .from("usuario_modulos")
         .insert(nuevosModulos);
 
-      if (insertModulosError) throw insertModulosError;
-    }
+      if (insertModulosError) {
+        throw new Error(
+          "No se pudieron insertar los nuevos modulos asignados: " +
+            insertModulosError.message
+        );
+      }
 
-    if (modulosActivados.length > 0 || modulosDesactivados.length > 0) {
-      const auditoriaModulos = await registrarAuditoriaAdmin(
+      const auditoriaModulosInsertados = await registrarAuditoriaAdmin(
         {
           modulo: "admin",
-          accion: "actualizar_modulos_usuario",
+          accion: "insertar_modulos_usuario",
           entidad_tipo: "usuario_modulos",
           entidad_id: usuarioEditando,
-          descripcion: "Módulos asignados actualizados",
+          descripcion: "Nuevos modulos asignados a usuario",
           sensible: true,
           metadatos: {
-            modulos_seleccionados: modulosSeleccionados,
-            modulos_activados: modulosActivados,
-            modulos_desactivados: modulosDesactivados,
+            modulo_claves: nuevosModulos.map(
+              (modulo) => modulo.modulo_clave
+            ),
+            conteo: nuevosModulos.length,
           },
           origen: "panel_admin",
         },
-        "módulos asignados"
+        "insercion de modulos asignados"
       );
 
-      auditoriaCompleta = auditoriaCompleta && auditoriaModulos;
+      auditoriaCompleta =
+        auditoriaCompleta && auditoriaModulosInsertados;
     }
 
     await cargarDatos();
