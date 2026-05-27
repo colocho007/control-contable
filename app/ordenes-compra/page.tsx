@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import {
+  descartarBorrador,
+  guardarBorradorTrabajo,
+  marcarBorradorCompletado,
+  obtenerBorradorActivo,
+  type BorradorTrabajo,
+} from "../../lib/borradoresTrabajo";
 import {
   Plus,
   CheckCircle2,
@@ -86,9 +93,55 @@ interface OrdenCompra {
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_CREADORES = ["admin", "supervisor", "jefe", "iniciador_gestion"];
 const ROLES_FIRMANTES = ["admin", "supervisor", "jefe", "firmante_oc"];
+const REFERENCIA_BORRADOR_ORDEN = "nueva-orden";
+const TITULO_BORRADOR_ORDEN = "Borrador de orden de compra";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
+}
+
+function crearFormularioOrdenVacio() {
+  return {
+    empresaId: "",
+    empresa: "",
+    proveedor: "",
+    proveedorTelefono: "",
+    proveedorContacto: "",
+    numeroOrden: "",
+    anioOrden: String(new Date().getFullYear()),
+    fechaOc: new Date().toISOString().split("T")[0],
+    codigoSolicitante: "",
+    encargado: "",
+    formaPago: "",
+    concepto: "",
+    descripcion: "",
+    fechaFactura: "",
+    numeroFactura: "",
+    precioUnitario: "",
+    subtotal: "",
+    isr: "",
+    totalFinal: "",
+    monto: "",
+    moneda: "GTQ",
+    prioridad: "Media",
+    fechaNecesaria: "",
+  };
+}
+
+type FormularioOrden = ReturnType<typeof crearFormularioOrdenVacio>;
+
+function formularioTieneContenido(
+  formulario: FormularioOrden,
+  firmantes: string[]
+) {
+  const vacio = crearFormularioOrdenVacio();
+
+  return (
+    firmantes.length > 0 ||
+    (Object.keys(vacio) as Array<keyof FormularioOrden>).some(
+      (campo) => formulario[campo] !== vacio[campo]
+    )
+  );
 }
 
 export default function OrdenesCompraPage() {
@@ -108,35 +161,27 @@ export default function OrdenesCompraPage() {
   const [filtroEmpresa, setFiltroEmpresa] = useState("Todas");
 
   const [firmantesSeleccionados, setFirmantesSeleccionados] = useState<string[]>([]);
+  const [form, setForm] = useState<FormularioOrden>(crearFormularioOrdenVacio);
+  const [borradorActivo, setBorradorActivo] =
+    useState<BorradorTrabajo | null>(null);
+  const [borradorRevisado, setBorradorRevisado] = useState(false);
+  const [procesandoBorrador, setProcesandoBorrador] = useState(false);
+  const formActualRef = useRef(form);
+  const firmantesActualesRef = useRef(firmantesSeleccionados);
+  const guardandoBorradorRef = useRef(false);
+  const guardadoPendienteRef = useRef(false);
 
-const [form, setForm] = useState({
-  empresaId: "",
-  empresa: "",
-  proveedor: "",
-  proveedorTelefono: "",
-  proveedorContacto: "",
-  numeroOrden: "",
-  anioOrden: String(new Date().getFullYear()),
-  fechaOc: new Date().toISOString().split("T")[0],
-  codigoSolicitante: "",
-  encargado: "",
-  formaPago: "",
-  concepto: "",
-  descripcion: "",
-  fechaFactura: "",
-  numeroFactura: "",
-  precioUnitario: "",
-  subtotal: "",
-  isr: "",
-  totalFinal: "",
-  monto: "",
-  moneda: "GTQ",
-  prioridad: "Media",
-  fechaNecesaria: "",
-});
   useEffect(() => {
     iniciar();
   }, []);
+
+  useEffect(() => {
+    formActualRef.current = form;
+  }, [form]);
+
+  useEffect(() => {
+    firmantesActualesRef.current = firmantesSeleccionados;
+  }, [firmantesSeleccionados]);
 
  async function iniciar() {
   try {
@@ -188,11 +233,19 @@ const [form, setForm] = useState({
 
     setEmpresasPermitidasIds(idsPermitidos);
 
-    await Promise.all([
+    const cargasIniciales: Promise<void>[] = [
       obtenerEmpresas(idsPermitidos),
       obtenerUsuarios(perfil.rol || ""),
       obtenerOrdenes(idsPermitidos, user.id, perfil.rol || ""),
-    ]);
+    ];
+
+    if (ROLES_CREADORES.includes(normalizarRol(perfil.rol))) {
+      cargasIniciales.push(recuperarBorradorOrden());
+    } else {
+      setBorradorRevisado(true);
+    }
+
+    await Promise.all(cargasIniciales);
   } catch (error) {
     console.error(error);
     toast.error("Error cargando órdenes de compra");
@@ -200,6 +253,158 @@ const [form, setForm] = useState({
     setCargandoOrdenes(false);
   }
 }
+
+async function recuperarBorradorOrden() {
+  try {
+    const borrador = await obtenerBorradorActivo({
+      modulo: "ordenes",
+      referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+    });
+
+    setBorradorActivo(borrador);
+    setBorradorRevisado(!borrador);
+  } catch (error: any) {
+    console.error("Error recuperando borrador de orden:", error);
+    toast.error(error.message || "No se pudo recuperar el borrador pendiente");
+    setBorradorRevisado(true);
+  }
+}
+
+function continuarConBorrador() {
+  if (!borradorActivo) return;
+
+  if (
+    !borradorActivo.datos ||
+    typeof borradorActivo.datos !== "object" ||
+    Array.isArray(borradorActivo.datos)
+  ) {
+    toast.error("El borrador pendiente no contiene datos recuperables.");
+    return;
+  }
+
+  const datos = borradorActivo.datos as Record<string, unknown>;
+  const formularioRecuperado = crearFormularioOrdenVacio();
+
+  (Object.keys(formularioRecuperado) as Array<keyof FormularioOrden>).forEach(
+    (campo) => {
+      if (typeof datos[campo] === "string") {
+        formularioRecuperado[campo] = datos[campo] as string;
+      }
+    }
+  );
+
+  const firmantesPermitidos = new Set(
+    usuarios
+      .filter(
+        (usuario) =>
+          usuario.activo !== false &&
+          ROLES_FIRMANTES.includes(normalizarRol(usuario.rol))
+      )
+      .map((usuario) => usuario.id)
+  );
+  const firmantes = Array.isArray(datos.firmantesSeleccionados)
+    ? datos.firmantesSeleccionados.filter(
+        (firmante): firmante is string =>
+          typeof firmante === "string" && firmantesPermitidos.has(firmante)
+      )
+    : [];
+
+  setForm(formularioRecuperado);
+  setFirmantesSeleccionados(firmantes);
+  setBorradorRevisado(true);
+  toast.success("Borrador de orden cargado.");
+}
+
+async function descartarBorradorPendiente() {
+  if (!borradorActivo) return;
+
+  setProcesandoBorrador(true);
+
+  try {
+    await descartarBorrador(borradorActivo.id);
+    setBorradorActivo(null);
+    setBorradorRevisado(true);
+    toast.success("Borrador descartado.");
+  } catch (error: any) {
+    console.error("Error descartando borrador de orden:", error);
+    toast.error(error.message || "No se pudo descartar el borrador");
+  } finally {
+    setProcesandoBorrador(false);
+  }
+}
+
+async function guardarBorradorActual(
+  formulario = formActualRef.current,
+  firmantes = firmantesActualesRef.current
+) {
+  if (
+    !autorizado ||
+    !ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol)) ||
+    !borradorRevisado ||
+    !formularioTieneContenido(formulario, firmantes)
+  ) {
+    return;
+  }
+
+  if (guardandoBorradorRef.current) {
+    guardadoPendienteRef.current = true;
+    return;
+  }
+
+  guardandoBorradorRef.current = true;
+  setProcesandoBorrador(true);
+
+  try {
+    const empresaId = Number(formulario.empresaId);
+    const borrador = await guardarBorradorTrabajo({
+      modulo: "ordenes",
+      ruta: "/ordenes-compra",
+      titulo: TITULO_BORRADOR_ORDEN,
+      empresa_id:
+        formulario.empresaId && Number.isFinite(empresaId) ? empresaId : null,
+      referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+      datos: {
+        ...formulario,
+        firmantesSeleccionados: firmantes,
+      },
+    });
+
+    setBorradorActivo(borrador);
+  } catch (error: any) {
+    console.error("Error autoguardando borrador de orden:", error);
+    toast.error(error.message || "No se pudo guardar el borrador");
+  } finally {
+    guardandoBorradorRef.current = false;
+    setProcesandoBorrador(false);
+
+    if (guardadoPendienteRef.current) {
+      guardadoPendienteRef.current = false;
+      void guardarBorradorActual();
+    }
+  }
+}
+
+async function completarBorradorOrdenCreada() {
+  try {
+    const borrador =
+      borradorActivo ||
+      (await obtenerBorradorActivo({
+        modulo: "ordenes",
+        referencia_temporal: REFERENCIA_BORRADOR_ORDEN,
+      }));
+
+    if (borrador) {
+      await marcarBorradorCompletado(borrador.id);
+      setBorradorActivo(null);
+    }
+  } catch (error) {
+    console.error("Error completando borrador de orden creada:", error);
+    toast.error(
+      "La orden fue creada, pero no se pudo cerrar su borrador pendiente."
+    );
+  }
+}
+
 async function obtenerEmpresas(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setEmpresas([]);
@@ -338,8 +543,34 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
       return;
     }
 
+    const empresaSeleccionada = empresas.find(
+      (empresa) => String(empresa.id) === form.empresaId
+    );
+
+    if (
+      !empresaSeleccionada ||
+      !empresasPermitidasIds.includes(Number(form.empresaId))
+    ) {
+      toast.error("La empresa seleccionada ya no esta disponible para tu usuario.");
+      return;
+    }
+
     if (firmantesSeleccionados.length === 0) {
       toast.error("Selecciona al menos un firmante");
+      return;
+    }
+
+    const firmantesValidos = firmantesSeleccionados.every((firmanteId) =>
+      usuarios.some(
+        (usuario) =>
+          usuario.id === firmanteId &&
+          usuario.activo !== false &&
+          ROLES_FIRMANTES.includes(normalizarRol(usuario.rol))
+      )
+    );
+
+    if (!firmantesValidos) {
+      toast.error("Selecciona solamente firmantes activos y autorizados.");
       return;
     }
 
@@ -351,7 +582,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
   .insert([
     {
       empresa_id: Number(form.empresaId),
-      empresa: form.empresa,
+      empresa: empresaSeleccionada.nombre,
 
       proveedor: form.proveedor,
       proveedor_telefono: form.proveedorTelefono || null,
@@ -439,31 +670,9 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         },
       ]);
 
-setForm({
-  empresaId: "",
-  empresa: "",
-  proveedor: "",
-  proveedorTelefono: "",
-  proveedorContacto: "",
-  numeroOrden: "",
-  anioOrden: String(new Date().getFullYear()),
-  fechaOc: new Date().toISOString().split("T")[0],
-  codigoSolicitante: "",
-  encargado: "",
-  formaPago: "",
-  concepto: "",
-  descripcion: "",
-  fechaFactura: "",
-  numeroFactura: "",
-  precioUnitario: "",
-  subtotal: "",
-  isr: "",
-  totalFinal: "",
-  monto: "",
-  moneda: "GTQ",
-  prioridad: "Media",
-  fechaNecesaria: "",
-});
+      await completarBorradorOrdenCreada();
+
+      setForm(crearFormularioOrdenVacio());
 
       setFirmantesSeleccionados([]);
       await refrescarOrdenes();
@@ -633,8 +842,38 @@ const esFirmanteOC = rolActual === "firmante_oc";
 const esEmpleado = rolActual === "empleado";
 
 const puedeCrear = ROLES_CREADORES.includes(rolActual);
-  const usuariosFirmantes = usuarios.filter((u) =>
-    ROLES_FIRMANTES.includes(normalizarRol(u.rol))
+
+useEffect(() => {
+  if (
+    !autorizado ||
+    !puedeCrear ||
+    !borradorRevisado ||
+    !formularioTieneContenido(form, firmantesSeleccionados)
+  ) {
+    return;
+  }
+
+  const temporizador = window.setTimeout(() => {
+    void guardarBorradorActual(form, firmantesSeleccionados);
+  }, 1500);
+
+  return () => window.clearTimeout(temporizador);
+}, [autorizado, puedeCrear, borradorRevisado, form, firmantesSeleccionados]);
+
+useEffect(() => {
+  if (!autorizado || !puedeCrear || !borradorRevisado) {
+    return;
+  }
+
+  const intervalo = window.setInterval(() => {
+    void guardarBorradorActual();
+  }, 15 * 60 * 1000);
+
+  return () => window.clearInterval(intervalo);
+}, [autorizado, puedeCrear, borradorRevisado]);
+
+  const usuariosFirmantes = usuarios.filter(
+    (u) => u.activo !== false && ROLES_FIRMANTES.includes(normalizarRol(u.rol))
   );
 const ordenesFiltradas = useMemo(() => {
   return ordenes.filter((orden) => {
@@ -833,12 +1072,49 @@ const stats = useMemo(() => {
   </div>
 )}
 
-{puedeCrear && (
+{puedeCrear && borradorActivo && !borradorRevisado && (
+  <section className="mb-8 bg-yellow-500/10 border border-yellow-500/30 rounded-2xl p-6">
+    <h2 className="text-yellow-400 font-black text-sm uppercase">
+      Borrador pendiente
+    </h2>
+    <p className="text-gray-200 mt-2">
+      Tienes una orden de compra pendiente. ¿Deseas continuar donde quedaste?
+    </p>
+    <div className="flex flex-wrap gap-3 mt-5">
+      <button
+        type="button"
+        onClick={continuarConBorrador}
+        disabled={procesandoBorrador}
+        className="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-black uppercase disabled:opacity-50"
+      >
+        Continuar orden
+      </button>
+      <button
+        type="button"
+        onClick={descartarBorradorPendiente}
+        disabled={procesandoBorrador}
+        className="px-5 py-3 rounded-xl border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-black uppercase disabled:opacity-50"
+      >
+        Descartar borrador
+      </button>
+    </div>
+  </section>
+)}
+
+{puedeCrear && borradorRevisado && (
   <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
     <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
       <Plus size={16} className="text-cyan-500" />
       Crear orden de compra
     </h2>
+
+    {(borradorActivo || procesandoBorrador) && (
+      <p className="text-xs text-cyan-400 mb-5">
+        {procesandoBorrador
+          ? "Guardando borrador..."
+          : "Borrador guardado automaticamente."}
+      </p>
+    )}
 
     <div className="grid md:grid-cols-4 gap-4">
       <select
