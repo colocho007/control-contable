@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 
 import {
@@ -21,6 +22,9 @@ interface Movimiento {
   descripcion: string;
   monto: number;
   empresa: string;
+  empresa_id?: number | null;
+  moneda?: string | null;
+  categoria?: string | null;
   fecha: string;
   estado?: string | null;
   anulado_por?: string | null;
@@ -128,7 +132,7 @@ async function iniciarPagina() {
     )
       return;
 
-    await supabase
+    const { data: movimientoCreado, error } = await supabase
       .from("movimientos")
       .insert([
         {
@@ -139,14 +143,58 @@ async function iniciarPagina() {
           empresa,
           fecha,
         },
-      ]);
+      ])
+      .select("id,tipo,descripcion,monto,empresa,empresa_id,moneda,fecha,estado")
+      .single();
+
+    if (error || !movimientoCreado) {
+      console.error("Error creando movimiento:", error);
+      alert("Error al registrar movimiento.");
+      return;
+    }
+
+    let auditoriaRegistrada = true;
+
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: movimientoCreado.empresa_id ?? null,
+        modulo: "finanzas",
+        accion: "crear_movimiento",
+        entidad_tipo: "movimiento",
+        entidad_id: movimientoCreado.id,
+        estado_nuevo: movimientoCreado.estado || "activo",
+        descripcion: "Movimiento financiero creado",
+        sensible: true,
+        visible_calendario: Boolean(movimientoCreado.fecha),
+        origen: "modulo_finanzas",
+        metadatos: {
+          tipo: movimientoCreado.tipo,
+          monto: Number(movimientoCreado.monto),
+          moneda: movimientoCreado.moneda ?? null,
+          fecha: movimientoCreado.fecha,
+          descripcion: movimientoCreado.descripcion,
+        },
+      });
+    } catch (auditoriaError) {
+      auditoriaRegistrada = false;
+      console.error(
+        "El movimiento fue creado, pero no se pudo registrar la auditoría:",
+        auditoriaError
+      );
+    }
 
     setDescripcion("");
     setMonto("");
     setEmpresa("");
     setFecha("");
 
-    obtenerMovimientos();
+    await obtenerMovimientos();
+
+    if (!auditoriaRegistrada) {
+      alert(
+        "Movimiento creado, pero no se pudo registrar la auditoría central."
+      );
+    }
   }
 
   async function eliminarMovimiento(
@@ -164,6 +212,7 @@ async function iniciarPagina() {
     if (!confirmar) return;
 
     const motivo = "Anulado desde Finanzas";
+    const movimientoAnulado = movimientos.find((movimiento) => movimiento.id === id);
 
     const { error } = await supabase
       .from("movimientos")
@@ -180,6 +229,38 @@ async function iniciarPagina() {
       return;
     }
 
+    let auditoriaRegistrada = true;
+
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: movimientoAnulado?.empresa_id ?? null,
+        modulo: "finanzas",
+        accion: "anular_movimiento",
+        entidad_tipo: "movimiento",
+        entidad_id: id,
+        estado_anterior: movimientoAnulado?.estado || "activo",
+        estado_nuevo: "anulado",
+        motivo,
+        descripcion: "Movimiento financiero anulado",
+        sensible: true,
+        visible_calendario: true,
+        origen: "modulo_finanzas",
+        metadatos: {
+          tipo: movimientoAnulado?.tipo ?? null,
+          monto: movimientoAnulado ? Number(movimientoAnulado.monto) : null,
+          moneda: movimientoAnulado?.moneda ?? null,
+          fecha: movimientoAnulado?.fecha ?? null,
+          descripcion: movimientoAnulado?.descripcion ?? null,
+        },
+      });
+    } catch (auditoriaError) {
+      auditoriaRegistrada = false;
+      console.error(
+        "El movimiento fue anulado, pero no se pudo registrar la auditoría:",
+        auditoriaError
+      );
+    }
+
     await supabase.from("movimientos_historial").insert([
       {
         movimiento_id: id,
@@ -189,7 +270,11 @@ async function iniciarPagina() {
       },
     ]);
 
-    alert("Movimiento anulado correctamente.");
+    alert(
+      auditoriaRegistrada
+        ? "Movimiento anulado correctamente."
+        : "Movimiento anulado, pero no se pudo registrar la auditoría central."
+    );
     await obtenerMovimientos();
   }
 
