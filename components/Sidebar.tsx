@@ -17,6 +17,7 @@ import {
   ClipboardList,
   ShieldCheck,
   FileSpreadsheet,
+  History,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -209,6 +210,12 @@ const menusAdmin = [
     path: "/usuarios",
     icon: Users,
     clave: "usuarios",
+  },
+  {
+    name: "Historial",
+    path: "/historial",
+    icon: History,
+    clave: "historial",
   },
 ];
 
