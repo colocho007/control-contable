@@ -8,6 +8,7 @@ import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario
 import {
   descartarBorrador,
   guardarBorradorTrabajo,
+  listarBorradoresActivos,
   marcarBorradorCompletado,
   obtenerBorradorActivo,
   type BorradorTrabajo,
@@ -159,10 +160,20 @@ interface ResumenChequera {
 }
 
 const ROLES_JEFATURA = ["admin", "supervisor", "jefe"];
-const REFERENCIA_BORRADOR_CHEQUE = "nuevo-cheque";
 const TITULO_BORRADOR_CHEQUE = "Borrador de cheque";
 const COLUMNAS_BORRADOR_CHEQUE =
   "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
+
+function crearReferenciaTemporalCheque() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return `nuevo-cheque-${crypto.randomUUID()}`;
+  }
+
+  return `nuevo-cheque-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function crearFormularioChequeVacio() {
   return {
@@ -229,6 +240,7 @@ const [historialCheques, setHistorialCheques] = useState<
  const formActualRef = useRef(form);
  const chequeCreadoIdRef = useRef<number | null>(null);
  const borradorOrigenIdRef = useRef<string | number | null>(null);
+ const referenciaTemporalChequeRef = useRef(crearReferenciaTemporalCheque());
  const borradorConsumidoRef = useRef(false);
  const autoguardadoSuspendidoRef = useRef(false);
  const timeoutBorradorRef = useRef<number | null>(null);
@@ -370,10 +382,8 @@ function esErrorDeBorradorDuplicado(error: {
 
 async function recuperarBorradorCheque() {
   try {
-    const borrador = await obtenerBorradorActivo({
-      modulo: "cheques",
-      referencia_temporal: REFERENCIA_BORRADOR_CHEQUE,
-    });
+    const borradores = await listarBorradoresActivos({ modulo: "cheques" });
+    const borrador = borradores[0] || null;
 
     if (borrador) {
       const chequeCreado = await obtenerChequeCreadoDesdeBorrador(borrador.id);
@@ -423,6 +433,11 @@ async function recuperarBorradorCheque() {
     toast.error(error.message || "No se pudo recuperar el borrador pendiente");
     setBorradorRevisado(true);
   }
+}
+
+function prepararNuevoBorradorCheque() {
+  borradorOrigenIdRef.current = null;
+  referenciaTemporalChequeRef.current = crearReferenciaTemporalCheque();
 }
 
 async function obtenerEmpresas(idsPermitidos: number[]) {
@@ -766,6 +781,12 @@ function continuarConBorradorCheque() {
     formularioRecuperado.cuentaBancaria = fondoValido.cuenta_bancaria || "";
   }
 
+  if (formularioRecuperado.formaPago !== "Cheque") {
+    formularioRecuperado.chequeraId = "";
+    formularioRecuperado.chequeFisicoId = "";
+    formularioRecuperado.numeroCheque = "";
+  }
+
   if (formularioRecuperado.chequeraId) {
     const chequeraValida = chequeras.find(
       (chequera) =>
@@ -810,6 +831,13 @@ function continuarConBorradorCheque() {
     );
   }
 
+  if (
+    typeof borradorActivo.referencia_temporal === "string" &&
+    borradorActivo.referencia_temporal.trim()
+  ) {
+    referenciaTemporalChequeRef.current = borradorActivo.referencia_temporal;
+  }
+
   borradorOrigenIdRef.current = borradorActivo.id;
   setForm(formularioRecuperado);
   setBorradorRevisado(true);
@@ -823,7 +851,7 @@ async function descartarBorradorChequePendiente() {
 
   try {
     await descartarBorrador(borradorActivo.id);
-    borradorOrigenIdRef.current = null;
+    prepararNuevoBorradorCheque();
     setBorradorActivo(null);
     setBorradorRevisado(true);
     toast.success("Borrador descartado.");
@@ -883,6 +911,7 @@ async function guardarBorradorChequeActual(
             empresa_id: empresaIdBorrador,
             ruta: "/cheques",
             titulo: TITULO_BORRADOR_CHEQUE,
+            referencia_temporal: referenciaTemporalChequeRef.current,
             datos: formulario,
             actualizado_at: new Date().toISOString(),
           })
@@ -909,7 +938,16 @@ async function guardarBorradorChequeActual(
           return;
         }
 
-        setBorradorActivo(borradorActualizado as BorradorTrabajo);
+        const borrador = borradorActualizado as BorradorTrabajo;
+
+        if (
+          typeof borrador.referencia_temporal === "string" &&
+          borrador.referencia_temporal.trim()
+        ) {
+          referenciaTemporalChequeRef.current = borrador.referencia_temporal;
+        }
+
+        setBorradorActivo(borrador);
         return;
       }
 
@@ -918,12 +956,19 @@ async function guardarBorradorChequeActual(
         ruta: "/cheques",
         titulo: TITULO_BORRADOR_CHEQUE,
         empresa_id: empresaIdBorrador,
-        referencia_temporal: REFERENCIA_BORRADOR_CHEQUE,
+        referencia_temporal: referenciaTemporalChequeRef.current,
         datos: formulario,
       });
 
       if (borrador.id && borradorOrigenIdRef.current === null) {
         borradorOrigenIdRef.current = borrador.id;
+      }
+
+      if (
+        typeof borrador.referencia_temporal === "string" &&
+        borrador.referencia_temporal.trim()
+      ) {
+        referenciaTemporalChequeRef.current = borrador.referencia_temporal;
       }
 
       setBorradorActivo(borrador);
@@ -963,7 +1008,7 @@ async function marcarBorradorRequiereRevision(
     borrador =
       (await obtenerBorradorActivo({
         modulo: "cheques",
-        referencia_temporal: REFERENCIA_BORRADOR_CHEQUE,
+        referencia_temporal: referenciaTemporalChequeRef.current,
       })) || borrador;
   } catch (error) {
     if (!borrador) throw error;
@@ -1010,7 +1055,7 @@ function suspenderAutoguardado() {
 }
 
 function bloquearBorradorConsumido(mensaje: string) {
-  borradorOrigenIdRef.current = null;
+  prepararNuevoBorradorCheque();
   borradorConsumidoRef.current = true;
   suspenderAutoguardado();
   setMensajeBorradorBloqueado(mensaje);
@@ -1358,22 +1403,26 @@ async function crearChequera() {
     await esperarAutoguardadoEnCurso();
     borradorIdParaCheque = borradorOrigenIdRef.current;
 
-    const borradorActivoActual = await obtenerBorradorActivo({
-      modulo: "cheques",
-      referencia_temporal: REFERENCIA_BORRADOR_CHEQUE,
-    });
-
-    if (borradorIdParaCheque === null) {
-      borradorParaCheque = borradorActivoActual;
-      borradorIdParaCheque = borradorActivoActual?.id ?? null;
-    } else if (
-      borradorActivoActual &&
-      String(borradorActivoActual.id) === String(borradorIdParaCheque)
-    ) {
-      borradorParaCheque = borradorActivoActual;
-    }
-
     if (borradorIdParaCheque !== null) {
+      if (
+        borradorActivo &&
+        String(borradorActivo.id) === String(borradorIdParaCheque)
+      ) {
+        borradorParaCheque = borradorActivo;
+      } else {
+        const borradorActual = await obtenerBorradorActivo({
+          modulo: "cheques",
+          referencia_temporal: referenciaTemporalChequeRef.current,
+        });
+
+        if (
+          borradorActual &&
+          String(borradorActual.id) === String(borradorIdParaCheque)
+        ) {
+          borradorParaCheque = borradorActual;
+        }
+      }
+
       const chequeExistente = await obtenerChequeCreadoDesdeBorrador(
         borradorIdParaCheque
       );
@@ -1413,6 +1462,7 @@ async function crearChequera() {
     const limite = calcularLimiteAutorizacion(form.fechaPago, form.prioridad);
     const tipoCambioFinal =
       form.moneda === "GTQ" ? 1 : Number(form.tipoCambio || 1);
+    const esPagoConCheque = form.formaPago === "Cheque";
 
     const { data: chequeCreado, error: chequeError } = await supabase
       .from("cheques")
@@ -1423,11 +1473,12 @@ async function crearChequera() {
           empresa_id: Number(form.empresaId),
           empresa: empresaSeleccionada.nombre,
           fondo_empresa_id: Number(form.fondoEmpresaId),
-          chequera_id: form.chequeraId ? Number(form.chequeraId) : null,
-          cheque_fisico_id: form.chequeFisicoId
+          chequera_id:
+            esPagoConCheque && form.chequeraId ? Number(form.chequeraId) : null,
+          cheque_fisico_id: esPagoConCheque && form.chequeFisicoId
             ? Number(form.chequeFisicoId)
             : null,
-          numero_cheque: form.numeroCheque || null,
+          numero_cheque: esPagoConCheque ? form.numeroCheque || null : null,
           banco: form.banco || null,
           cuenta_bancaria: form.cuentaBancaria || null,
           beneficiario: form.beneficiario,
@@ -1558,7 +1609,7 @@ async function crearChequera() {
 
     const formularioVacio = crearFormularioChequeVacio();
     formActualRef.current = formularioVacio;
-    borradorOrigenIdRef.current = null;
+    prepararNuevoBorradorCheque();
     setForm(formularioVacio);
     chequeFinalizado = true;
 
@@ -2409,9 +2460,21 @@ useEffect(() => {
 
               <select
                 value={form.formaPago}
-                onChange={(e) =>
-                  setForm({ ...form, formaPago: e.target.value })
-                }
+                onChange={(e) => {
+                  const formaPago = e.target.value;
+
+                  setForm({
+                    ...form,
+                    formaPago,
+                    ...(formaPago === "Cheque"
+                      ? {}
+                      : {
+                          chequeraId: "",
+                          chequeFisicoId: "",
+                          numeroCheque: "",
+                        }),
+                  });
+                }}
                 className="input-custom"
               >
                 <option value="Cheque">Cheque</option>
