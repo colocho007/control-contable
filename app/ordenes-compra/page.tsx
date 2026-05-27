@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import {
@@ -836,6 +837,22 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     );
   }
 
+  async function registrarAuditoriaOrden(
+    params: RegistrarAuditoriaEventoParams,
+    contexto: string
+  ) {
+    try {
+      await registrarAuditoriaEvento(params);
+      return true;
+    } catch (error) {
+      console.error(
+        `El cambio de ${contexto} se guardo, pero no se pudo registrar la auditoria central:`,
+        error
+      );
+      return false;
+    }
+  }
+
   async function crearOrden() {
     if (!userId) {
       toast.error("Sesión no válida");
@@ -881,6 +898,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     suspenderAutoguardado();
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
+    let auditoriaCentralRegistrada = true;
     let borradorParaOrden: BorradorTrabajo | null = null;
     let borradorIdParaOrden: string | number | null = null;
 
@@ -1050,6 +1068,30 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
       }
 
       ordenCreadaIdRef.current = Number(ordenCreada.id);
+      auditoriaCentralRegistrada = await registrarAuditoriaOrden(
+        {
+          empresa_id: ordenCreada.empresa_id,
+          modulo: "ordenes",
+          accion: "crear_orden",
+          entidad_tipo: "orden_compra",
+          entidad_id: ordenCreada.id,
+          estado_nuevo: ordenCreada.estado,
+          descripcion: "Orden de compra creada",
+          sensible: true,
+          visible_calendario: Boolean(ordenCreada.fecha_necesaria),
+          origen: "modulo_ordenes",
+          metadatos: {
+            proveedor: ordenCreada.proveedor,
+            monto: Number(ordenCreada.monto),
+            moneda: ordenCreada.moneda,
+            fecha_necesaria: ordenCreada.fecha_necesaria,
+            cantidad_firmantes: firmantesSeleccionados.length,
+            borrador_id:
+              borradorIdParaOrden !== null ? String(borradorIdParaOrden) : null,
+          },
+        },
+        "creacion de la orden"
+      );
 
       const obtenerTipoFirma = (index: number) => {
   if (index === 0) return "responsable_servicio";
@@ -1124,7 +1166,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         toast.error("La orden fue creada, pero no se pudo actualizar el listado.");
       }
 
-      toast.success("Orden enviada a firmas", { id: toastId });
+      if (auditoriaCentralRegistrada) {
+        toast.success("Orden enviada a firmas", { id: toastId });
+      } else {
+        toast.error(
+          "Orden creada, pero no se pudo registrar la auditoria central.",
+          { id: toastId }
+        );
+      }
     } catch (error: any) {
       console.error(error);
 
@@ -1214,6 +1263,29 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       if (ordenError) throw ordenError;
 
+      const auditoriaCentralRegistrada = await registrarAuditoriaOrden(
+        {
+          empresa_id: orden.empresa_id,
+          modulo: "ordenes",
+          accion: "firmar_orden",
+          entidad_tipo: "orden_compra",
+          entidad_id: orden.id,
+          estado_anterior: orden.estado,
+          estado_nuevo: nuevoEstado,
+          descripcion: "Firma de orden registrada",
+          sensible: true,
+          visible_calendario: Boolean(orden.fecha_necesaria),
+          origen: "modulo_ordenes",
+          metadatos: {
+            firmante_id: userId,
+            rol_firmante: perfilActual?.rol || null,
+            firmas_completadas: nuevasFirmasCompletadas,
+            firmas_requeridas: orden.firmas_requeridas,
+          },
+        },
+        "firma de la orden"
+      );
+
       await supabase.from("ordenes_compra_historial").insert([
         {
           orden_id: orden.id,
@@ -1227,10 +1299,17 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       await refrescarOrdenes();
 
-      toast.success(
-        estaAprobada ? "Orden aprobada completamente" : "Firma registrada",
-        { id: toastId }
-      );
+      if (auditoriaCentralRegistrada) {
+        toast.success(
+          estaAprobada ? "Orden aprobada completamente" : "Firma registrada",
+          { id: toastId }
+        );
+      } else {
+        toast.error(
+          "Firma aplicada, pero no se pudo registrar la auditoria central.",
+          { id: toastId }
+        );
+      }
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || "Error al firmar", { id: toastId });
@@ -1285,6 +1364,28 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       if (ordenError) throw ordenError;
 
+      const auditoriaCentralRegistrada = await registrarAuditoriaOrden(
+        {
+          empresa_id: orden.empresa_id,
+          modulo: "ordenes",
+          accion: "observar_orden",
+          entidad_tipo: "orden_compra",
+          entidad_id: orden.id,
+          estado_anterior: orden.estado,
+          estado_nuevo: "Observada",
+          motivo: comentario,
+          descripcion: "Orden de compra observada",
+          sensible: true,
+          visible_calendario: Boolean(orden.fecha_necesaria),
+          origen: "modulo_ordenes",
+          metadatos: {
+            firmante_id: userId,
+            rol_firmante: perfilActual?.rol || null,
+          },
+        },
+        "observacion de la orden"
+      );
+
       await supabase.from("ordenes_compra_historial").insert([
         {
           orden_id: orden.id,
@@ -1298,7 +1399,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
       await refrescarOrdenes();
 
-      toast.success("Orden observada", { id: toastId });
+      if (auditoriaCentralRegistrada) {
+        toast.success("Orden observada", { id: toastId });
+      } else {
+        toast.error(
+          "Orden observada, pero no se pudo registrar la auditoria central.",
+          { id: toastId }
+        );
+      }
     } catch (error: any) {
       console.error(error);
       toast.error(error.message || "Error al observar", { id: toastId });

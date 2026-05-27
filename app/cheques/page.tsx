@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
+import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import {
@@ -1274,6 +1275,37 @@ async function crearChequera() {
   }
 }
 
+ async function registrarAuditoriaCheque(
+  params: RegistrarAuditoriaEventoParams,
+  contexto: string
+ ) {
+  try {
+    await registrarAuditoriaEvento(params);
+    return true;
+  } catch (error) {
+    console.error(
+      `El cambio de ${contexto} se guardo, pero no se pudo registrar la auditoria central:`,
+      error
+    );
+    return false;
+  }
+ }
+
+ function metadatosAuditoriaCheque(cheque: Cheque) {
+  const esCheque = cheque.forma_pago === "Cheque";
+
+  return {
+    beneficiario: cheque.beneficiario,
+    monto: Number(cheque.monto),
+    moneda: cheque.moneda,
+    forma_pago: cheque.forma_pago,
+    numero_cheque: esCheque ? cheque.numero_cheque : null,
+    fondo_id: cheque.fondo_empresa_id,
+    chequera_id: esCheque ? cheque.chequera_id : null,
+    cheque_fisico_id: esCheque ? cheque.cheque_fisico_id : null,
+  };
+ }
+
  async function crearCheque() {
   if (
     !form.empresa ||
@@ -1396,6 +1428,7 @@ async function crearChequera() {
   suspenderAutoguardado();
   const toastId = toast.loading("Creando cheque...");
   let chequeFinalizado = false;
+  let auditoriaCentralRegistrada = true;
   let borradorParaCheque: BorradorTrabajo | null = null;
   let borradorIdParaCheque: string | number | null = null;
 
@@ -1555,6 +1588,22 @@ async function crearChequera() {
     }
 
     chequeCreadoIdRef.current = Number(chequeCreado.id);
+    auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+      {
+        empresa_id: chequeCreado.empresa_id,
+        modulo: "cheques",
+        accion: "crear_cheque",
+        entidad_tipo: "cheque",
+        entidad_id: chequeCreado.id,
+        estado_nuevo: chequeCreado.estado,
+        descripcion: "Cheque creado",
+        sensible: true,
+        visible_calendario: Boolean(chequeCreado.fecha_pago),
+        origen: "modulo_cheques",
+        metadatos: metadatosAuditoriaCheque(chequeCreado as Cheque),
+      },
+      "creacion del cheque"
+    );
 
     if (form.formaPago === "Cheque" && form.chequeFisicoId) {
       const { error: chequeFisicoError } = await supabase
@@ -1620,7 +1669,14 @@ async function crearChequera() {
       toast.error("El cheque fue creado, pero no se pudo actualizar el listado.");
     }
 
-    toast.success("Cheque enviado a autorizacion", { id: toastId });
+    if (auditoriaCentralRegistrada) {
+      toast.success("Cheque enviado a autorizacion", { id: toastId });
+    } else {
+      toast.error(
+        "Cheque creado, pero no se pudo registrar la auditoria central.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     console.error(error);
 
@@ -1701,6 +1757,27 @@ async function autorizarCheque(cheque: Cheque) {
 
     if (error) throw error;
 
+    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+      {
+        empresa_id: cheque.empresa_id,
+        modulo: "cheques",
+        accion: "autorizar_cheque",
+        entidad_tipo: "cheque",
+        entidad_id: cheque.id,
+        estado_anterior: cheque.estado,
+        estado_nuevo: "Autorizado",
+        descripcion: "Cheque autorizado",
+        sensible: true,
+        visible_calendario: Boolean(cheque.fecha_pago),
+        origen: "modulo_cheques",
+        metadatos: {
+          ...metadatosAuditoriaCheque(cheque),
+          comentario: "Cheque autorizado y fondos comprometidos",
+        },
+      },
+      "autorizacion del cheque"
+    );
+
     if (cheque.cheque_fisico_id) {
       const { error: chequeFisicoError } = await supabase
         .from("cheques_fisicos")
@@ -1752,7 +1829,14 @@ async function autorizarCheque(cheque: Cheque) {
   await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
-    toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
+    if (auditoriaCentralRegistrada) {
+      toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
+    } else {
+      toast.error(
+        "Cheque autorizado, pero no se pudo registrar la auditoria central.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     toast.error(error.message || "Error al autorizar", { id: toastId });
   } finally {
@@ -1789,6 +1873,25 @@ async function rechazarCheque(cheque: Cheque) {
       .eq("id", cheque.id);
 
     if (error) throw error;
+
+    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+      {
+        empresa_id: cheque.empresa_id,
+        modulo: "cheques",
+        accion: "rechazar_cheque",
+        entidad_tipo: "cheque",
+        entidad_id: cheque.id,
+        estado_anterior: cheque.estado,
+        estado_nuevo: "Rechazado",
+        motivo,
+        descripcion: "Cheque rechazado",
+        sensible: true,
+        visible_calendario: Boolean(cheque.fecha_pago),
+        origen: "modulo_cheques",
+        metadatos: metadatosAuditoriaCheque(cheque),
+      },
+      "rechazo del cheque"
+    );
 
     if (cheque.cheque_fisico_id) {
       const { error: chequeFisicoError } = await supabase
@@ -1842,7 +1945,14 @@ if (userId && perfilActual) {
   await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
-    toast.success("Cheque rechazado y fondos liberados", { id: toastId });
+    if (auditoriaCentralRegistrada) {
+      toast.success("Cheque rechazado y fondos liberados", { id: toastId });
+    } else {
+      toast.error(
+        "Cheque rechazado, pero no se pudo registrar la auditoria central.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     toast.error(error.message || "Error al rechazar", { id: toastId });
   } finally {
@@ -1880,6 +1990,25 @@ const motivo = window.prompt("Indica el motivo de anulación:");
       .eq("id", cheque.id);
 
     if (error) throw error;
+
+    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+      {
+        empresa_id: cheque.empresa_id,
+        modulo: "cheques",
+        accion: "anular_cheque",
+        entidad_tipo: "cheque",
+        entidad_id: cheque.id,
+        estado_anterior: cheque.estado,
+        estado_nuevo: "Anulado",
+        motivo,
+        descripcion: "Cheque anulado",
+        sensible: true,
+        visible_calendario: Boolean(cheque.fecha_pago),
+        origen: "modulo_cheques",
+        metadatos: metadatosAuditoriaCheque(cheque),
+      },
+      "anulacion del cheque"
+    );
 
     if (cheque.cheque_fisico_id) {
       const { error: chequeFisicoError } = await supabase
@@ -1933,7 +2062,14 @@ if (userId && perfilActual) {
   await obtenerChequesFisicos(empresasPermitidasIds);
   await obtenerResumenChequeras(empresasPermitidasIds);
 }
-    toast.success("Cheque anulado y fondos liberados", { id: toastId });
+    if (auditoriaCentralRegistrada) {
+      toast.success("Cheque anulado y fondos liberados", { id: toastId });
+    } else {
+      toast.error(
+        "Cheque anulado, pero no se pudo registrar la auditoria central.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     toast.error(error.message || "Error al anular cheque", { id: toastId });
   } finally {
@@ -1983,6 +2119,27 @@ fecha: new Date().toISOString().split("T")[0],
       .eq("id", cheque.id);
 
     if (error) throw error;
+
+    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+      {
+        empresa_id: cheque.empresa_id,
+        modulo: "cheques",
+        accion: "pagar_cheque",
+        entidad_tipo: "cheque",
+        entidad_id: cheque.id,
+        estado_anterior: cheque.estado,
+        estado_nuevo: "Pagado",
+        descripcion: "Cheque pagado",
+        sensible: true,
+        visible_calendario: Boolean(cheque.fecha_pago),
+        origen: "modulo_cheques",
+        metadatos: {
+          ...metadatosAuditoriaCheque(cheque),
+          movimiento_generado: true,
+        },
+      },
+      "pago del cheque"
+    );
 
     if (cheque.cheque_fisico_id) {
       const { error: chequeFisicoError } = await supabase
@@ -2034,9 +2191,16 @@ if (userId && perfilActual) {
   await obtenerResumenChequeras(empresasPermitidasIds);
 }
 
-    toast.success("Cheque pagado y registrado en contabilidad", {
-      id: toastId,
-    });
+    if (auditoriaCentralRegistrada) {
+      toast.success("Cheque pagado y registrado en contabilidad", {
+        id: toastId,
+      });
+    } else {
+      toast.error(
+        "Cheque pagado, pero no se pudo registrar la auditoria central.",
+        { id: toastId }
+      );
+    }
   } catch (error: any) {
     toast.error(error.message || "Error al pagar cheque", { id: toastId });
   } finally {
