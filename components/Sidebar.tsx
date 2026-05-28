@@ -20,6 +20,7 @@ import {
   FileSpreadsheet,
   History,
   FolderOpen,
+  BarChart3,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -186,6 +187,12 @@ export default function Sidebar() {
     clave: "contabilidad",
   },
   {
+    name: "Reportes",
+    path: "/reportes",
+    icon: BarChart3,
+    clave: "reportes",
+  },
+  {
   name: "Proveedores",
   path: "/proveedores",
   icon: Truck,
@@ -262,6 +269,12 @@ const menusAdmin = [
       path: "/documentos",
       icon: FolderOpen,
       clave: "documentos",
+    },
+    {
+      name: "Reportes",
+      path: "/reportes",
+      icon: BarChart3,
+      clave: "reportes",
     },
   ];
 
