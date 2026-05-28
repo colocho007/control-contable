@@ -21,6 +21,7 @@ import {
   History,
   FolderOpen,
   BarChart3,
+  RotateCcw,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -191,6 +192,12 @@ export default function Sidebar() {
     path: "/reportes",
     icon: BarChart3,
     clave: "reportes",
+  },
+  {
+    name: "Reinicio Controlado",
+    path: "/reinicio-controlado",
+    icon: RotateCcw,
+    clave: "reinicio-controlado",
   },
   {
   name: "Proveedores",
