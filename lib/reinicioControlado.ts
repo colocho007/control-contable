@@ -462,6 +462,61 @@ function operacionesParaAuditoria(operaciones: OperacionReinicioResultado[]) {
   }));
 }
 
+function riesgosParaAuditoria(riesgos: RiesgoReinicioControlado[]) {
+  return riesgos.map((riesgo) => ({
+    severidad: riesgo.severidad,
+    codigo: riesgo.codigo,
+    mensaje: riesgo.mensaje,
+    metadatos: riesgo.metadatos ?? null,
+  }));
+}
+
+function mensajeError(error: unknown) {
+  return error instanceof Error ? error.message : "Error desconocido.";
+}
+
+function contarChequesActivosEnResumen(resumen: ResumenReinicioControlado) {
+  return Object.entries(resumen.cheques.por_estado).reduce(
+    (total, [estado, conteo]) => {
+      const normalizado = normalizarEstado(estado);
+
+      if (
+        normalizado.includes("pagado") ||
+        normalizado.includes("anulado") ||
+        normalizado.includes("rechazado")
+      ) {
+        return total;
+      }
+
+      return total + conteo.cantidad;
+    },
+    0
+  );
+}
+
+function validarBloqueosEjecucion(
+  opciones: ReturnType<typeof resolverOpciones>,
+  resumen: ResumenReinicioControlado
+) {
+  if (opciones.incluir_movimientos && resumen.cheques.pagados > 0) {
+    throw new Error(
+      "Existen cheques pagados en el alcance. No se anularan movimientos porque podrian estar vinculados a pagos ya ejecutados."
+    );
+  }
+
+  const chequesActivos = contarChequesActivosEnResumen(resumen);
+
+  if (
+    opciones.incluir_fondos_chequeras &&
+    !opciones.incluir_cheques_no_pagados &&
+    (resumen.fondos.con_saldo_comprometido > 0 || chequesActivos > 0)
+  ) {
+    throw new Error(
+      "No se pueden reiniciar fondos/chequeras mientras existan cheques activos o fondos comprometidos. Incluya reinicio de cheques o anule/libere cheques primero."
+    );
+  }
+}
+
 async function consultarMovimientos(
   empresaId: number,
   fechaDesde: string | null,
@@ -528,6 +583,20 @@ async function consultarCheques(
   }
 
   return (data || []) as ChequeReinicioRow[];
+}
+
+async function contarChequesSinFechaPago(empresaId: number) {
+  const { count, error } = await supabase
+    .from("cheques")
+    .select("id", { count: "exact", head: true })
+    .eq("empresa_id", empresaId)
+    .is("fecha_pago", null);
+
+  if (error) {
+    throw errorSupabase("No se pudieron contar cheques sin fecha de pago", error);
+  }
+
+  return count ?? 0;
 }
 
 async function consultarFondos(empresaId: number) {
@@ -806,6 +875,12 @@ export async function previsualizarReinicioControlado(
   }
 
   const opciones = resolverOpciones(params);
+  const debeConsultarCheques =
+    opciones.incluir_movimientos ||
+    opciones.incluir_cheques_no_pagados ||
+    opciones.incluir_cheques_pagados ||
+    opciones.incluir_fondos_chequeras;
+  const hayFiltroFecha = Boolean(fechaDesde || fechaHasta);
   const resumen = crearResumenBase(
     empresaId,
     params,
@@ -821,13 +896,14 @@ export async function previsualizarReinicioControlado(
     chequeras,
     chequesFisicos,
     calendario,
+    chequesSinFechaPorRango,
     sinEmpresaId,
     dependencias,
   ] = await Promise.all([
     opciones.incluir_movimientos
       ? consultarMovimientos(empresaId, fechaDesde, fechaHasta)
       : Promise.resolve([] as MovimientoReinicioRow[]),
-    opciones.incluir_cheques_no_pagados || opciones.incluir_cheques_pagados
+    debeConsultarCheques
       ? consultarCheques(empresaId, fechaDesde, fechaHasta)
       : Promise.resolve([] as ChequeReinicioRow[]),
     opciones.incluir_fondos_chequeras
@@ -842,6 +918,9 @@ export async function previsualizarReinicioControlado(
     opciones.incluir_calendario
       ? consultarCalendario(empresaId, fechaDesde, fechaHasta)
       : Promise.resolve([] as CalendarioReinicioRow[]),
+    debeConsultarCheques && hayFiltroFecha
+      ? contarChequesSinFechaPago(empresaId)
+      : Promise.resolve(0),
     opciones.incluir_movimientos
       ? contarMovimientosSinEmpresa(fechaDesde, fechaHasta)
       : Promise.resolve(null),
@@ -907,6 +986,7 @@ export async function previsualizarReinicioControlado(
     }
   });
 
+  resumen.cheques.sin_fecha += chequesSinFechaPorRango;
   resumen.cheques.estados_raros = Array.from(new Set(resumen.cheques.estados_raros));
   resumen.cheques.cheques_fisicos_relacionados = chequesFisicosRelacionados.size;
 
@@ -1111,6 +1191,121 @@ async function actualizarReinicio(
   return data as ReinicioControlado;
 }
 
+async function cerrarReinicioConError(params: {
+  reinicio: ReinicioControlado;
+  previsualizacionParams: PrevisualizarReinicioParams;
+  resumenAntes: ResumenReinicioControlado;
+  operaciones: OperacionReinicioResultado[];
+  riesgos: RiesgoReinicioControlado[];
+  userId: string;
+  etapaFallida: string;
+  error: unknown;
+}): Promise<ResultadoReinicioControlado> {
+  const errorResumido = mensajeError(params.error);
+  const riesgos = [
+    ...params.riesgos,
+    {
+      severidad: "alto" as const,
+      codigo: "cierre_reinicio_fallido",
+      mensaje:
+        "El reinicio tuvo un error durante o despues de ejecutar operaciones y requiere revision.",
+      metadatos: {
+        etapa_fallida: params.etapaFallida,
+        error: errorResumido,
+      },
+    },
+  ];
+  let resumenDespues = params.resumenAntes;
+
+  try {
+    resumenDespues = await previsualizarReinicioControlado(
+      params.previsualizacionParams
+    );
+  } catch (resumenError) {
+    riesgos.push({
+      severidad: "alto",
+      codigo: "resumen_despues_no_calculado",
+      mensaje:
+        "No se pudo calcular el resumen posterior al error. Se conserva resumen_antes como referencia temporal.",
+      metadatos: {
+        error: mensajeError(resumenError),
+      },
+    });
+  }
+
+  const huboCambios = params.operaciones.some(
+    (operacion) => operacion.afectados > 0
+  );
+  const estadoFinal: EstadoReinicioControlado = huboCambios
+    ? "parcial"
+    : "fallido";
+
+  let reinicioActualizado: ReinicioControlado;
+
+  try {
+    reinicioActualizado = await actualizarReinicio(params.reinicio.id, {
+      estado: estadoFinal,
+      ejecutado_por: params.userId,
+      ejecutado_at: new Date().toISOString(),
+      resumen_despues: resumenDespues,
+      metadatos: {
+        ...(params.reinicio.metadatos &&
+        typeof params.reinicio.metadatos === "object" &&
+        !Array.isArray(params.reinicio.metadatos)
+          ? params.reinicio.metadatos
+          : {}),
+        etapa_fallida: params.etapaFallida,
+        error: errorResumido,
+        operaciones_ejecutadas: operacionesParaAuditoria(params.operaciones),
+        riesgos: riesgosParaAuditoria(riesgos),
+      },
+    });
+  } catch (actualizarError) {
+    console.error(
+      "No se pudo cerrar el reinicio controlado despues de una falla:",
+      actualizarError
+    );
+    throw new Error(
+      `El reinicio controlado fallo en ${params.etapaFallida}: ${errorResumido}. ` +
+        `Ademas no se pudo actualizar reinicios_controlados; requiere revision manual. ` +
+        `Error de cierre: ${mensajeError(actualizarError)}`
+    );
+  }
+
+  await auditarSinBloquear({
+    empresa_id: reinicioActualizado.empresa_id,
+    modulo: "reinicio-controlado",
+    accion:
+      estadoFinal === "parcial"
+        ? "reinicio_controlado_parcial"
+        : "reinicio_controlado_fallido",
+    entidad_tipo: "reinicio_controlado",
+    entidad_id: reinicioActualizado.id,
+    estado_anterior: "ejecutando",
+    estado_nuevo: estadoFinal,
+    descripcion: "Reinicio controlado requiere revision",
+    sensible: true,
+    correlacion_id: reinicioActualizado.correlacion_id,
+    metadatos: {
+      etapa_fallida: params.etapaFallida,
+      error: errorResumido,
+      resumen_antes: resumenGeneralParaAuditoria(params.resumenAntes),
+      resumen_despues: resumenGeneralParaAuditoria(resumenDespues),
+      operaciones: operacionesParaAuditoria(params.operaciones),
+      riesgos: riesgosParaAuditoria(riesgos),
+    },
+  });
+
+  return {
+    reinicio: reinicioActualizado,
+    resumen_antes: params.resumenAntes,
+    resumen_despues: resumenDespues,
+    estado: estadoFinal,
+    operaciones: params.operaciones,
+    riesgos,
+  };
+}
+
 async function ejecutarOperacion(
   tabla: string,
   accion: string,
@@ -1182,6 +1377,9 @@ async function anularChequesNoPagados(
 ) {
   const cheques = await seleccionarChequesNoPagados(empresaId, fechaDesde, fechaHasta);
   const ids = cheques.map((cheque) => cheque.id);
+  const estadoAnteriorPorCheque = new Map(
+    cheques.map((cheque) => [Number(cheque.id), cheque.estado])
+  );
 
   if (!ids.length) {
     return {
@@ -1230,7 +1428,7 @@ async function anularChequesNoPagados(
           cheque_id: cheque.id,
           modulo: "reinicio-controlado",
           accion: "Anulado por reinicio controlado",
-          estado_anterior: null,
+          estado_anterior: estadoAnteriorPorCheque.get(Number(cheque.id)) ?? null,
           estado_nuevo: "Anulado",
           comentario: MOTIVO_REINICIO,
           usuario_id: userId,
@@ -1358,9 +1556,9 @@ export async function ejecutarReinicioControlado(
   const modo = params.modo || "ejecutar";
   const reinicio = await obtenerReinicioControlado(params.reinicio_id);
   const previsualizacionParams = parametrosDesdeReinicio(reinicio);
-  const resumenAntes =
-    reinicio.resumen_antes ||
-    (await previsualizarReinicioControlado(previsualizacionParams));
+  const resumenAntes = await previsualizarReinicioControlado(
+    previsualizacionParams
+  );
 
   if (modo === "dryRun") {
     const resumenDespues = await previsualizarReinicioControlado(previsualizacionParams);
@@ -1382,14 +1580,20 @@ export async function ejecutarReinicioControlado(
     throw new Error("El reinicio controlado no esta en un estado ejecutable.");
   }
 
+  const opciones = resolverOpciones(previsualizacionParams);
+  validarBloqueosEjecucion(opciones, resumenAntes);
+
   const userId = await obtenerUsuarioIdActual();
   await actualizarReinicio(reinicio.id, { estado: "ejecutando" });
 
-  const opciones = resolverOpciones(previsualizacionParams);
   const operaciones: OperacionReinicioResultado[] = [];
   const riesgos = [...resumenAntes.riesgos];
+  let etapaActual = "ejecutar_operaciones";
+
+  try {
 
   if (opciones.incluir_movimientos) {
+    etapaActual = "anular_movimientos";
     operaciones.push(
       await ejecutarOperacion("movimientos", "anular_movimientos", () =>
         anularMovimientos(
@@ -1402,6 +1606,7 @@ export async function ejecutarReinicioControlado(
   }
 
   if (opciones.incluir_cheques_no_pagados) {
+    etapaActual = "anular_cheques";
     let chequesFisicosIds: number[] = [];
 
     const resultadoCheques = await ejecutarOperacion(
@@ -1430,13 +1635,21 @@ export async function ejecutarReinicioControlado(
     );
     operaciones.push(resultadoCheques);
 
-    operaciones.push(
-      await ejecutarOperacion(
-        "cheques_fisicos",
-        "anular_cheques_fisicos_relacionados",
-        () => anularChequesFisicosPorIds(chequesFisicosIds)
-      )
+    const resultadoChequesFisicosRelacionados = await ejecutarOperacion(
+      "cheques_fisicos",
+      "anular_cheques_fisicos_relacionados",
+      () => anularChequesFisicosPorIds(chequesFisicosIds)
     );
+    operaciones.push(resultadoChequesFisicosRelacionados);
+
+    if (
+      opciones.incluir_fondos_chequeras &&
+      (!resultadoCheques.ok || !resultadoChequesFisicosRelacionados.ok)
+    ) {
+      throw new Error(
+        "No se pueden reiniciar fondos/chequeras porque fallo la anulacion previa de cheques o cheques fisicos."
+      );
+    }
 
     if (resumenAntes.cheques.pagados > 0) {
       riesgos.push({
@@ -1453,6 +1666,7 @@ export async function ejecutarReinicioControlado(
   }
 
   if (opciones.incluir_fondos_chequeras) {
+    etapaActual = "inactivar_fondos_chequeras";
     operaciones.push(
       await ejecutarOperacion(
         "cheques_fisicos",
@@ -1475,6 +1689,7 @@ export async function ejecutarReinicioControlado(
   }
 
   if (opciones.incluir_calendario) {
+    etapaActual = "cancelar_calendario";
     operaciones.push(
       await ejecutarOperacion("calendario_eventos", "cancelar_eventos", () =>
         cancelarCalendario(
@@ -1486,15 +1701,17 @@ export async function ejecutarReinicioControlado(
     );
   }
 
+  etapaActual = "calcular_resumen_despues";
   const resumenDespues = await previsualizarReinicioControlado(previsualizacionParams);
   const hayErrores = operaciones.some((operacion) => !operacion.ok);
   const huboCambios = operaciones.some((operacion) => operacion.afectados > 0);
   const estadoFinal: EstadoReinicioControlado = hayErrores
     ? huboCambios
       ? "parcial"
-      : "fallido"
+    : "fallido"
     : "completado";
 
+  etapaActual = "actualizar_reinicio_final";
   const reinicioActualizado = await actualizarReinicio(reinicio.id, {
     estado: estadoFinal,
     ejecutado_por: userId,
@@ -1509,6 +1726,7 @@ export async function ejecutarReinicioControlado(
     },
   });
 
+  etapaActual = "auditar_reinicio_final";
   await auditarSinBloquear({
     empresa_id: reinicioActualizado.empresa_id,
     modulo: "reinicio-controlado",
@@ -1524,11 +1742,7 @@ export async function ejecutarReinicioControlado(
       resumen_antes: resumenGeneralParaAuditoria(resumenAntes),
       resumen_despues: resumenGeneralParaAuditoria(resumenDespues),
       operaciones: operacionesParaAuditoria(operaciones),
-      riesgos: riesgos.map((riesgo) => ({
-        severidad: riesgo.severidad,
-        codigo: riesgo.codigo,
-        mensaje: riesgo.mensaje,
-      })),
+      riesgos: riesgosParaAuditoria(riesgos),
     },
   });
 
@@ -1540,6 +1754,18 @@ export async function ejecutarReinicioControlado(
     operaciones,
     riesgos,
   };
+  } catch (error) {
+    return cerrarReinicioConError({
+      reinicio,
+      previsualizacionParams,
+      resumenAntes,
+      operaciones,
+      riesgos,
+      userId,
+      etapaFallida: etapaActual,
+      error,
+    });
+  }
 }
 
 export async function listarReiniciosControlados(
