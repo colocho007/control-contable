@@ -451,17 +451,41 @@ export async function obtenerUrlDocumento(
     throw new Error("La duracion de la URL debe estar entre 1 y 3600 segundos.");
   }
 
-  if (documento.archivo_bucket !== BUCKET_DOCUMENTOS) {
+  const { data: documentoActual, error: documentoError } = await supabase
+    .from("documentos_tramites")
+    .select("id,empresa_id,archivo_bucket,archivo_path,estado")
+    .eq("id", documento.id)
+    .maybeSingle();
+
+  if (documentoError || !documentoActual) {
+    throw new Error("No se pudo acceder al documento o ya no está disponible.");
+  }
+
+  if (documentoActual.estado !== "activo") {
+    throw new Error("El documento ya no está activo o fue desactivado.");
+  }
+
+  validarEmpresaId(Number(documentoActual.empresa_id));
+
+  if (documentoActual.archivo_bucket !== BUCKET_DOCUMENTOS) {
     throw new Error("El documento no pertenece al bucket privado esperado.");
   }
 
-  if (!documento.archivo_path?.startsWith(`${documento.empresa_id}/`)) {
+  if (documentoActual.archivo_path !== documento.archivo_path) {
+    throw new Error("El archivo del documento cambio y debe volver a consultarse.");
+  }
+
+  if (
+    !documentoActual.archivo_path?.startsWith(
+      `${Number(documentoActual.empresa_id)}/`
+    )
+  ) {
     throw new Error("La ruta del documento no coincide con su empresa.");
   }
 
   const { data, error } = await supabase.storage
     .from(BUCKET_DOCUMENTOS)
-    .createSignedUrl(documento.archivo_path, duracionSegundos);
+    .createSignedUrl(documentoActual.archivo_path, duracionSegundos);
 
   if (error || !data?.signedUrl) {
     throw errorSupabase("No se pudo generar la URL segura del documento", error);

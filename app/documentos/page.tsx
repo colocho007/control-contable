@@ -307,11 +307,16 @@ export default function DocumentosPage() {
       }
     } catch (error) {
       console.error("Error abriendo documento:", error);
-      window.alert(
-        error instanceof Error
-          ? error.message
-          : "No se pudo abrir el documento."
-      );
+      const mensaje =
+        error instanceof Error ? error.message : "No se pudo abrir el documento.";
+      window.alert(mensaje);
+
+      if (
+        mensaje === "El documento ya no está activo o fue desactivado." ||
+        mensaje === "No se pudo acceder al documento o ya no está disponible."
+      ) {
+        void cargarDocumentos(empresasPermitidasIds, filtros);
+      }
     } finally {
       setProcesandoId(null);
     }
