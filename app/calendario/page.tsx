@@ -19,9 +19,9 @@ import {
   cancelarEventoCalendario,
   completarEventoCalendario,
   crearEventoCalendario,
-  listarEventosCalendario,
-  type CalendarioEvento,
-  type ListarEventosCalendarioParams,
+  obtenerEventosOperativos,
+  type EventoOperativo,
+  type ObtenerEventosOperativosParams,
 } from "../../lib/calendarioOperativo";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
@@ -99,6 +99,10 @@ const FORM_INICIAL: FormularioEvento = {
 const ESTADOS_EVENTO = ["pendiente", "en_proceso", "completado", "cancelado"];
 const TIPOS_EVENTO = [
   "operativo",
+  "tarea",
+  "cheque",
+  "orden",
+  "auditoria",
   "vencimiento",
   "ejecucion",
   "seguimiento",
@@ -114,6 +118,7 @@ const MODULOS_ORIGEN = [
   "contabilidad",
   "finanzas",
   "documentos",
+  "auditoria",
   "manual",
 ];
 
@@ -137,16 +142,16 @@ function sumarDiasISO(dias: number) {
   return fechaLocalISO(fecha);
 }
 
-function fechaEvento(evento: CalendarioEvento) {
-  return evento.fecha_inicio || "";
+function fechaEvento(evento: EventoOperativo) {
+  return evento.fecha || "";
 }
 
-function fechaHoraOrden(evento: CalendarioEvento) {
-  const hora = evento.hora_inicio || "00:00";
+function fechaHoraOrden(evento: EventoOperativo) {
+  const hora = evento.hora || "00:00";
   return new Date(`${fechaEvento(evento)}T${hora}`).getTime();
 }
 
-function compararEventos(a: CalendarioEvento, b: CalendarioEvento) {
+function compararEventos(a: EventoOperativo, b: EventoOperativo) {
   return fechaHoraOrden(a) - fechaHoraOrden(b);
 }
 
@@ -176,9 +181,36 @@ function prioridadClase(prioridad: string | null) {
   return "text-slate-300";
 }
 
+function esEstadoFinal(estado: string) {
+  const normalizado = estado.trim().toLowerCase();
+  return [
+    "completado",
+    "cancelado",
+    "pagado",
+    "rechazado",
+    "anulado",
+    "archivado",
+    "aprobada",
+    "aprobado",
+  ].includes(normalizado);
+}
+
+function fuenteClase(fuente: EventoOperativo["fuente"]) {
+  if (fuente === "calendario") return "border-cyan-400/30 bg-cyan-400/10 text-cyan-200";
+  if (fuente === "tareas") return "border-purple-400/30 bg-purple-400/10 text-purple-200";
+  if (fuente === "cheques") return "border-green-400/30 bg-green-400/10 text-green-200";
+  if (fuente === "ordenes") return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+  return "border-slate-400/30 bg-slate-400/10 text-slate-200";
+}
+
+function idEventoManual(evento: EventoOperativo) {
+  if (evento.fuente !== "calendario") return null;
+  return evento.entidad_id ?? evento.id.replace("calendario:", "");
+}
+
 export default function CalendarioPage() {
   const router = useRouter();
-  const [eventos, setEventos] = useState<CalendarioEvento[]>([]);
+  const [eventos, setEventos] = useState<EventoOperativo[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [responsables, setResponsables] = useState<Perfil[]>([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
@@ -319,7 +351,10 @@ export default function CalendarioPage() {
         idsConsulta = [empresaId];
       }
 
-      const paramsBase: Omit<ListarEventosCalendarioParams, "empresa_id"> = {
+      const paramsBase: Omit<
+        ObtenerEventosOperativosParams,
+        "empresa_id" | "empresas_ids"
+      > = {
         fecha_desde: filtrosAplicados.fechaDesde || undefined,
         fecha_hasta: filtrosAplicados.fechaHasta || undefined,
         estado: filtrosAplicados.estado || undefined,
@@ -332,22 +367,25 @@ export default function CalendarioPage() {
             : filtrosAplicados.sensible === "true",
         texto: filtrosAplicados.texto.trim() || undefined,
         limite: LIMITE_EVENTOS,
+        incluir_auditoria_general: !filtrosAplicados.empresaId,
       };
 
-      const resultados = await Promise.all(
-        idsConsulta.map((empresaId) =>
-          listarEventosCalendario({
-            ...paramsBase,
-            empresa_id: empresaId,
-          })
-        )
-      );
+      const eventosOperativos = await obtenerEventosOperativos({
+        ...paramsBase,
+        empresas_ids: idsPermitidos,
+        empresa_id: filtrosAplicados.empresaId
+          ? Number(filtrosAplicados.empresaId)
+          : undefined,
+      });
 
       const eventosUnicos = Array.from(
         new Map(
-          resultados
-            .flat()
-            .filter((evento) => idsPermitidos.includes(Number(evento.empresa_id)))
+          eventosOperativos
+            .filter(
+              (evento) =>
+                evento.empresa_id === null ||
+                idsConsulta.includes(Number(evento.empresa_id))
+            )
             .map((evento) => [String(evento.id), evento])
         ).values()
       ).sort(compararEventos);
@@ -428,12 +466,18 @@ export default function CalendarioPage() {
     }
   }
 
-  async function completarEvento(evento: CalendarioEvento) {
+  async function completarEvento(evento: EventoOperativo) {
+    const eventoId = idEventoManual(evento);
+    if (!eventoId) {
+      toast.error("Solo los eventos manuales pueden completarse desde Calendario.");
+      return;
+    }
+
     if (!window.confirm("Deseas marcar este evento como completado?")) return;
 
     setProcesandoId(evento.id);
     try {
-      await completarEventoCalendario(evento.id, "Completado desde Calendario Operativo");
+      await completarEventoCalendario(eventoId, "Completado desde Calendario Operativo");
       toast.success("Evento completado.");
       await cargarEventos(empresasPermitidasIds, filtros);
     } catch (error) {
@@ -444,14 +488,20 @@ export default function CalendarioPage() {
     }
   }
 
-  async function cancelarEvento(evento: CalendarioEvento) {
+  async function cancelarEvento(evento: EventoOperativo) {
+    const eventoId = idEventoManual(evento);
+    if (!eventoId) {
+      toast.error("Solo los eventos manuales pueden cancelarse desde Calendario.");
+      return;
+    }
+
     const motivo = window.prompt("Motivo de cancelacion (opcional):");
     if (motivo === null) return;
 
     setProcesandoId(evento.id);
     try {
       await cancelarEventoCalendario(
-        evento.id,
+        eventoId,
         motivo.trim() || "Cancelado desde Calendario Operativo"
       );
       toast.success("Evento cancelado.");
@@ -479,16 +529,20 @@ export default function CalendarioPage() {
     const enSieteDias = sumarDiasISO(7);
 
     return {
-      pendientes: eventos.filter((evento) => evento.estado === "pendiente").length,
-      completados: eventos.filter((evento) => evento.estado === "completado").length,
-      cancelados: eventos.filter((evento) => evento.estado === "cancelado").length,
+      pendientes: eventos.filter((evento) => !esEstadoFinal(evento.estado)).length,
+      completados: eventos.filter(
+        (evento) => evento.estado.trim().toLowerCase() === "completado"
+      ).length,
+      cancelados: eventos.filter(
+        (evento) => evento.estado.trim().toLowerCase() === "cancelado"
+      ).length,
       hoy: eventos.filter((evento) => fechaEvento(evento) === hoy).length,
       proximos: eventos.filter((evento) => {
         const fecha = fechaEvento(evento);
         return (
           fecha >= hoy &&
           fecha <= enSieteDias &&
-          !["completado", "cancelado"].includes(evento.estado)
+          !esEstadoFinal(evento.estado)
         );
       }).length,
     };
@@ -939,6 +993,7 @@ export default function CalendarioPage() {
                       <th className="text-left px-5 py-4">Hora</th>
                       <th className="text-left px-5 py-4">Empresa</th>
                       <th className="text-left px-5 py-4">Titulo</th>
+                      <th className="text-left px-5 py-4">Fuente</th>
                       <th className="text-left px-5 py-4">Tipo</th>
                       <th className="text-left px-5 py-4">Estado</th>
                       <th className="text-left px-5 py-4">Prioridad</th>
@@ -951,21 +1006,23 @@ export default function CalendarioPage() {
                     {eventos.map((evento) => (
                       <tr key={evento.id} className="align-top hover:bg-white/[0.03]">
                         <td className="px-5 py-4 whitespace-nowrap text-gray-300">
-                          {mostrarFecha(evento.fecha_inicio)}
-                          {evento.fecha_fin && evento.fecha_fin !== evento.fecha_inicio && (
+                          {mostrarFecha(evento.fecha)}
+                          {evento.fecha_fin && evento.fecha_fin !== evento.fecha && (
                             <div className="text-xs text-gray-500">
                               hasta {mostrarFecha(evento.fecha_fin)}
                             </div>
                           )}
                         </td>
                         <td className="px-5 py-4 whitespace-nowrap text-gray-300">
-                          {evento.hora_inicio || "-"}
+                          {evento.hora || "-"}
                           {evento.hora_fin && <div className="text-xs text-gray-500">a {evento.hora_fin}</div>}
                         </td>
                         <td className="px-5 py-4 text-gray-200">
                           <div className="flex items-center gap-2">
                             <Building2 size={14} className="text-gray-400" />
-                            {empresasPorId.get(Number(evento.empresa_id)) ||
+                            {evento.empresa_id === null
+                              ? "General"
+                              : empresasPorId.get(Number(evento.empresa_id)) ||
                               `Empresa #${evento.empresa_id}`}
                           </div>
                         </td>
@@ -979,6 +1036,15 @@ export default function CalendarioPage() {
                               Sensible
                             </span>
                           )}
+                        </td>
+                        <td className="px-5 py-4">
+                          <span
+                            className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold capitalize ${fuenteClase(
+                              evento.fuente
+                            )}`}
+                          >
+                            {textoLegible(evento.fuente)}
+                          </span>
                         </td>
                         <td className="px-5 py-4 capitalize text-gray-300">
                           {textoLegible(evento.tipo_evento)}
@@ -1005,30 +1071,38 @@ export default function CalendarioPage() {
                         </td>
                         <td className="px-5 py-4">
                           <div className="flex flex-col gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void completarEvento(evento)}
-                              disabled={
-                                procesandoId === evento.id ||
-                                ["completado", "cancelado"].includes(evento.estado)
-                              }
-                              className="inline-flex items-center justify-center gap-2 bg-green-500/10 border border-green-400/30 text-green-200 hover:bg-green-500/20 rounded-lg px-3 py-2 font-semibold disabled:opacity-50"
-                            >
-                              <CheckCircle2 size={14} />
-                              Completar
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void cancelarEvento(evento)}
-                              disabled={
-                                procesandoId === evento.id ||
-                                ["completado", "cancelado"].includes(evento.estado)
-                              }
-                              className="inline-flex items-center justify-center gap-2 bg-red-500/10 border border-red-400/30 text-red-200 hover:bg-red-500/20 rounded-lg px-3 py-2 font-semibold disabled:opacity-50"
-                            >
-                              <XCircle size={14} />
-                              Cancelar
-                            </button>
+                            {evento.fuente === "calendario" ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void completarEvento(evento)}
+                                  disabled={
+                                    procesandoId === evento.id ||
+                                    esEstadoFinal(evento.estado)
+                                  }
+                                  className="inline-flex items-center justify-center gap-2 bg-green-500/10 border border-green-400/30 text-green-200 hover:bg-green-500/20 rounded-lg px-3 py-2 font-semibold disabled:opacity-50"
+                                >
+                                  <CheckCircle2 size={14} />
+                                  Completar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void cancelarEvento(evento)}
+                                  disabled={
+                                    procesandoId === evento.id ||
+                                    esEstadoFinal(evento.estado)
+                                  }
+                                  className="inline-flex items-center justify-center gap-2 bg-red-500/10 border border-red-400/30 text-red-200 hover:bg-red-500/20 rounded-lg px-3 py-2 font-semibold disabled:opacity-50"
+                                >
+                                  <XCircle size={14} />
+                                  Cancelar
+                                </button>
+                              </>
+                            ) : (
+                              <span className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-gray-400">
+                                Solo consulta
+                              </span>
+                            )}
                           </div>
                         </td>
                       </tr>
