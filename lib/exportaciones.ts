@@ -65,8 +65,22 @@ export function formatearValorExportacion(valor: unknown): string {
   return String(valor);
 }
 
-function escaparCsv(valor: unknown) {
+function sanitizarValorCsv(valor: unknown) {
   const texto = formatearValorExportacion(valor);
+
+  if (!texto || typeof valor === "number") return texto;
+
+  const textoSinEspaciosIniciales = texto.replace(/^ +/, "");
+  const iniciaFormula = /^[=+\-@]/.test(textoSinEspaciosIniciales);
+  const iniciaControl = /^[\u0000-\u001F\u007F]/.test(
+    textoSinEspaciosIniciales
+  );
+
+  return iniciaFormula || iniciaControl ? `'${texto}` : texto;
+}
+
+function escaparCsv(valor: unknown) {
+  const texto = sanitizarValorCsv(valor);
   const escapado = texto.replaceAll('"', '""');
 
   if (/[",\r\n]/.test(escapado)) {
