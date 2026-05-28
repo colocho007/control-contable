@@ -13,6 +13,7 @@ import {
   Truck,
   LogOut,
   Loader2,
+  CalendarDays,
   FileText,
   ClipboardList,
   ShieldCheck,
@@ -155,6 +156,12 @@ export default function Sidebar() {
     clave: "dashboard",
   },
   {
+    name: "Calendario",
+    path: "/calendario",
+    icon: CalendarDays,
+    clave: "calendario",
+  },
+  {
     name: "Tareas",
     path: "/tareas",
     icon: CheckSquare,
@@ -238,6 +245,12 @@ const menusAdmin = [
 
   // Rutas para usuarios que solo trabajan órdenes
   const menusOrdenes = [
+    {
+      name: "Calendario",
+      path: "/calendario",
+      icon: CalendarDays,
+      clave: "calendario",
+    },
     {
       name: "Órdenes",
       path: "/ordenes-compra",
