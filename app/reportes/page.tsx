@@ -5,15 +5,21 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   Building2,
-  CalendarDays,
   ClipboardList,
+  Download,
   FileText,
+  Printer,
   RefreshCcw,
   TrendingDown,
   TrendingUp,
   Wallet,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import {
+  abrirVistaImprimibleSecciones,
+  descargarCsvSecciones,
+  type SeccionExportacion,
+} from "../../lib/exportaciones";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import {
   obtenerReporteMensual,
@@ -266,6 +272,11 @@ export default function ReportesPage() {
 
   const monedaSeleccionada = filtros.moneda || null;
 
+  const empresasPorId = useMemo(
+    () => new Map(empresas.map((empresa) => [Number(empresa.id), empresa.nombre])),
+    [empresas]
+  );
+
   const totalesFondos = useMemo(() => {
     const fondos = reporte?.fondos || [];
 
@@ -277,6 +288,203 @@ export default function ReportesPage() {
       { disponible: 0, comprometido: 0 }
     );
   }, [reporte]);
+
+  function textoEmpresaFiltro() {
+    if (!filtros.empresaId) return "Todas las empresas permitidas";
+    return empresasPorId.get(Number(filtros.empresaId)) || `Empresa #${filtros.empresaId}`;
+  }
+
+  function seccionesExportacionReportes(): SeccionExportacion[] {
+    if (!reporte) return [];
+
+    const filtrosResumen = {
+      Empresa: textoEmpresaFiltro(),
+      "Fecha desde": filtros.fechaDesde || "",
+      "Fecha hasta": filtros.fechaHasta || "",
+      Moneda: filtros.moneda || "Todas",
+    };
+
+    return [
+      {
+        titulo: "Filtros aplicados",
+        columnas: [
+          { clave: "filtro", titulo: "Filtro" },
+          { clave: "valor", titulo: "Valor" },
+        ],
+        filas: Object.entries(filtrosResumen).map(([filtro, valor]) => ({
+          filtro,
+          valor,
+        })),
+      },
+      {
+        titulo: "Resumen financiero",
+        resumen: {
+          Ingresos: reporte.resumen.ingresos,
+          Egresos: reporte.resumen.egresos,
+          Neto: reporte.resumen.neto,
+          "Total movimientos": reporte.resumen.total_movimientos,
+          "Movimientos anulados": reporte.resumen.movimientos_anulados,
+        },
+        columnas: [
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "ingresos", titulo: "Ingresos" },
+          { clave: "egresos", titulo: "Egresos" },
+          { clave: "neto", titulo: "Neto" },
+          { clave: "total_movimientos", titulo: "Total movimientos" },
+          { clave: "movimientos_anulados", titulo: "Movimientos anulados" },
+        ],
+        filas: reporte.resumen.por_moneda.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Fondos por empresa/cuenta",
+        columnas: [
+          { clave: "empresa", titulo: "Empresa" },
+          { clave: "banco", titulo: "Banco" },
+          { clave: "cuenta_bancaria", titulo: "Cuenta bancaria" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "saldo_base", titulo: "Saldo base" },
+          { clave: "saldo_comprometido", titulo: "Saldo comprometido" },
+          { clave: "saldo_disponible", titulo: "Saldo disponible" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.fondos.map((fondo) => ({
+          ...fondo,
+          empresa: fondo.empresa || empresasPorId.get(Number(fondo.empresa_id)) || "",
+        })),
+      },
+      {
+        titulo: "Cheques resumen",
+        columnas: [
+          { clave: "pendientes", titulo: "Pendientes" },
+          { clave: "autorizados", titulo: "Autorizados" },
+          { clave: "pagados", titulo: "Pagados" },
+          { clave: "rechazados", titulo: "Rechazados" },
+          { clave: "anulados", titulo: "Anulados" },
+          { clave: "monto_pendiente", titulo: "Monto pendiente" },
+          { clave: "monto_pagado", titulo: "Monto pagado" },
+        ],
+        filas: [
+          {
+            pendientes: reporte.cheques.pendientes,
+            autorizados: reporte.cheques.autorizados,
+            pagados: reporte.cheques.pagados,
+            rechazados: reporte.cheques.rechazados,
+            anulados: reporte.cheques.anulados,
+            monto_pendiente: reporte.cheques.monto_pendiente,
+            monto_pagado: reporte.cheques.monto_pagado,
+          },
+        ],
+      },
+      {
+        titulo: "Cheques proximos pagos",
+        columnas: [
+          { clave: "fecha_pago", titulo: "Fecha pago" },
+          { clave: "empresa", titulo: "Empresa" },
+          { clave: "beneficiario", titulo: "Beneficiario" },
+          { clave: "concepto", titulo: "Concepto" },
+          { clave: "numero_cheque", titulo: "Numero cheque" },
+          { clave: "monto", titulo: "Monto" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "forma_pago", titulo: "Forma pago" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.cheques.proximos_pagos.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Cheques por moneda",
+        columnas: [
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "monto_pendiente", titulo: "Monto pendiente" },
+          { clave: "monto_pagado", titulo: "Monto pagado" },
+          { clave: "total_movimientos", titulo: "Total" },
+        ],
+        filas: reporte.cheques.por_moneda.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Ordenes resumen",
+        columnas: [
+          { clave: "pendientes", titulo: "Pendientes" },
+          { clave: "aprobadas", titulo: "Aprobadas" },
+          { clave: "observadas", titulo: "Observadas" },
+          { clave: "anuladas_rechazadas", titulo: "Anuladas/rechazadas" },
+          { clave: "monto_pendiente", titulo: "Monto pendiente" },
+          { clave: "monto_aprobado", titulo: "Monto aprobado" },
+        ],
+        filas: [
+          {
+            pendientes: reporte.ordenes.pendientes,
+            aprobadas: reporte.ordenes.aprobadas,
+            observadas: reporte.ordenes.observadas,
+            anuladas_rechazadas: reporte.ordenes.anuladas_rechazadas,
+            monto_pendiente: reporte.ordenes.monto_pendiente,
+            monto_aprobado: reporte.ordenes.monto_aprobado,
+          },
+        ],
+      },
+      {
+        titulo: "Ordenes proximas",
+        columnas: [
+          { clave: "fecha_necesaria", titulo: "Fecha necesaria" },
+          { clave: "empresa", titulo: "Empresa" },
+          { clave: "proveedor", titulo: "Proveedor" },
+          { clave: "concepto", titulo: "Concepto" },
+          { clave: "numero_orden", titulo: "Numero orden" },
+          { clave: "numero_factura", titulo: "Numero factura" },
+          { clave: "monto", titulo: "Monto" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.ordenes.proximas_ordenes.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Ordenes por moneda",
+        columnas: [
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "monto_pendiente", titulo: "Monto pendiente" },
+          { clave: "monto_aprobado", titulo: "Monto aprobado" },
+          { clave: "total_movimientos", titulo: "Total" },
+        ],
+        filas: reporte.ordenes.por_moneda.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Calendario de pagos",
+        columnas: [
+          { clave: "fecha", titulo: "Fecha" },
+          { clave: "fuente", titulo: "Fuente" },
+          { clave: "empresa_id", titulo: "Empresa ID" },
+          { clave: "titulo", titulo: "Titulo" },
+          { clave: "monto", titulo: "Monto" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.calendario.map((fila) => ({ ...fila })),
+      },
+    ];
+  }
+
+  function exportarCsv() {
+    const secciones = seccionesExportacionReportes();
+    if (!secciones.length) {
+      window.alert("No hay datos de reportes para exportar.");
+      return;
+    }
+
+    descargarCsvSecciones(`reportes-${fechaLocalISO()}.csv`, secciones);
+  }
+
+  function imprimirPdf() {
+    const secciones = seccionesExportacionReportes();
+    if (!secciones.length) {
+      window.alert("No hay datos de reportes para imprimir.");
+      return;
+    }
+
+    abrirVistaImprimibleSecciones(
+      "Reportes",
+      "Resumen financiero y operativo por empresa",
+      secciones
+    );
+  }
 
   if (validandoAcceso || !autorizado) {
     return (
@@ -305,15 +513,35 @@ export default function ReportesPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => cargarReporte(empresasPermitidasIds, filtros)}
-              disabled={cargandoReportes}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 text-black font-black px-5 py-3 hover:bg-cyan-400 disabled:opacity-60"
-            >
-              <RefreshCcw size={18} className={cargandoReportes ? "animate-spin" : ""} />
-              Actualizar
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportarCsv}
+                disabled={!reporte}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-white font-bold px-4 py-3 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Download size={18} />
+                Exportar CSV
+              </button>
+              <button
+                type="button"
+                onClick={imprimirPdf}
+                disabled={!reporte}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 text-white font-bold px-4 py-3 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Printer size={18} />
+                Imprimir / PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => cargarReporte(empresasPermitidasIds, filtros)}
+                disabled={cargandoReportes}
+                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-500 text-black font-black px-5 py-3 hover:bg-cyan-400 disabled:opacity-60"
+              >
+                <RefreshCcw size={18} className={cargandoReportes ? "animate-spin" : ""} />
+                Actualizar
+              </button>
+            </div>
           </header>
 
           {aviso && (

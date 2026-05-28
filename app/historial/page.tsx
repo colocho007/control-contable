@@ -10,12 +10,20 @@ import {
   Building2,
   CalendarDays,
   Clock,
+  Download,
   History,
   Layers,
+  Printer,
   RefreshCcw,
   ShieldAlert,
   User as UserIcon,
 } from "lucide-react";
+import {
+  abrirVistaImprimible,
+  descargarCsv,
+  type ColumnaExportacion,
+  type FilaExportacion,
+} from "../../lib/exportaciones";
 
 interface Empresa {
   id: number;
@@ -348,6 +356,74 @@ export default function HistorialPage() {
     [eventos]
   );
 
+  const columnasExportacion: ColumnaExportacion[] = [
+    { clave: "fecha", titulo: "Fecha" },
+    { clave: "empresa", titulo: "Empresa" },
+    { clave: "modulo", titulo: "Modulo" },
+    { clave: "accion", titulo: "Accion" },
+    { clave: "usuario", titulo: "Usuario" },
+    { clave: "entidad", titulo: "Entidad" },
+    { clave: "estado_anterior", titulo: "Estado anterior" },
+    { clave: "estado_nuevo", titulo: "Estado nuevo" },
+    { clave: "motivo", titulo: "Motivo" },
+    { clave: "sensible", titulo: "Sensible" },
+    { clave: "visible_calendario", titulo: "Visible calendario" },
+  ];
+
+  function filasExportacion(): FilaExportacion[] {
+    return eventos.map((evento) => ({
+      fecha: evento.creado_at,
+      empresa:
+        evento.empresa_id === null
+          ? "General"
+          : empresasPorId.get(Number(evento.empresa_id)) ||
+            `Empresa #${evento.empresa_id}`,
+      modulo: evento.modulo,
+      accion: evento.accion,
+      usuario: evento.usuario_nombre_snapshot || evento.usuario_id,
+      entidad:
+        evento.entidad_id !== null
+          ? `${etiqueta(evento.entidad_tipo)} #${evento.entidad_id}`
+          : etiqueta(evento.entidad_tipo),
+      estado_anterior: evento.estado_anterior || "",
+      estado_nuevo: evento.estado_nuevo || "",
+      motivo: evento.motivo || "",
+      sensible: evento.sensible,
+      visible_calendario: evento.visible_calendario,
+    }));
+  }
+
+  function exportarCsv() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay eventos de historial para exportar.");
+      return;
+    }
+
+    descargarCsv("historial-general.csv", columnasExportacion, filas);
+  }
+
+  function imprimirPdf() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay eventos de historial para imprimir.");
+      return;
+    }
+
+    abrirVistaImprimible(
+      "Historial general",
+      "Bitacora central de operaciones del sistema",
+      columnasExportacion,
+      filas,
+      {
+        "Eventos mostrados": resumen.total,
+        Sensibles: resumen.sensibles,
+        "En calendario": resumen.calendario,
+        "Modulos activos": resumen.modulos,
+      }
+    );
+  }
+
   if (validandoAcceso || !autorizado) {
     return (
       <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
@@ -373,15 +449,35 @@ export default function HistorialPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void cargarEventos(empresasPermitidasIds, filtros)}
-              disabled={cargandoHistorial}
-              className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
-            >
-              <RefreshCcw size={18} className={cargandoHistorial ? "animate-spin" : ""} />
-              Actualizar
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportarCsv}
+                disabled={!eventos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Download size={18} />
+                Exportar CSV
+              </button>
+              <button
+                type="button"
+                onClick={imprimirPdf}
+                disabled={!eventos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Printer size={18} />
+                Imprimir / PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => void cargarEventos(empresasPermitidasIds, filtros)}
+                disabled={cargandoHistorial}
+                className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
+              >
+                <RefreshCcw size={18} className={cargandoHistorial ? "animate-spin" : ""} />
+                Actualizar
+              </button>
+            </div>
           </div>
 
           <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">

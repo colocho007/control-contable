@@ -7,14 +7,22 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock,
+  Download,
   Filter,
   Loader2,
   Plus,
+  Printer,
   RefreshCcw,
   XCircle,
 } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 import Sidebar from "../../components/Sidebar";
+import {
+  abrirVistaImprimible,
+  descargarCsv,
+  type ColumnaExportacion,
+  type FilaExportacion,
+} from "../../lib/exportaciones";
 import {
   cancelarEventoCalendario,
   completarEventoCalendario,
@@ -548,6 +556,79 @@ export default function CalendarioPage() {
     };
   }, [eventos]);
 
+  const columnasExportacion: ColumnaExportacion[] = [
+    { clave: "fecha", titulo: "Fecha" },
+    { clave: "hora", titulo: "Hora" },
+    { clave: "empresa", titulo: "Empresa" },
+    { clave: "titulo", titulo: "Titulo" },
+    { clave: "fuente", titulo: "Fuente" },
+    { clave: "tipo_evento", titulo: "Tipo" },
+    { clave: "estado", titulo: "Estado" },
+    { clave: "prioridad", titulo: "Prioridad" },
+    { clave: "modulo_origen", titulo: "Modulo origen" },
+    { clave: "entidad", titulo: "Entidad" },
+    { clave: "responsable", titulo: "Responsable" },
+    { clave: "sensible", titulo: "Sensible" },
+  ];
+
+  function filasExportacion(): FilaExportacion[] {
+    return eventos.map((evento) => ({
+      fecha: evento.fecha,
+      hora: evento.hora || "",
+      empresa:
+        evento.empresa_id === null
+          ? "General"
+          : empresasPorId.get(Number(evento.empresa_id)) ||
+            `Empresa #${evento.empresa_id}`,
+      titulo: evento.titulo,
+      fuente: evento.fuente,
+      tipo_evento: evento.tipo_evento || "",
+      estado: evento.estado,
+      prioridad: evento.prioridad || "",
+      modulo_origen: evento.modulo_origen || "",
+      entidad:
+        evento.entidad_id !== null && evento.entidad_id !== undefined
+          ? `${textoLegible(evento.entidad_tipo)} #${evento.entidad_id}`
+          : textoLegible(evento.entidad_tipo),
+      responsable: evento.responsable_id
+        ? responsablesPorId.get(evento.responsable_id) || evento.responsable_id
+        : "",
+      sensible: evento.sensible,
+    }));
+  }
+
+  function exportarCsv() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay eventos de calendario para exportar.");
+      return;
+    }
+
+    descargarCsv("calendario-operativo.csv", columnasExportacion, filas);
+  }
+
+  function imprimirPdf() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay eventos de calendario para imprimir.");
+      return;
+    }
+
+    abrirVistaImprimible(
+      "Calendario Operativo",
+      "Eventos, vencimientos, ejecuciones y seguimiento por fecha",
+      columnasExportacion,
+      filas,
+      {
+        "Eventos pendientes": resumen.pendientes,
+        "Eventos completados": resumen.completados,
+        "Eventos cancelados": resumen.cancelados,
+        "Eventos de hoy": resumen.hoy,
+        "Proximos 7 dias": resumen.proximos,
+      }
+    );
+  }
+
   if (validandoAcceso || !autorizado) {
     return (
       <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
@@ -574,15 +655,35 @@ export default function CalendarioPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void cargarEventos(empresasPermitidasIds, filtros)}
-              disabled={cargandoCalendario}
-              className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
-            >
-              <RefreshCcw size={18} className={cargandoCalendario ? "animate-spin" : ""} />
-              Actualizar
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportarCsv}
+                disabled={!eventos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Download size={18} />
+                Exportar CSV
+              </button>
+              <button
+                type="button"
+                onClick={imprimirPdf}
+                disabled={!eventos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Printer size={18} />
+                Imprimir / PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => void cargarEventos(empresasPermitidasIds, filtros)}
+                disabled={cargandoCalendario}
+                className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
+              >
+                <RefreshCcw size={18} className={cargandoCalendario ? "animate-spin" : ""} />
+                Actualizar
+              </button>
+            </div>
           </header>
 
           <section className="grid sm:grid-cols-2 xl:grid-cols-5 gap-4 mb-8">

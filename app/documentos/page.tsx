@@ -5,14 +5,22 @@ import { useRouter } from "next/navigation";
 import {
   Archive,
   Building2,
+  Download,
   ExternalLink,
   FileText,
   FolderOpen,
+  Printer,
   Receipt,
   RefreshCcw,
   ShieldAlert,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import {
+  abrirVistaImprimible,
+  descargarCsv,
+  type ColumnaExportacion,
+  type FilaExportacion,
+} from "../../lib/exportaciones";
 import {
   buscarDocumentosTramite,
   desactivarDocumento,
@@ -396,6 +404,71 @@ export default function DocumentosPage() {
     [documentos]
   );
 
+  const columnasExportacion: ColumnaExportacion[] = [
+    { clave: "fecha", titulo: "Fecha" },
+    { clave: "empresa", titulo: "Empresa" },
+    { clave: "modulo", titulo: "Modulo" },
+    { clave: "tipo_documento", titulo: "Tipo documento" },
+    { clave: "titulo", titulo: "Titulo" },
+    { clave: "factura", titulo: "Factura" },
+    { clave: "cheque", titulo: "Cheque" },
+    { clave: "proveedor", titulo: "Proveedor" },
+    { clave: "monto", titulo: "Monto" },
+    { clave: "moneda", titulo: "Moneda" },
+    { clave: "sensible", titulo: "Sensible" },
+    { clave: "estado", titulo: "Estado" },
+  ];
+
+  function filasExportacion(): FilaExportacion[] {
+    return documentos.map((documento) => ({
+      fecha: fechaDocumento(documento),
+      empresa:
+        empresasPorId.get(Number(documento.empresa_id)) ||
+        `Empresa #${documento.empresa_id}`,
+      modulo: documento.modulo,
+      tipo_documento: documento.tipo_documento,
+      titulo: documento.titulo || documento.descripcion || documento.archivo_nombre,
+      factura: documento.numero_factura || "",
+      cheque: documento.numero_cheque || "",
+      proveedor: documento.proveedor_nombre_snapshot || "",
+      monto: documento.monto ?? "",
+      moneda: documento.moneda || "",
+      sensible: documento.sensible,
+      estado: documento.estado,
+    }));
+  }
+
+  function exportarCsv() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay documentos para exportar.");
+      return;
+    }
+
+    descargarCsv("documentos.csv", columnasExportacion, filas);
+  }
+
+  function imprimirPdf() {
+    const filas = filasExportacion();
+    if (!filas.length) {
+      window.alert("No hay documentos para imprimir.");
+      return;
+    }
+
+    abrirVistaImprimible(
+      "Documentos",
+      "Busqueda y respaldo de documentos de tramites",
+      columnasExportacion,
+      filas,
+      {
+        "Total documentos": resumen.total,
+        Sensibles: resumen.sensibles,
+        Facturas: resumen.facturas,
+        "Cheques / vouchers": resumen.cheques,
+      }
+    );
+  }
+
   if (validandoAcceso || !autorizado) {
     return (
       <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
@@ -421,18 +494,38 @@ export default function DocumentosPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => void cargarDocumentos(empresasPermitidasIds, filtros)}
-              disabled={cargandoDocumentos}
-              className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
-            >
-              <RefreshCcw
-                size={18}
-                className={cargandoDocumentos ? "animate-spin" : ""}
-              />
-              Actualizar
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={exportarCsv}
+                disabled={!documentos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Download size={18} />
+                Exportar CSV
+              </button>
+              <button
+                type="button"
+                onClick={imprimirPdf}
+                disabled={!documentos.length}
+                className="inline-flex items-center justify-center gap-2 border border-white/10 bg-white/5 hover:bg-white/10 text-white rounded-xl px-4 py-3 font-bold disabled:opacity-50"
+              >
+                <Printer size={18} />
+                Imprimir / PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => void cargarDocumentos(empresasPermitidasIds, filtros)}
+                disabled={cargandoDocumentos}
+                className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-black rounded-xl px-5 py-3 font-bold disabled:opacity-50"
+              >
+                <RefreshCcw
+                  size={18}
+                  className={cargandoDocumentos ? "animate-spin" : ""}
+                />
+                Actualizar
+              </button>
+            </div>
           </header>
 
           <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
