@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
+import DocumentosEntidad from "../../components/DocumentosEntidad";
 import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
@@ -95,6 +96,14 @@ interface OrdenCompra {
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_CREADORES = ["admin", "supervisor", "jefe", "iniciador_gestion"];
 const ROLES_FIRMANTES = ["admin", "supervisor", "jefe", "firmante_oc"];
+const TIPOS_DOCUMENTO_ORDENES = [
+  "Factura",
+  "Cotización",
+  "Orden firmada",
+  "Comprobante",
+  "Documento proveedor",
+  "Otro",
+];
 const REFERENCIA_BORRADOR_ORDEN = "nueva-orden";
 const TITULO_BORRADOR_ORDEN = "Borrador de orden de compra";
 const COLUMNAS_BORRADOR_ORDEN =
@@ -2416,6 +2425,20 @@ function OrdenCard({
           </div>
         )}
       </div>
+
+      <DocumentosEntidad
+        empresaId={orden.empresa_id}
+        modulo="ordenes"
+        entidadTipo="orden_compra"
+        entidadId={orden.id}
+        titulo="Documentos de la orden"
+        numeroFactura={orden.numero_factura}
+        proveedorNombre={orden.proveedor}
+        monto={orden.total_final ?? orden.monto}
+        moneda={orden.moneda}
+        tiposDocumento={TIPOS_DOCUMENTO_ORDENES}
+        disabled={!orden.empresa_id || !orden.id}
+      />
     </div>
   );
 }

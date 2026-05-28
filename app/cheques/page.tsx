@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
+import DocumentosEntidad from "../../components/DocumentosEntidad";
 import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
@@ -161,6 +162,15 @@ interface ResumenChequera {
 }
 
 const ROLES_JEFATURA = ["admin", "supervisor", "jefe"];
+const TIPOS_DOCUMENTO_CHEQUES = [
+  "Cheque escaneado",
+  "Voucher",
+  "Comprobante de pago",
+  "Transferencia",
+  "Depósito",
+  "Recibo",
+  "Otro",
+];
 const TITULO_BORRADOR_CHEQUE = "Borrador de cheque";
 const COLUMNAS_BORRADOR_CHEQUE =
   "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
@@ -3784,6 +3794,19 @@ const historial = historialCheques.filter((h) => {
           </div>
         )}
       </div>
+
+      <DocumentosEntidad
+        empresaId={cheque.empresa_id}
+        modulo="cheques"
+        entidadTipo="cheque"
+        entidadId={cheque.id}
+        titulo="Documentos del cheque"
+        numeroCheque={cheque.numero_cheque}
+        monto={cheque.monto}
+        moneda={cheque.moneda}
+        tiposDocumento={TIPOS_DOCUMENTO_CHEQUES}
+        disabled={!cheque.empresa_id || !cheque.id}
+      />
     </div>
   );
 }
