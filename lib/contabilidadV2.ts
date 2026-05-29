@@ -812,7 +812,7 @@ export async function calcularBalanceComprobacion(
       `${COLUMNAS_ASIENTO},movimientos_contables_detalle(id,cuenta_id,debe,haber,moneda,catalogo_cuentas(codigo,nombre,tipo,naturaleza))`
     )
     .eq("empresa_id", empresaId)
-    .neq("estado", "anulado");
+    .eq("estado", "registrado");
 
   if (params.fecha_desde?.trim()) {
     query = query.gte("fecha", validarFecha(params.fecha_desde, "fecha_desde"));
