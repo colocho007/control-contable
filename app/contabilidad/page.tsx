@@ -28,10 +28,13 @@ import {
   crearDocumentoContableRevision,
   documentoContableRequiereAlerta24h,
   guardarDistribucionDocumentoContable,
+  guardarImpuestoConfiguracion,
+  inactivarImpuestoConfiguracion,
   listarAsientosContables,
   listarCatalogoCuentas,
   listarDistribucionDocumentoContable,
   listarDocumentosContablesRevision,
+  listarImpuestosConfiguracion,
   listarPeriodosContables,
   obtenerOCrearPeriodoContable,
   type AsientoContable,
@@ -39,6 +42,7 @@ import {
   type CatalogoCuenta,
   type DistribucionDocumentoContable,
   type DocumentoContableRevision,
+  type ImpuestoConfiguracion,
   type MovimientoDetalleInput,
   type NaturalezaCuenta,
   type PeriodoContable,
@@ -72,6 +76,7 @@ interface Empresa {
 type TabContabilidad =
   | "movimientos"
   | "catalogo"
+  | "impuestos"
   | "documentos_revision"
   | "periodos"
   | "asientos"
@@ -111,6 +116,11 @@ const TABS: Array<{
     id: "catalogo",
     nombre: "Catalogo de cuentas",
     descripcion: "Cuentas globales y por empresa",
+  },
+  {
+    id: "impuestos",
+    nombre: "Plan de impuestos",
+    descripcion: "IVA, ISR, retenciones y exentos",
   },
   {
     id: "documentos_revision",
@@ -212,6 +222,9 @@ export default function ContabilidadPage() {
   const [empresaContableId, setEmpresaContableId] = useState("");
 
   const [catalogoCuentas, setCatalogoCuentas] = useState<CatalogoCuenta[]>([]);
+  const [impuestosConfiguracion, setImpuestosConfiguracion] = useState<
+    ImpuestoConfiguracion[]
+  >([]);
   const [documentosRevision, setDocumentosRevision] = useState<
     DocumentoContableRevision[]
   >([]);
@@ -264,6 +277,23 @@ export default function ContabilidadPage() {
   });
 
   const [documentosFiltroEstado, setDocumentosFiltroEstado] = useState("");
+  const [impuestoEditandoId, setImpuestoEditandoId] = useState<string | number | null>(
+    null
+  );
+  const [impuestoForm, setImpuestoForm] = useState({
+    empresaId: "",
+    impuestoId: "",
+    nombre: "",
+    tipo: "IVA",
+    porcentaje: "",
+    cuentaContableId: "",
+    aplicaCompra: true,
+    aplicaVenta: false,
+    proveedorId: "",
+    clienteId: "",
+    activo: true,
+    observaciones: "",
+  });
   const [documentoDistribucionId, setDocumentoDistribucionId] = useState<
     string | number | null
   >(null);
@@ -395,6 +425,10 @@ export default function ContabilidadPage() {
       const empresaInicial = String(empresas[0].id);
       setEmpresaContableId((actual) => actual || empresaInicial);
       setCuentaForm((actual) => ({
+        ...actual,
+        empresaId: actual.empresaId || empresaInicial,
+      }));
+      setImpuestoForm((actual) => ({
         ...actual,
         empresaId: actual.empresaId || empresaInicial,
       }));
@@ -760,9 +794,37 @@ export default function ContabilidadPage() {
     }
   }
 
+  async function cargarImpuestos(empresaIdValor = empresaContableId) {
+    try {
+      const empresaId = validarEmpresaPermitida(
+        empresaIdValor,
+        "listar plan de impuestos"
+      );
+      setCargandoV2(true);
+      setMensajeV2("");
+      const [impuestos, cuentas] = await Promise.all([
+        listarImpuestosConfiguracion({ empresa_id: empresaId }),
+        listarCatalogoCuentas({ empresa_id: empresaId, incluir_globales: true }),
+      ]);
+      setImpuestosConfiguracion(impuestos);
+      setCatalogoCuentas(cuentas);
+    } catch (error) {
+      console.error("Error cargando plan de impuestos:", error);
+      setMensajeV2(getErrorMessage(error));
+      setImpuestosConfiguracion([]);
+    } finally {
+      setCargandoV2(false);
+    }
+  }
+
   async function cargarDatosTab(tab: TabContabilidad, empresaIdValor = empresaContableId) {
     if (tab === "catalogo" || tab === "crear_asiento") {
       await cargarCatalogo(empresaIdValor);
+      return;
+    }
+
+    if (tab === "impuestos") {
+      await cargarImpuestos(empresaIdValor);
       return;
     }
 
@@ -797,6 +859,7 @@ export default function ContabilidadPage() {
   async function cambiarEmpresaContable(valor: string) {
     setEmpresaContableId(valor);
     setCuentaForm((actual) => ({ ...actual, empresaId: valor }));
+    setImpuestoForm((actual) => ({ ...actual, empresaId: valor }));
     setDocumentoForm((actual) => ({ ...actual, empresaId: valor }));
     setPeriodoForm((actual) => ({ ...actual, empresaId: valor }));
     setAsientoForm((actual) => ({ ...actual, empresaId: valor }));
@@ -856,6 +919,132 @@ export default function ContabilidadPage() {
       alert("Cuenta contable creada.");
     } catch (error) {
       console.error("Error creando cuenta contable:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function limpiarImpuestoForm(empresaId = impuestoForm.empresaId) {
+    setImpuestoEditandoId(null);
+    setImpuestoForm({
+      empresaId,
+      impuestoId: "",
+      nombre: "",
+      tipo: "IVA",
+      porcentaje: "",
+      cuentaContableId: "",
+      aplicaCompra: true,
+      aplicaVenta: false,
+      proveedorId: "",
+      clienteId: "",
+      activo: true,
+      observaciones: "",
+    });
+  }
+
+  function cargarImpuestoParaEditar(impuesto: ImpuestoConfiguracion) {
+    setImpuestoEditandoId(impuesto.id);
+    setImpuestoForm({
+      empresaId: String(impuesto.empresa_id),
+      impuestoId: impuesto.impuesto_id || "",
+      nombre: impuesto.nombre,
+      tipo: impuesto.tipo,
+      porcentaje: String(impuesto.porcentaje),
+      cuentaContableId: impuesto.cuenta_contable_id
+        ? String(impuesto.cuenta_contable_id)
+        : "",
+      aplicaCompra: impuesto.aplica_compra,
+      aplicaVenta: impuesto.aplica_venta,
+      proveedorId: impuesto.proveedor_id ? String(impuesto.proveedor_id) : "",
+      clienteId: impuesto.cliente_id ? String(impuesto.cliente_id) : "",
+      activo: impuesto.activo,
+      observaciones: impuesto.observaciones || "",
+    });
+  }
+
+  async function guardarImpuesto() {
+    let empresaId: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(
+        impuestoForm.empresaId,
+        "guardar plan de impuestos"
+      );
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    if (!impuestoForm.nombre.trim() || !impuestoForm.porcentaje) {
+      alert("Nombre y porcentaje son obligatorios.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await guardarImpuestoConfiguracion({
+        id: impuestoEditandoId || undefined,
+        empresa_id: empresaId,
+        impuesto_id: impuestoForm.impuestoId || null,
+        nombre: impuestoForm.nombre,
+        tipo: impuestoForm.tipo,
+        porcentaje: numero(impuestoForm.porcentaje),
+        cuenta_contable_id: impuestoForm.cuentaContableId || null,
+        aplica_compra: impuestoForm.aplicaCompra,
+        aplica_venta: impuestoForm.aplicaVenta,
+        proveedor_id: impuestoForm.proveedorId || null,
+        cliente_id: impuestoForm.clienteId || null,
+        activo: impuestoForm.activo,
+        observaciones: impuestoForm.observaciones || null,
+        metadatos: {
+          conexion_futura: [
+            "SAT",
+            "cuentas_por_pagar",
+            "cuentas_por_cobrar",
+            "proveedores",
+            "clientes",
+            "documentos_contables_revision",
+          ],
+        },
+      });
+
+      limpiarImpuestoForm(String(empresaId));
+      await cargarImpuestos(String(empresaId));
+      alert("Configuracion fiscal guardada.");
+    } catch (error) {
+      console.error("Error guardando impuesto:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function inactivarImpuesto(impuesto: ImpuestoConfiguracion) {
+    try {
+      validarEmpresaPermitida(impuesto.empresa_id, "inactivar impuestos");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    const motivo = window.prompt("Motivo para inactivar el impuesto:");
+    if (!motivo || motivo.trim().length < 5) {
+      alert("Debes indicar un motivo valido.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await inactivarImpuestoConfiguracion(
+        impuesto.id,
+        impuesto.empresa_id,
+        motivo.trim()
+      );
+      await cargarImpuestos(String(impuesto.empresa_id));
+      alert("Impuesto inactivado.");
+    } catch (error) {
+      console.error("Error inactivando impuesto:", error);
       alert(getErrorMessage(error));
     } finally {
       setLoading(false);
@@ -1799,6 +1988,280 @@ export default function ContabilidadPage() {
                   {cuenta.permite_movimientos ? "Permite movimientos" : "No mueve"}
                 </p>
                 <EstadoPill estado={cuenta.activo ? "activo" : "inactivo"} />
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  function renderImpuestos() {
+    return (
+      <div className="grid gap-8">
+        <section className="bg-cyan-500/10 border border-cyan-500/20 rounded-2xl p-5">
+          <h2 className="text-cyan-300 font-black text-sm uppercase">
+            Base fiscal
+          </h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Configura impuestos por empresa y tercero opcional. Esto no genera
+            asientos automaticos ni depende de SAT; deja preparada la conexion
+            futura con SAT, CxP, CxC, proveedores, clientes y documentos.
+          </p>
+        </section>
+
+        <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+            <BookOpen className="text-cyan-400" />
+            {impuestoEditandoId ? "Editar impuesto" : "Nuevo impuesto"}
+          </h2>
+
+          <div className="grid md:grid-cols-4 gap-5">
+            <Campo label="Empresa">
+              <select
+                value={impuestoForm.empresaId}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, empresaId: e.target.value })
+                }
+                className="input-control"
+              >
+                <option value="">Seleccionar empresa...</option>
+                {listaEmpresas.map((empresa) => (
+                  <option key={empresa.id} value={String(empresa.id)}>
+                    {empresa.nombre}
+                  </option>
+                ))}
+              </select>
+            </Campo>
+
+            <Campo label="Impuesto ID">
+              <input
+                value={impuestoForm.impuestoId}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, impuestoId: e.target.value })
+                }
+                className="input-control"
+                placeholder="Ej. IVA-CREDITO"
+              />
+            </Campo>
+
+            <Campo label="Nombre">
+              <input
+                value={impuestoForm.nombre}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, nombre: e.target.value })
+                }
+                className="input-control"
+                placeholder="IVA credito fiscal"
+              />
+            </Campo>
+
+            <Campo label="Tipo">
+              <select
+                value={impuestoForm.tipo}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, tipo: e.target.value })
+                }
+                className="input-control"
+              >
+                <option value="IVA">IVA</option>
+                <option value="ISR">ISR</option>
+                <option value="Retencion">Retencion</option>
+                <option value="Exento">Exento / no afecto</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </Campo>
+
+            <Campo label="Porcentaje">
+              <input
+                type="number"
+                value={impuestoForm.porcentaje}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, porcentaje: e.target.value })
+                }
+                className="input-control font-mono"
+                placeholder="12"
+              />
+            </Campo>
+
+            <Campo label="Cuenta contable opcional" className="md:col-span-2">
+              <select
+                value={impuestoForm.cuentaContableId}
+                onChange={(e) =>
+                  setImpuestoForm({
+                    ...impuestoForm,
+                    cuentaContableId: e.target.value,
+                  })
+                }
+                className="input-control"
+              >
+                <option value="">Sin cuenta asociada</option>
+                {cuentasParaMovimiento.map((cuenta) => (
+                  <option key={cuenta.id} value={String(cuenta.id)}>
+                    {cuenta.codigo} - {cuenta.nombre}
+                  </option>
+                ))}
+              </select>
+            </Campo>
+
+            <Campo label="Estado">
+              <select
+                value={impuestoForm.activo ? "activo" : "inactivo"}
+                onChange={(e) =>
+                  setImpuestoForm({
+                    ...impuestoForm,
+                    activo: e.target.value === "activo",
+                  })
+                }
+                className="input-control"
+              >
+                <option value="activo">Activo</option>
+                <option value="inactivo">Inactivo</option>
+              </select>
+            </Campo>
+
+            <Campo label="Proveedor ID opcional">
+              <input
+                value={impuestoForm.proveedorId}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, proveedorId: e.target.value })
+                }
+                className="input-control"
+                placeholder="Plan por proveedor"
+              />
+            </Campo>
+
+            <Campo label="Cliente ID opcional">
+              <input
+                value={impuestoForm.clienteId}
+                onChange={(e) =>
+                  setImpuestoForm({ ...impuestoForm, clienteId: e.target.value })
+                }
+                className="input-control"
+                placeholder="Plan por cliente"
+              />
+            </Campo>
+
+            <label className="flex items-center gap-3 text-sm text-gray-300 mt-8">
+              <input
+                type="checkbox"
+                checked={impuestoForm.aplicaCompra}
+                onChange={(e) =>
+                  setImpuestoForm({
+                    ...impuestoForm,
+                    aplicaCompra: e.target.checked,
+                  })
+                }
+              />
+              Aplica compra
+            </label>
+
+            <label className="flex items-center gap-3 text-sm text-gray-300 mt-8">
+              <input
+                type="checkbox"
+                checked={impuestoForm.aplicaVenta}
+                onChange={(e) =>
+                  setImpuestoForm({
+                    ...impuestoForm,
+                    aplicaVenta: e.target.checked,
+                  })
+                }
+              />
+              Aplica venta
+            </label>
+
+            <Campo label="Observaciones" className="md:col-span-4">
+              <input
+                value={impuestoForm.observaciones}
+                onChange={(e) =>
+                  setImpuestoForm({
+                    ...impuestoForm,
+                    observaciones: e.target.value,
+                  })
+                }
+                className="input-control"
+                placeholder="Regla fiscal, excepcion o criterio interno"
+              />
+            </Campo>
+          </div>
+
+          <div className="flex flex-wrap gap-3 mt-8">
+            <button
+              type="button"
+              onClick={guardarImpuesto}
+              disabled={loading}
+              className="bg-white text-black font-black px-8 py-4 rounded-2xl hover:bg-cyan-400 transition disabled:opacity-60"
+            >
+              Guardar impuesto
+            </button>
+            {impuestoEditandoId && (
+              <button
+                type="button"
+                onClick={() => limpiarImpuestoForm()}
+                className="bg-white/5 border border-white/10 text-gray-200 font-black px-8 py-4 rounded-2xl hover:bg-white/10 transition"
+              >
+                Cancelar edicion
+              </button>
+            )}
+          </div>
+        </section>
+
+        <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
+          <h2 className="text-xl font-black mb-5">Configuracion fiscal visible</h2>
+          <TablaVacia
+            visible={impuestosConfiguracion.length === 0}
+            texto="No hay impuestos configurados para esta empresa."
+          />
+          <div className="grid gap-3">
+            {impuestosConfiguracion.map((impuesto) => (
+              <div
+                key={impuesto.id}
+                className="border border-white/10 rounded-2xl p-4 grid xl:grid-cols-[1.4fr_1fr_1fr_auto] gap-4 items-center"
+              >
+                <div>
+                  <p className="font-black text-cyan-200">{impuesto.nombre}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    ID: {impuesto.impuesto_id || "interno"} | Tipo: {impuesto.tipo}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Proveedor: {impuesto.proveedor_id || "general"} | Cliente:{" "}
+                    {impuesto.cliente_id || "general"}
+                  </p>
+                </div>
+                <div className="text-sm text-gray-300">
+                  <p>{impuesto.porcentaje}%</p>
+                  <p>
+                    Compra: {impuesto.aplica_compra ? "si" : "no"} | Venta:{" "}
+                    {impuesto.aplica_venta ? "si" : "no"}
+                  </p>
+                </div>
+                <div className="text-sm text-gray-400">
+                  <p>
+                    Cuenta:{" "}
+                    {impuesto.catalogo_cuentas
+                      ? `${impuesto.catalogo_cuentas.codigo} - ${impuesto.catalogo_cuentas.nombre}`
+                      : "Sin cuenta"}
+                  </p>
+                  <EstadoPill estado={impuesto.activo ? "activo" : "inactivo"} />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <button
+                    type="button"
+                    onClick={() => cargarImpuestoParaEditar(impuesto)}
+                    className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black"
+                  >
+                    Editar
+                  </button>
+                  {impuesto.activo && (
+                    <button
+                      type="button"
+                      onClick={() => inactivarImpuesto(impuesto)}
+                      className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black"
+                    >
+                      Inactivar
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -2980,6 +3443,7 @@ export default function ContabilidadPage() {
 
     if (tabActiva === "movimientos") return renderMovimientosOperativos();
     if (tabActiva === "catalogo") return renderCatalogo();
+    if (tabActiva === "impuestos") return renderImpuestos();
     if (tabActiva === "documentos_revision") return renderDocumentosRevision();
     if (tabActiva === "periodos") return renderPeriodos();
     if (tabActiva === "asientos") return renderAsientos();

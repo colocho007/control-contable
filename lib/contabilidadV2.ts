@@ -106,6 +106,35 @@ export interface DistribucionDocumentoContable {
   catalogo_cuentas?: Pick<CatalogoCuenta, "codigo" | "nombre" | "tipo" | "naturaleza"> | null;
 }
 
+export type TipoImpuestoConfiguracion =
+  | "IVA"
+  | "ISR"
+  | "Retencion"
+  | "Exento"
+  | "Otro";
+
+export interface ImpuestoConfiguracion {
+  id: string | number;
+  creado_at: string | null;
+  actualizado_at: string | null;
+  empresa_id: number;
+  impuesto_id: string | null;
+  nombre: string;
+  tipo: TipoImpuestoConfiguracion | string;
+  porcentaje: number;
+  cuenta_contable_id: string | number | null;
+  aplica_compra: boolean;
+  aplica_venta: boolean;
+  proveedor_id: string | number | null;
+  cliente_id: string | number | null;
+  activo: boolean;
+  observaciones: string | null;
+  creado_por: string | null;
+  actualizado_por: string | null;
+  metadatos: ValorJsonAuditoria | null;
+  catalogo_cuentas?: Pick<CatalogoCuenta, "codigo" | "nombre" | "tipo" | "naturaleza"> | null;
+}
+
 export interface CrearCuentaContableParams {
   empresa_id?: number | null;
   codigo: string;
@@ -289,6 +318,28 @@ export interface ListarDistribucionDocumentoContableParams {
   documento_contable_id?: string | number;
 }
 
+export interface GuardarImpuestoConfiguracionParams {
+  id?: string | number;
+  empresa_id: number;
+  impuesto_id?: string | null;
+  nombre: string;
+  tipo: TipoImpuestoConfiguracion | string;
+  porcentaje: number;
+  cuenta_contable_id?: string | number | null;
+  aplica_compra?: boolean;
+  aplica_venta?: boolean;
+  proveedor_id?: string | number | null;
+  cliente_id?: string | number | null;
+  activo?: boolean;
+  observaciones?: string | null;
+  metadatos?: ValorJsonAuditoria | null;
+}
+
+export interface ListarImpuestosConfiguracionParams {
+  empresa_id: number;
+  activo?: boolean;
+}
+
 export interface CalcularBalanceComprobacionParams {
   empresa_id: number;
   fecha_desde?: string;
@@ -310,6 +361,9 @@ const COLUMNAS_DOCUMENTO_REVISION =
 const COLUMNAS_DISTRIBUCION_DOCUMENTO =
   "id,creado_at,actualizado_at,empresa_id,documento_contable_id,cuenta_id,descripcion,debito,credito,moneda,activo,creado_por,metadatos";
 const COLUMNAS_DISTRIBUCION_CON_CUENTA = `${COLUMNAS_DISTRIBUCION_DOCUMENTO},catalogo_cuentas(codigo,nombre,tipo,naturaleza)`;
+const COLUMNAS_IMPUESTO_CONFIGURACION =
+  "id,creado_at,actualizado_at,empresa_id,impuesto_id,nombre,tipo,porcentaje,cuenta_contable_id,aplica_compra,aplica_venta,proveedor_id,cliente_id,activo,observaciones,creado_por,actualizado_por,metadatos";
+const COLUMNAS_IMPUESTO_CON_CUENTA = `${COLUMNAS_IMPUESTO_CONFIGURACION},catalogo_cuentas(codigo,nombre,tipo,naturaleza)`;
 const LIMITE_PREDETERMINADO = 200;
 const LIMITE_MAXIMO = 1000;
 const TOLERANCIA_BALANCE = 0.005;
@@ -321,6 +375,13 @@ const ESTADOS_DOCUMENTO_CONTABLE: EstadoDocumentoContable[] = [
   "Contabilizado",
   "Rechazado",
   "Vencido",
+];
+const TIPOS_IMPUESTO_CONFIGURACION: TipoImpuestoConfiguracion[] = [
+  "IVA",
+  "ISR",
+  "Retencion",
+  "Exento",
+  "Otro",
 ];
 
 function errorSupabase(accion: string, error: { message?: string } | null) {
@@ -449,6 +510,10 @@ function normalizarDistribucionDocumento(data: unknown) {
   return data as DistribucionDocumentoContable;
 }
 
+function normalizarImpuestoConfiguracion(data: unknown) {
+  return data as ImpuestoConfiguracion;
+}
+
 function validarEstadoDocumentoContable(estado: string) {
   if (!ESTADOS_DOCUMENTO_CONTABLE.includes(estado as EstadoDocumentoContable)) {
     throw new Error("Estado de documento contable no valido.");
@@ -464,6 +529,24 @@ function validarMontoNoNegativo(valor: number | undefined | null, campo: string)
   }
 
   return monto;
+}
+
+function validarTipoImpuestoConfiguracion(tipo: string) {
+  const limpio = requerirTexto(tipo, "tipo");
+  if (!TIPOS_IMPUESTO_CONFIGURACION.includes(limpio as TipoImpuestoConfiguracion)) {
+    throw new Error("Tipo de impuesto no valido.");
+  }
+
+  return limpio as TipoImpuestoConfiguracion;
+}
+
+function validarPorcentajeImpuesto(valor: number) {
+  const porcentaje = numero(valor);
+  if (porcentaje < 0 || porcentaje > 100) {
+    throw new Error("El porcentaje de impuesto debe estar entre 0 y 100.");
+  }
+
+  return porcentaje;
 }
 
 export function documentoContableRequiereAlerta24h(
@@ -516,6 +599,43 @@ async function validarCuentasDetalle(
       );
     }
   });
+}
+
+async function validarCuentaImpuestoOpcional(
+  empresaId: number,
+  cuentaId?: string | number | null
+) {
+  if (cuentaId === null || cuentaId === undefined || cuentaId === "") {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("catalogo_cuentas")
+    .select("id,empresa_id,activo,permite_movimientos")
+    .eq("id", cuentaId)
+    .maybeSingle();
+
+  if (error) {
+    throw errorSupabase("No se pudo validar la cuenta fiscal", error);
+  }
+
+  if (!data) {
+    throw new Error("La cuenta fiscal no existe o no es accesible.");
+  }
+
+  if (data.activo !== true) {
+    throw new Error("La cuenta fiscal esta inactiva.");
+  }
+
+  if (data.permite_movimientos !== true) {
+    throw new Error("La cuenta fiscal no permite movimientos.");
+  }
+
+  if (data.empresa_id !== null && Number(data.empresa_id) !== empresaId) {
+    throw new Error("La cuenta fiscal no pertenece a la empresa indicada.");
+  }
+
+  return cuentaId;
 }
 
 async function validarLineasDistribucionDocumento(
@@ -1316,6 +1436,181 @@ export async function guardarDistribucionDocumentoContable(
   });
 
   return (data || []).map(normalizarDistribucionDocumento);
+}
+
+export async function listarImpuestosConfiguracion(
+  params: ListarImpuestosConfiguracionParams
+): Promise<ImpuestoConfiguracion[]> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+
+  let query: any = supabase
+    .from("impuestos_configuracion")
+    .select(COLUMNAS_IMPUESTO_CON_CUENTA)
+    .eq("empresa_id", empresaId);
+
+  if (params.activo !== undefined) {
+    query = query.eq("activo", params.activo);
+  }
+
+  const { data, error } = await query
+    .order("activo", { ascending: false })
+    .order("tipo", { ascending: true })
+    .order("nombre", { ascending: true });
+
+  if (error) {
+    throw errorSupabase("No se pudo listar la configuracion fiscal", error);
+  }
+
+  return (data || []) as ImpuestoConfiguracion[];
+}
+
+export async function guardarImpuestoConfiguracion(
+  params: GuardarImpuestoConfiguracionParams
+): Promise<ImpuestoConfiguracion> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+  const nombre = requerirTexto(params.nombre, "nombre");
+  const tipo = validarTipoImpuestoConfiguracion(params.tipo);
+  const porcentaje = validarPorcentajeImpuesto(params.porcentaje);
+  const cuentaContableId = await validarCuentaImpuestoOpcional(
+    empresaId,
+    params.cuenta_contable_id
+  );
+  const userId = await obtenerUsuarioIdActual();
+  const ahora = new Date().toISOString();
+  const esActualizacion =
+    params.id !== "" && params.id !== null && params.id !== undefined;
+
+  const payload = {
+    empresa_id: empresaId,
+    impuesto_id: texto(params.impuesto_id),
+    nombre,
+    tipo,
+    porcentaje,
+    cuenta_contable_id: cuentaContableId,
+    aplica_compra: params.aplica_compra ?? false,
+    aplica_venta: params.aplica_venta ?? false,
+    proveedor_id: params.proveedor_id ?? null,
+    cliente_id: params.cliente_id ?? null,
+    activo: params.activo ?? true,
+    observaciones: texto(params.observaciones),
+    actualizado_at: ahora,
+    actualizado_por: userId,
+    metadatos: {
+      ...(params.metadatos && typeof params.metadatos === "object" && !Array.isArray(params.metadatos)
+        ? params.metadatos
+        : {}),
+      conexion_sat_preparada: true,
+      depende_sat: false,
+      conexion_cxp_cxc_preparada: true,
+      asiento_automatico_creado: false,
+    },
+  };
+
+  const consulta = esActualizacion
+    ? supabase
+        .from("impuestos_configuracion")
+        .update(payload)
+        .eq("id", params.id)
+        .eq("empresa_id", empresaId)
+    : supabase.from("impuestos_configuracion").insert({
+        ...payload,
+        creado_por: userId,
+      });
+
+  const { data, error } = await consulta
+    .select(COLUMNAS_IMPUESTO_CON_CUENTA)
+    .single();
+
+  if (error) {
+    throw errorSupabase(
+      esActualizacion
+        ? "No se pudo actualizar la configuracion fiscal"
+        : "No se pudo crear la configuracion fiscal",
+      error
+    );
+  }
+
+  const impuesto = normalizarImpuestoConfiguracion(data);
+
+  await auditarSinBloquear({
+    empresa_id: impuesto.empresa_id,
+    modulo: "contabilidad_v2",
+    accion: esActualizacion
+      ? "actualizar_impuesto_configuracion"
+      : "crear_impuesto_configuracion",
+    entidad_tipo: "impuesto_configuracion",
+    entidad_id: impuesto.id,
+    estado_nuevo: impuesto.activo ? "activo" : "inactivo",
+    descripcion: "Configuracion fiscal guardada",
+    sensible: true,
+    metadatos: {
+      impuesto_id: impuesto.impuesto_id,
+      nombre: impuesto.nombre,
+      tipo: impuesto.tipo,
+      porcentaje: impuesto.porcentaje,
+      cuenta_contable_id: impuesto.cuenta_contable_id,
+      aplica_compra: impuesto.aplica_compra,
+      aplica_venta: impuesto.aplica_venta,
+      proveedor_id: impuesto.proveedor_id,
+      cliente_id: impuesto.cliente_id,
+      asiento_automatico_creado: false,
+    },
+  });
+
+  return impuesto;
+}
+
+export async function inactivarImpuestoConfiguracion(
+  id: string | number,
+  empresaIdValor: number,
+  motivo?: string | null
+): Promise<ImpuestoConfiguracion> {
+  if (id === "" || id === null || id === undefined) {
+    throw new Error("Debe indicar el impuesto a inactivar.");
+  }
+
+  const empresaId = validarEmpresaId(empresaIdValor);
+  const userId = await obtenerUsuarioIdActual();
+
+  const { data, error } = await supabase
+    .from("impuestos_configuracion")
+    .update({
+      activo: false,
+      actualizado_at: new Date().toISOString(),
+      actualizado_por: userId,
+      observaciones: texto(motivo),
+    })
+    .eq("id", id)
+    .eq("empresa_id", empresaId)
+    .select(COLUMNAS_IMPUESTO_CON_CUENTA)
+    .single();
+
+  if (error) {
+    throw errorSupabase("No se pudo inactivar la configuracion fiscal", error);
+  }
+
+  const impuesto = normalizarImpuestoConfiguracion(data);
+
+  await auditarSinBloquear({
+    empresa_id: impuesto.empresa_id,
+    modulo: "contabilidad_v2",
+    accion: "inactivar_impuesto_configuracion",
+    entidad_tipo: "impuesto_configuracion",
+    entidad_id: impuesto.id,
+    estado_anterior: "activo",
+    estado_nuevo: "inactivo",
+    motivo: texto(motivo),
+    descripcion: "Configuracion fiscal inactivada",
+    sensible: true,
+    metadatos: {
+      impuesto_id: impuesto.impuesto_id,
+      nombre: impuesto.nombre,
+      tipo: impuesto.tipo,
+      porcentaje: impuesto.porcentaje,
+    },
+  });
+
+  return impuesto;
 }
 
 async function validarDistribucionDocumentoContableLista(
