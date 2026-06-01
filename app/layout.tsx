@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import InactivitySessionGuard from "../components/InactivitySessionGuard";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,7 +14,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body>{children}</body>
+      <body>
+        {children}
+        <InactivitySessionGuard />
+      </body>
     </html>
   );
 }
