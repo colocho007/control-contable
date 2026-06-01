@@ -17,7 +17,6 @@ import {
 } from "../../lib/funcionesOperativas";
 import {
   Building2,
-  CheckCircle2,
   Loader2,
   Plus,
   RefreshCcw,
@@ -156,6 +155,20 @@ function funcionOperativa(rol: string) {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Error inesperado.";
+}
+
+function formatearFechaHora(valor: string | null | undefined) {
+  if (!valor) return "-";
+  const fecha = new Date(valor);
+  if (Number.isNaN(fecha.getTime())) return "-";
+
+  return fecha.toLocaleString("es-GT", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function AdminPage() {
@@ -342,6 +355,16 @@ export default function AdminPage() {
   }
 
   function cargarUsuarioParaEditar(usuarioId: string) {
+    if (!usuarioId) {
+      setUsuarioEditando("");
+      setRolSeleccionado("");
+      setActivoSeleccionado(true);
+      setEmpresasSeleccionadas([]);
+      setModulosSeleccionados([]);
+      setFuncionesSeleccionadas({});
+      return;
+    }
+
     const usuario = usuarios.find((u) => u.id === usuarioId);
     if (!usuario) return;
 
@@ -482,7 +505,7 @@ export default function AdminPage() {
     ) as Record<number, string[]>;
 
     setProcesando(true);
-    const toastId = toast.loading("Guardando usuario, empresas y modulos...");
+    const toastId = toast.loading("Guardando usuario, empresas, modulos y funciones...");
     let auditoriaCompleta = true;
 
     try {
@@ -960,6 +983,20 @@ export default function AdminPage() {
                 <CardResumen icon={<UserCog size={22} />} label="Trabajando ahora" value={resumen.trabajando} color="text-yellow-400" />
               </section>
 
+              <section className="mb-10">
+                <PanelResumenUsuariosOperativos
+                  usuarios={usuarios}
+                  asignaciones={asignacionesActivas}
+                  modulos={modulosAsignadosActivos}
+                  funciones={funcionesActivas}
+                  empresas={empresas}
+                  catalogoModulos={modulos}
+                  trabajos={trabajosActivos}
+                  usuarioSeleccionado={usuarioEditando}
+                  onSeleccionar={cargarUsuarioParaEditar}
+                />
+              </section>
+
               <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-green-500">
                 <div className="flex items-start justify-between gap-4 mb-6">
                   <div>
@@ -1019,10 +1056,15 @@ export default function AdminPage() {
               </section>
 
               <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-cyan-500">
-                <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2">
-                  <ShieldCheck size={16} className="text-cyan-400" />
-                  Usuario, rol, empresas y modulos asignados
-                </h2>
+                <div className="mb-6">
+                  <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-cyan-400" />
+                    Editar usuario: rol, estado, empresas, modulos y funciones
+                  </h2>
+                  <p className="text-xs text-gray-500 mt-2">
+                    El Administrador Operativo solo asigna acceso operativo. La activacion global de modulos y la salud tecnica viven en Monitoreo del Sistema.
+                  </p>
+                </div>
                 <div className="grid md:grid-cols-3 gap-4 mb-6">
                   <select
                     value={usuarioEditando}
@@ -1060,9 +1102,17 @@ export default function AdminPage() {
 
                 {usuarioEditando && (
                   <div className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4 mb-6">
-                    <p className="text-xs text-gray-500 uppercase font-black mb-1">Funcion operativa</p>
+                    <p className="text-xs text-gray-500 uppercase font-black mb-1">Rol del sistema</p>
                     <p className="text-cyan-200 text-sm">{funcionOperativa(rolSeleccionado)}</p>
-                    <p className="text-cyan-400 text-xs font-mono break-all mt-2">{usuarioEditando}</p>
+                    <div className="mt-3 grid md:grid-cols-4 gap-2 text-xs">
+                      <span className="chip">Empresas: {empresasSeleccionadas.length}</span>
+                      <span className="chip">Modulos: {modulosSeleccionados.length}</span>
+                      <span className="chip">
+                        Funciones: {Object.values(funcionesSeleccionadas).flat().length}
+                      </span>
+                      <span className="chip">{activoSeleccionado ? "Activo" : "Inactivo"}</span>
+                    </div>
+                    <p className="text-cyan-400 text-xs font-mono break-all mt-3">{usuarioEditando}</p>
                   </div>
                 )}
 
@@ -1126,7 +1176,7 @@ export default function AdminPage() {
 
                 <div className="mb-5">
                   <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
-                    Funciones operativas por empresa
+                    Funciones operativas reales por usuario y empresa
                   </h3>
                   <p className="text-xs text-gray-500">
                     Estas funciones controlan firma, autorizacion, pagos, revision y lectura. No sustituyen rol, empresa ni modulo: los complementan.
@@ -1180,7 +1230,7 @@ export default function AdminPage() {
                   className="w-full h-14 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   {procesando ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
-                  Guardar usuario, empresas y modulos
+                  Guardar usuario, empresas, modulos y funciones
                 </button>
               </section>
 
@@ -1283,6 +1333,178 @@ function CardResumen({
         <p className="text-xs font-black uppercase tracking-widest">{label}</p>
       </div>
       <h2 className="text-4xl font-black mt-4">{value}</h2>
+    </div>
+  );
+}
+
+function PanelResumenUsuariosOperativos({
+  usuarios,
+  asignaciones,
+  modulos,
+  funciones,
+  empresas,
+  catalogoModulos,
+  trabajos,
+  usuarioSeleccionado,
+  onSeleccionar,
+}: {
+  usuarios: Perfil[];
+  asignaciones: UsuarioEmpresa[];
+  modulos: UsuarioModulo[];
+  funciones: UsuarioFuncionOperativa[];
+  empresas: Empresa[];
+  catalogoModulos: ModuloSistema[];
+  trabajos: TrabajoActivo[];
+  usuarioSeleccionado: string;
+  onSeleccionar: (usuarioId: string) => void;
+}) {
+  const empresasPorId = new Map(empresas.map((empresa) => [Number(empresa.id), empresa.nombre]));
+  const modulosPorClave = new Map(catalogoModulos.map((modulo) => [modulo.clave, modulo.nombre]));
+  const trabajosPorUsuario = new Map(trabajos.map((trabajo) => [trabajo.usuario_id, trabajo]));
+
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-6">
+        <div>
+          <h2 className="text-sm font-black uppercase tracking-widest text-gray-400">
+            Matriz operativa por usuario
+          </h2>
+          <p className="text-xs text-gray-500 mt-2">
+            Vista rapida de rol, estado, empresas, modulos, funciones operativas y trabajo visible.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="chip">Sin modulos globales</span>
+          <span className="chip">Sin salud tecnica</span>
+          <span className="chip">Sin errores internos</span>
+        </div>
+      </div>
+
+      <div className="grid xl:grid-cols-2 gap-4 max-h-[620px] overflow-y-auto pr-2">
+        {usuarios.map((usuario) => {
+          const empresasUsuario = asignaciones
+            .filter((item) => item.usuario_id === usuario.id)
+            .map((item) => empresasPorId.get(Number(item.empresa_id)) || `Empresa ${item.empresa_id}`);
+          const modulosUsuario = modulos
+            .filter((item) => item.usuario_id === usuario.id)
+            .map((item) => modulosPorClave.get(item.modulo_clave) || item.modulo_clave);
+          const funcionesUsuario = funciones.filter((item) => item.usuario_id === usuario.id);
+          const trabajo = trabajosPorUsuario.get(usuario.id);
+          const seleccionado = usuarioSeleccionado === usuario.id;
+
+          return (
+            <article
+              key={usuario.id}
+              className={`rounded-2xl border p-4 bg-[#0f172a]/70 ${
+                seleccionado ? "border-cyan-400/70" : "border-white/10"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-black text-white">{usuario.nombre}</p>
+                  <p className="text-xs text-gray-500 mt-1 break-all">{usuario.correo || usuario.id}</p>
+                </div>
+                <span
+                  className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${
+                    usuario.activo === false
+                      ? "border-red-400/30 bg-red-500/10 text-red-200"
+                      : "border-green-400/30 bg-green-500/10 text-green-200"
+                  }`}
+                >
+                  {usuario.activo === false ? "Inactivo" : "Activo"}
+                </span>
+              </div>
+
+              <div className="mt-4 grid md:grid-cols-2 gap-3 text-xs">
+                <ResumenLista titulo="Rol" items={[usuario.rol || "sin_rol"]} color="text-cyan-200" />
+                <ResumenLista
+                  titulo="Funcion base"
+                  items={[funcionOperativa(usuario.rol)]}
+                  color="text-gray-300"
+                />
+                <ResumenLista titulo="Empresas" items={empresasUsuario} color="text-cyan-200" />
+                <ResumenLista titulo="Modulos" items={modulosUsuario} color="text-purple-200" />
+              </div>
+
+              <div className="mt-3">
+                <ResumenLista
+                  titulo="Funciones operativas por empresa"
+                  items={funcionesUsuario.map((item) => {
+                    const empresa = empresasPorId.get(Number(item.empresa_id)) || `Empresa ${item.empresa_id}`;
+                    return `${empresa}: ${item.funcion}`;
+                  })}
+                  color="text-green-200"
+                />
+              </div>
+
+              <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div className="text-xs">
+                  <p className="font-black uppercase tracking-widest text-gray-500">
+                    Trabajo actual
+                  </p>
+                  <p className={trabajo ? "text-yellow-200 mt-1" : "text-gray-500 mt-1"}>
+                    {trabajo
+                      ? `${trabajo.modulo} | ${trabajo.titulo || trabajo.ruta || "Activo"}`
+                      : "Sin trabajo activo visible"}
+                  </p>
+                  {trabajo && (
+                    <p className="text-gray-500 mt-1">{formatearFechaHora(trabajo.actualizado_at)}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onSeleccionar(usuario.id)}
+                  className="h-10 px-4 rounded-xl bg-cyan-500/10 border border-cyan-400/30 text-cyan-200 text-xs font-black uppercase hover:bg-cyan-500/20"
+                >
+                  Editar permisos
+                </button>
+              </div>
+            </article>
+          );
+        })}
+        {usuarios.length === 0 && (
+          <p className="text-gray-500 text-sm">No hay usuarios visibles para administrar.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResumenLista({
+  titulo,
+  items,
+  color,
+}: {
+  titulo: string;
+  items: string[];
+  color: string;
+}) {
+  const visibles = items.filter(Boolean);
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+        {titulo}
+      </p>
+      {visibles.length ? (
+        <div className="flex flex-wrap gap-1.5">
+          {visibles.slice(0, 8).map((item, index) => (
+            <span
+              key={`${titulo}-${item}-${index}`}
+              className={`rounded-lg bg-white/[0.04] px-2 py-1 text-[11px] font-bold ${color}`}
+            >
+              {item}
+            </span>
+          ))}
+          {visibles.length > 8 && (
+            <span className="rounded-lg bg-white/[0.04] px-2 py-1 text-[11px] font-bold text-gray-400">
+              +{visibles.length - 8}
+            </span>
+          )}
+        </div>
+      ) : (
+        <p className="text-xs text-gray-600">Sin asignacion</p>
+      )}
     </div>
   );
 }
