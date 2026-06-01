@@ -1,27 +1,32 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarUsuarioActivo } from "../../lib/validarUsuarioActivo";
+import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import {
   registrarAuditoriaEvento,
   type RegistrarAuditoriaEventoParams,
 } from "../../lib/auditoria";
 import {
-  Loader2,
-  ShieldCheck,
-  Users,
   Building2,
+  CheckCircle2,
+  Loader2,
   Plus,
-  Trash2,
   RefreshCcw,
+  ShieldCheck,
+  UserCog,
+  Users,
+  XCircle,
 } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 
 interface Perfil {
   id: string;
   nombre: string;
+  correo?: string | null;
   rol: string;
   activo?: boolean | null;
 }
@@ -31,16 +36,6 @@ interface Empresa {
   nombre: string;
 }
 
-interface UsuarioEmpresa {
-  id: number;
-  usuario_id: string;
-  empresa_id: number;
-  activo?: boolean | null;
-  usuario?: string | null;
-  rol?: string | null;
-  empresa?: string | null;
-}
-
 interface ModuloSistema {
   id: number;
   clave: string;
@@ -48,11 +43,33 @@ interface ModuloSistema {
   activo: boolean;
   orden: number;
 }
+
+interface UsuarioEmpresa {
+  id: number;
+  usuario_id: string;
+  empresa_id: number;
+  activo?: boolean | null;
+  perfiles?: { nombre?: string | null; rol?: string | null } | null;
+  empresas?: { nombre?: string | null } | null;
+}
+
 interface UsuarioModulo {
   id: number;
   usuario_id: string;
   modulo_clave: string;
-  activo: boolean;
+  activo?: boolean | null;
+}
+
+interface TrabajoActivo {
+  id: string | number;
+  usuario_id: string;
+  empresa_id: number | null;
+  modulo: string;
+  ruta: string | null;
+  titulo: string | null;
+  actualizado_at: string | null;
+  perfiles?: { nombre?: string | null; rol?: string | null } | null;
+  empresas?: { nombre?: string | null } | null;
 }
 
 interface AsignacionEmpresaExistente {
@@ -67,8 +84,7 @@ interface AsignacionModuloExistente {
   activo?: boolean | null;
 }
 
-const ROLES_ADMIN = ["admin"];
-const MOTIVO_CAMBIO_PERMISOS = "Actualización de permisos desde Admin";
+const ROLES_ADMIN_OPERATIVO = ["admin", "jefe", "supervisor"];
 const ROLES_SISTEMA = [
   "admin",
   "jefe",
@@ -81,10 +97,7 @@ const ROLES_SISTEMA = [
   "iniciador_gestion",
   "empleado",
 ];
-
-function estadoPerfil(rol: string | null | undefined, activo: boolean | null | undefined) {
-  return `rol=${rol || "sin_rol"};activo=${activo === false ? "inactivo" : "activo"}`;
-}
+const MOTIVO_CAMBIO_PERMISOS = "Actualizacion desde Administrador Operativo";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
@@ -102,41 +115,58 @@ function valoresUnicosTexto(valores: string[]) {
   );
 }
 
+function estadoPerfil(rol: string | null | undefined, activo: boolean | null | undefined) {
+  return `rol=${rol || "sin_rol"};activo=${activo === false ? "inactivo" : "activo"}`;
+}
+
+function funcionOperativa(rol: string) {
+  const normalizado = normalizarRol(rol);
+  const funciones: Record<string, string> = {
+    admin: "Administracion operativa completa",
+    jefe: "Supervision y administracion operativa",
+    supervisor: "Gestion operativa multiempresa",
+    contador: "Registro y revision contable",
+    tesorero: "Gestion financiera y pagos",
+    firmante: "Firma y autorizacion",
+    firmante_oc: "Firma de ordenes de compra",
+    iniciador: "Inicio de gestiones",
+    iniciador_gestion: "Inicio de ordenes y gestiones",
+    empleado: "Operacion asignada",
+  };
+  return funciones[normalizado] || "Funcion operativa no definida";
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Error inesperado.";
+}
+
 export default function AdminPage() {
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [usuarios, setUsuarios] = useState<Perfil[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [asignaciones, setAsignaciones] = useState<UsuarioEmpresa[]>([]);
   const [modulos, setModulos] = useState<ModuloSistema[]>([]);
-
   const [usuarioModulos, setUsuarioModulos] = useState<UsuarioModulo[]>([]);
-const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
+  const [trabajosActivos, setTrabajosActivos] = useState<TrabajoActivo[]>([]);
 
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [cargandoAdmin, setCargandoAdmin] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
   const [procesando, setProcesando] = useState(false);
 
-const [usuarioEditando, setUsuarioEditando] = useState("");
-const [rolSeleccionado, setRolSeleccionado] = useState("");
-const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState<number[]>([]);
-const [activoSeleccionado, setActivoSeleccionado] = useState(true);
+  const [usuarioEditando, setUsuarioEditando] = useState("");
+  const [rolSeleccionado, setRolSeleccionado] = useState("");
+  const [activoSeleccionado, setActivoSeleccionado] = useState(true);
+  const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState<number[]>([]);
+  const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
 
-async function registrarAuditoriaAdmin(
-  params: RegistrarAuditoriaEventoParams,
-  contexto: string
-) {
-  try {
-    await registrarAuditoriaEvento(params);
-    return true;
-  } catch (error) {
-    console.error(
-      `El cambio de ${contexto} se guardó, pero no se pudo registrar la auditoría:`,
-      error
-    );
-    return false;
-  }
-}
+  const [nuevoUsuario, setNuevoUsuario] = useState({
+    nombre: "",
+    correo: "",
+    uid: "",
+    rol: "empleado",
+  });
 
   useEffect(() => {
     iniciar();
@@ -147,801 +177,535 @@ async function registrarAuditoriaAdmin(
       setValidandoAcceso(true);
       setCargandoAdmin(false);
 
-     const validacion = await validarUsuarioActivo();
+      const validacion = await validarUsuarioActivo();
 
-if (!validacion.ok) {
-  if (validacion.motivo === "usuario_inactivo") {
-    toast.error("Tu usuario está inactivo. Contacta al administrador.");
-  }
+      if (!validacion.ok) {
+        if (validacion.motivo === "usuario_inactivo") {
+          toast.error("Tu usuario esta inactivo. Contacta al administrador.");
+        }
 
-  window.location.href = "/login";
-  return;
-}
+        window.location.href = "/login";
+        return;
+      }
 
-const perfil = validacion.perfil!;
+      const perfil = validacion.perfil!;
+      const rolActual = normalizarRol(perfil.rol);
 
-setPerfilActual(perfil);
+      if (!ROLES_ADMIN_OPERATIVO.includes(rolActual)) {
+        toast.error("No tienes permiso para entrar al Administrador Operativo");
+        window.location.href = "/dashboard";
+        return;
+      }
 
-const rolActual = (perfil?.rol || "").trim().toLowerCase();
+      const idsPermitidos = await obtenerEmpresasPermitidas(
+        validacion.user!.id,
+        perfil.rol || ""
+      );
 
-if (!ROLES_ADMIN.includes(rolActual)) {
-  toast.error("No tienes permiso para entrar al panel administrador");
-  window.location.href = "/dashboard";
-  return;
-}
-
-setAutorizado(true);
-setValidandoAcceso(false);
-setCargandoAdmin(true);
-await cargarDatos();
+      setPerfilActual({ ...perfil, rol: rolActual });
+      setEmpresasPermitidasIds(idsPermitidos);
+      setAutorizado(true);
+      setValidandoAcceso(false);
+      setCargandoAdmin(true);
+      await cargarDatos(idsPermitidos);
     } catch (error) {
       console.error(error);
-      toast.error("Error cargando panel administrador");
+      toast.error("Error cargando Administrador Operativo");
     } finally {
       setCargandoAdmin(false);
+      setValidandoAcceso(false);
     }
   }
 
-function cargarUsuarioParaEditar(usuarioId: string) {
-  const usuario = usuarios.find((u) => u.id === usuarioId);
-
-  if (!usuario) return;
-
-  const empresasDelUsuario = asignaciones
-    .filter((a) => a.usuario_id === usuarioId)
-    .map((a) => Number(a.empresa_id));
-
-  setUsuarioEditando(usuario.id);
-  setRolSeleccionado(usuario.rol || "empleado");
-  setActivoSeleccionado(usuario.activo !== false);
-  setEmpresasSeleccionadas(valoresUnicosNumericos(empresasDelUsuario));
- const modulosDelUsuario = usuarioModulos
-  .filter((m) => m.usuario_id === usuarioId && m.activo)
-  .map((m) => m.modulo_clave);
-
-setModulosSeleccionados(valoresUnicosTexto(modulosDelUsuario)); 
-}
-
-function toggleEmpresa(empresaId: number) {
-  setEmpresasSeleccionadas((prev) =>
-    prev.includes(empresaId)
-      ? prev.filter((id) => id !== empresaId)
-      : [...prev, empresaId]
-  );
-}
-
-function toggleModulo(moduloClave: string) {
-  setModulosSeleccionados((prev) =>
-    prev.includes(moduloClave)
-      ? prev.filter((clave) => clave !== moduloClave)
-      : [...prev, moduloClave]
-  );
-}
-
-function seleccionarTodosLosModulos() {
-  setModulosSeleccionados(
-    modulos
-      .filter((m) => m.clave !== "admin" && m.activo)
-      .map((m) => m.clave)
-  );
-}
-
-function limpiarModulosSeleccionados() {
-  setModulosSeleccionados([]);
-}
-function seleccionarTodasLasEmpresas() {
-  setEmpresasSeleccionadas(valoresUnicosNumericos(empresas.map((empresa) => Number(empresa.id))));
-}
-
-function limpiarEmpresasSeleccionadas() {
-  setEmpresasSeleccionadas([]);
-}
-async function guardarPermisosUsuario() {
-  if (!usuarioEditando) {
-    toast.error("Selecciona un usuario");
-    return;
-  }
-
-  if (!rolSeleccionado) {
-    toast.error("Selecciona un rol");
-    return;
-  }
-
-  const rolNormalizado = normalizarRol(rolSeleccionado);
-  if (!ROLES_SISTEMA.includes(rolNormalizado)) {
-    toast.error("El rol seleccionado no es valido");
-    return;
-  }
-
-  if (!perfilActual?.id) {
-    toast.error("No se pudo identificar al administrador actual");
-    return;
-  }
-
-  if (usuarioEditando === perfilActual.id && (!activoSeleccionado || rolNormalizado !== "admin")) {
-    toast.error("No puedes quitar tu propio acceso administrativo");
-    return;
-  }
-
-  const usuarioExiste = usuarios.some((usuario) => usuario.id === usuarioEditando);
-  if (!usuarioExiste) {
-    toast.error("El usuario seleccionado no existe o ya no esta disponible");
-    return;
-  }
-
-  const empresasValidas = new Set(empresas.map((empresa) => Number(empresa.id)));
-  const empresasUnicas = valoresUnicosNumericos(empresasSeleccionadas);
-  const empresaInvalida = empresasUnicas.find(
-    (empresaId) => !empresasValidas.has(empresaId)
-  );
-
-  if (empresaInvalida !== undefined) {
-    toast.error("Hay una empresa seleccionada que no esta permitida");
-    return;
-  }
-
-  const modulosValidos = new Set(
-    modulos
-      .filter((modulo) => modulo.clave !== "admin" && modulo.activo)
-      .map((modulo) => modulo.clave)
-  );
-  const modulosUnicos = valoresUnicosTexto(modulosSeleccionados);
-  const moduloInvalido = modulosUnicos.find(
-    (moduloClave) => !modulosValidos.has(moduloClave)
-  );
-
-  if (moduloInvalido) {
-    toast.error("Hay un modulo seleccionado que no esta activo o permitido");
-    return;
-  }
-
-  setProcesando(true);
-  const toastId = toast.loading("Guardando permisos del usuario...");
-  let auditoriaCompleta = true;
-
-  try {
-    const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
-    const empresasSeleccionadasNormalizadas = empresasUnicas;
-    const modulosSeleccionadosNormalizados = modulosUnicos;
-    const datosAuditoria = {
-      actualizado_at: new Date().toISOString(),
-      actualizado_por: perfilActual.id,
-      motivo_cambio: MOTIVO_CAMBIO_PERMISOS,
-    };
-
-    const { error: rolError } = await supabase
-      .from("perfiles")
-      .update({
-        rol: rolNormalizado,
-        activo: activoSeleccionado,
-      })
-      .eq("id", usuarioEditando);
-
-    if (rolError) throw rolError;
-
-    const perfilActualizado =
-      !usuarioAnterior ||
-      normalizarRol(usuarioAnterior.rol) !== rolNormalizado ||
-      usuarioAnterior.activo !== activoSeleccionado;
-
-    if (perfilActualizado) {
-      const auditoriaPerfil = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "actualizar_perfil",
-          entidad_tipo: "perfil",
-          entidad_id: usuarioEditando,
-          estado_anterior: usuarioAnterior
-            ? estadoPerfil(usuarioAnterior.rol, usuarioAnterior.activo)
-            : null,
-          estado_nuevo: estadoPerfil(rolNormalizado, activoSeleccionado),
-          descripcion: "Perfil actualizado desde panel admin",
-          sensible: true,
-          metadatos: {
-            nombre: usuarioAnterior?.nombre ?? null,
-            campos_cambiados: {
-              ...(normalizarRol(usuarioAnterior?.rol) !== rolNormalizado && {
-                rol: {
-                  anterior: usuarioAnterior?.rol ?? null,
-                  nuevo: rolNormalizado,
-                },
-              }),
-              ...(usuarioAnterior?.activo !== activoSeleccionado && {
-                activo: {
-                  anterior: usuarioAnterior?.activo ?? null,
-                  nuevo: activoSeleccionado,
-                },
-              }),
-            },
-          },
-          origen: "panel_admin",
-        },
-        "perfil"
+  async function registrarAuditoriaAdmin(
+    params: RegistrarAuditoriaEventoParams,
+    contexto: string
+  ) {
+    try {
+      await registrarAuditoriaEvento(params);
+      return true;
+    } catch (error) {
+      console.error(
+        `El cambio de ${contexto} se guardo, pero no se pudo registrar la auditoria:`,
+        error
       );
-
-      auditoriaCompleta = auditoriaCompleta && auditoriaPerfil;
+      return false;
     }
-
-    const { data: empresasExistentes, error: empresasExistentesError } =
-      await supabase
-      .from("usuario_empresas")
-      .select("id,empresa_id,activo")
-      .eq("usuario_id", usuarioEditando);
-
-    if (empresasExistentesError) throw empresasExistentesError;
-
-    const empresasSeleccionadasSet = new Set(empresasSeleccionadasNormalizadas);
-    const empresasExistentesNormalizadas =
-      (empresasExistentes || []) as AsignacionEmpresaExistente[];
-    const empresasExistentesPorEmpresa = new Map<
-      number,
-      AsignacionEmpresaExistente[]
-    >();
-
-    for (const asignacion of empresasExistentesNormalizadas) {
-      const empresaId = Number(asignacion.empresa_id);
-      const asignacionesEmpresa = empresasExistentesPorEmpresa.get(empresaId) || [];
-      asignacionesEmpresa.push(asignacion);
-      empresasExistentesPorEmpresa.set(empresaId, asignacionesEmpresa);
-    }
-
-    const idsEmpresaCanonicosSeleccionados = new Set<number>();
-
-    for (const empresaId of empresasSeleccionadasSet) {
-      const asignacionesEmpresa = empresasExistentesPorEmpresa.get(empresaId) || [];
-      const canonica =
-        asignacionesEmpresa.find((asignacion) => asignacion.activo === true) ||
-        asignacionesEmpresa[0];
-
-      if (canonica) {
-        idsEmpresaCanonicosSeleccionados.add(canonica.id);
-      }
-    }
-
-    const asignacionesEmpresaParaActivar = empresasExistentesNormalizadas.filter(
-      (asignacion) =>
-        asignacion.activo !== true &&
-        idsEmpresaCanonicosSeleccionados.has(asignacion.id)
-    );
-    const asignacionesEmpresaParaDesactivar = empresasExistentesNormalizadas.filter(
-      (asignacion) =>
-        asignacion.activo !== false &&
-        (!empresasSeleccionadasSet.has(Number(asignacion.empresa_id)) ||
-          !idsEmpresaCanonicosSeleccionados.has(asignacion.id))
-    );
-    const idsEmpresasParaActivar = asignacionesEmpresaParaActivar.map(
-      (asignacion) => asignacion.id
-    );
-    const idsEmpresasParaDesactivar = asignacionesEmpresaParaDesactivar.map(
-      (asignacion) => asignacion.id
-    );
-
-    if (idsEmpresasParaActivar.length > 0) {
-      const { error: activarEmpresasError } = await supabase
-        .from("usuario_empresas")
-        .update({ activo: true, ...datosAuditoria })
-        .in("id", idsEmpresasParaActivar);
-
-      if (activarEmpresasError) {
-        throw new Error(
-          "No se pudieron activar las empresas seleccionadas: " +
-            activarEmpresasError.message
-        );
-      }
-
-      const auditoriaEmpresasActivadas = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "activar_empresas_usuario",
-          entidad_tipo: "usuario_empresas",
-          entidad_id: usuarioEditando,
-          descripcion: "Empresas activadas para usuario",
-          sensible: true,
-          metadatos: {
-            asignacion_ids: idsEmpresasParaActivar,
-            empresa_ids: asignacionesEmpresaParaActivar.map(
-              (asignacion) => Number(asignacion.empresa_id)
-            ),
-            conteo: idsEmpresasParaActivar.length,
-          },
-          origen: "panel_admin",
-        },
-        "activacion de empresas asignadas"
-      );
-
-      auditoriaCompleta =
-        auditoriaCompleta && auditoriaEmpresasActivadas;
-    }
-
-    if (idsEmpresasParaDesactivar.length > 0) {
-      const { error: desactivarEmpresasError } = await supabase
-        .from("usuario_empresas")
-        .update({ activo: false, ...datosAuditoria })
-        .in("id", idsEmpresasParaDesactivar);
-
-      if (desactivarEmpresasError) {
-        throw new Error(
-          "No se pudieron desactivar las empresas retiradas: " +
-            desactivarEmpresasError.message
-        );
-      }
-
-      const auditoriaEmpresasDesactivadas = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "desactivar_empresas_usuario",
-          entidad_tipo: "usuario_empresas",
-          entidad_id: usuarioEditando,
-          descripcion: "Empresas desactivadas para usuario",
-          sensible: true,
-          metadatos: {
-            asignacion_ids: idsEmpresasParaDesactivar,
-            empresa_ids: asignacionesEmpresaParaDesactivar.map(
-              (asignacion) => Number(asignacion.empresa_id)
-            ),
-            conteo: idsEmpresasParaDesactivar.length,
-          },
-          origen: "panel_admin",
-        },
-        "desactivacion de empresas asignadas"
-      );
-
-      auditoriaCompleta =
-        auditoriaCompleta && auditoriaEmpresasDesactivadas;
-    }
-
-    const empresasRegistradasSet = new Set(
-      Array.from(empresasExistentesPorEmpresa.keys())
-    );
-    const nuevasAsignaciones = empresasSeleccionadasNormalizadas
-      .filter((empresaId) => !empresasRegistradasSet.has(Number(empresaId)))
-      .map((empresaId) => ({
-        usuario_id: usuarioEditando,
-        empresa_id: empresaId,
-        activo: true,
-        ...datosAuditoria,
-      }));
-
-    if (nuevasAsignaciones.length > 0) {
-      const { error: insertError } = await supabase
-        .from("usuario_empresas")
-        .insert(nuevasAsignaciones);
-
-      if (insertError) {
-        throw new Error(
-          "No se pudieron insertar las nuevas empresas asignadas: " +
-            insertError.message
-        );
-      }
-
-      const auditoriaEmpresasInsertadas = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "insertar_empresas_usuario",
-          entidad_tipo: "usuario_empresas",
-          entidad_id: usuarioEditando,
-          descripcion: "Nuevas empresas asignadas a usuario",
-          sensible: true,
-          metadatos: {
-            empresa_ids: nuevasAsignaciones.map(
-              (asignacion) => Number(asignacion.empresa_id)
-            ),
-            conteo: nuevasAsignaciones.length,
-          },
-          origen: "panel_admin",
-        },
-        "insercion de empresas asignadas"
-      );
-
-      auditoriaCompleta =
-        auditoriaCompleta && auditoriaEmpresasInsertadas;
-    }
-
-    const { data: modulosExistentes, error: modulosExistentesError } =
-      await supabase
-        .from("usuario_modulos")
-        .select("id,modulo_clave,activo")
-        .eq("usuario_id", usuarioEditando);
-
-    if (modulosExistentesError) throw modulosExistentesError;
-
-    const modulosSeleccionadosSet = new Set(modulosSeleccionadosNormalizados);
-    const modulosExistentesNormalizados =
-      (modulosExistentes || []) as AsignacionModuloExistente[];
-    const modulosExistentesPorClave = new Map<
-      string,
-      AsignacionModuloExistente[]
-    >();
-
-    for (const modulo of modulosExistentesNormalizados) {
-      const modulosClave = modulosExistentesPorClave.get(modulo.modulo_clave) || [];
-      modulosClave.push(modulo);
-      modulosExistentesPorClave.set(modulo.modulo_clave, modulosClave);
-    }
-
-    const idsModuloCanonicosSeleccionados = new Set<number>();
-
-    for (const moduloClave of modulosSeleccionadosSet) {
-      const modulosClave = modulosExistentesPorClave.get(moduloClave) || [];
-      const canonico =
-        modulosClave.find((modulo) => modulo.activo === true) || modulosClave[0];
-
-      if (canonico) {
-        idsModuloCanonicosSeleccionados.add(canonico.id);
-      }
-    }
-
-    const asignacionesModuloParaActivar = modulosExistentesNormalizados.filter(
-      (modulo) =>
-        modulo.activo !== true &&
-        idsModuloCanonicosSeleccionados.has(modulo.id)
-    );
-    const asignacionesModuloParaDesactivar = modulosExistentesNormalizados.filter(
-      (modulo) =>
-        modulo.activo !== false &&
-        (!modulosSeleccionadosSet.has(modulo.modulo_clave) ||
-          !idsModuloCanonicosSeleccionados.has(modulo.id))
-    );
-    const idsModulosParaActivar = asignacionesModuloParaActivar.map(
-      (modulo) => modulo.id
-    );
-    const idsModulosParaDesactivar = asignacionesModuloParaDesactivar.map(
-      (modulo) => modulo.id
-    );
-
-    if (idsModulosParaActivar.length > 0) {
-      const { error: activarModulosError } = await supabase
-        .from("usuario_modulos")
-        .update({ activo: true, ...datosAuditoria })
-        .in("id", idsModulosParaActivar);
-
-      if (activarModulosError) {
-        throw new Error(
-          "No se pudieron activar los modulos seleccionados: " +
-            activarModulosError.message
-        );
-      }
-
-      const auditoriaModulosActivados = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "activar_modulos_usuario",
-          entidad_tipo: "usuario_modulos",
-          entidad_id: usuarioEditando,
-          descripcion: "Modulos activados para usuario",
-          sensible: true,
-          metadatos: {
-            asignacion_ids: idsModulosParaActivar,
-            modulo_claves: asignacionesModuloParaActivar.map(
-              (modulo) => modulo.modulo_clave
-            ),
-            conteo: idsModulosParaActivar.length,
-          },
-          origen: "panel_admin",
-        },
-        "activacion de modulos asignados"
-      );
-
-      auditoriaCompleta = auditoriaCompleta && auditoriaModulosActivados;
-    }
-
-    if (idsModulosParaDesactivar.length > 0) {
-      const { error: desactivarModulosError } = await supabase
-        .from("usuario_modulos")
-        .update({ activo: false, ...datosAuditoria })
-        .in("id", idsModulosParaDesactivar);
-
-      if (desactivarModulosError) {
-        throw new Error(
-          "No se pudieron desactivar los modulos retirados: " +
-            desactivarModulosError.message
-        );
-      }
-
-      const auditoriaModulosDesactivados = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "desactivar_modulos_usuario",
-          entidad_tipo: "usuario_modulos",
-          entidad_id: usuarioEditando,
-          descripcion: "Modulos desactivados para usuario",
-          sensible: true,
-          metadatos: {
-            asignacion_ids: idsModulosParaDesactivar,
-            modulo_claves: asignacionesModuloParaDesactivar.map(
-              (modulo) => modulo.modulo_clave
-            ),
-            conteo: idsModulosParaDesactivar.length,
-          },
-          origen: "panel_admin",
-        },
-        "desactivacion de modulos asignados"
-      );
-
-      auditoriaCompleta =
-        auditoriaCompleta && auditoriaModulosDesactivados;
-    }
-
-    const modulosRegistradosSet = new Set(
-      Array.from(modulosExistentesPorClave.keys())
-    );
-    const nuevosModulos = modulosSeleccionadosNormalizados
-      .filter((moduloClave) => !modulosRegistradosSet.has(moduloClave))
-      .map((moduloClave) => ({
-        usuario_id: usuarioEditando,
-        modulo_clave: moduloClave,
-        activo: true,
-        ...datosAuditoria,
-      }));
-
-    if (nuevosModulos.length > 0) {
-      const { error: insertModulosError } = await supabase
-        .from("usuario_modulos")
-        .insert(nuevosModulos);
-
-      if (insertModulosError) {
-        throw new Error(
-          "No se pudieron insertar los nuevos modulos asignados: " +
-            insertModulosError.message
-        );
-      }
-
-      const auditoriaModulosInsertados = await registrarAuditoriaAdmin(
-        {
-          modulo: "admin",
-          accion: "insertar_modulos_usuario",
-          entidad_tipo: "usuario_modulos",
-          entidad_id: usuarioEditando,
-          descripcion: "Nuevos modulos asignados a usuario",
-          sensible: true,
-          metadatos: {
-            modulo_claves: nuevosModulos.map(
-              (modulo) => modulo.modulo_clave
-            ),
-            conteo: nuevosModulos.length,
-          },
-          origen: "panel_admin",
-        },
-        "insercion de modulos asignados"
-      );
-
-      auditoriaCompleta =
-        auditoriaCompleta && auditoriaModulosInsertados;
-    }
-
-    await cargarDatos();
-
-   setUsuarioEditando("");
-setRolSeleccionado("");
-setActivoSeleccionado(true);
-setEmpresasSeleccionadas([]);
-setModulosSeleccionados([]);
-
-    if (auditoriaCompleta) {
-      toast.success("Permisos actualizados correctamente", { id: toastId });
-    } else {
-      toast.error(
-        "Permisos guardados, pero no se pudo registrar toda la auditoría.",
-        { id: toastId }
-      );
-    }
-  } catch (error: any) {
-    console.error(error);
-    toast.error(error.message || "Error al guardar permisos", { id: toastId });
-  } finally {
-    setProcesando(false);
   }
-}
 
+  async function cargarDatos(idsPermitidos = empresasPermitidasIds) {
+    const ids = valoresUnicosNumericos(idsPermitidos);
 
-  async function cargarDatos() {
- const [
-  resUsuarios,
-  resEmpresas,
-  resAsignaciones,
-  resModulos,
-  resUsuarioModulos,
-] = await Promise.all([
-  supabase
-  .from("perfiles")
-  .select("id,nombre,rol,activo")
-  .order("nombre", { ascending: true }),
+    if (!ids.length) {
+      setUsuarios([]);
+      setEmpresas([]);
+      setAsignaciones([]);
+      setModulos([]);
+      setUsuarioModulos([]);
+      setTrabajosActivos([]);
+      return;
+    }
 
+    const [
+      resUsuarios,
+      resEmpresas,
+      resAsignaciones,
+      resModulos,
+      resUsuarioModulos,
+      resTrabajos,
+    ] = await Promise.all([
+      supabase
+        .from("perfiles")
+        .select("id,nombre,correo,rol,activo")
+        .order("nombre", { ascending: true }),
       supabase
         .from("empresas")
         .select("id,nombre")
+        .in("id", ids)
         .order("nombre", { ascending: true }),
-
       supabase
         .from("usuario_empresas")
-        .select(`
-          id,
-          usuario_id,
-          empresa_id,
-          activo,
-          perfiles:usuario_id (
-            nombre,
-            rol
-          ),
-          empresas:empresa_id (
-            nombre
-          )
-        `)
-        .or("activo.eq.true,activo.is.null")
+        .select(
+          "id,usuario_id,empresa_id,activo,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+        )
+        .in("empresa_id", ids)
         .order("id", { ascending: false }),
-        supabase
-  .from("modulos_sistema")
-  .select("id,clave,nombre,activo,orden")
-  .order("orden", { ascending: true }),
-
-  supabase
-  .from("usuario_modulos")
-  .select("id,usuario_id,modulo_clave,activo"),
+      supabase
+        .from("modulos_sistema")
+        .select("id,clave,nombre,activo,orden")
+        .eq("activo", true)
+        .order("orden", { ascending: true }),
+      supabase
+        .from("usuario_modulos")
+        .select("id,usuario_id,modulo_clave,activo"),
+      supabase
+        .from("borradores_trabajo")
+        .select(
+          "id,usuario_id,empresa_id,modulo,ruta,titulo,actualizado_at,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+        )
+        .in("empresa_id", ids)
+        .eq("estado", "activo")
+        .order("actualizado_at", { ascending: false })
+        .limit(50),
     ]);
 
     if (resUsuarios.error) throw resUsuarios.error;
-    
     if (resEmpresas.error) throw resEmpresas.error;
     if (resAsignaciones.error) throw resAsignaciones.error;
     if (resModulos.error) throw resModulos.error;
     if (resUsuarioModulos.error) throw resUsuarioModulos.error;
 
-    setUsuarios(resUsuarios.data || []);
-    setEmpresas(resEmpresas.data || []);
-    setModulos(resModulos.data || []);
-    setUsuarioModulos(resUsuarioModulos.data || []);
+    if (resTrabajos.error) {
+      console.warn("No se pudieron cargar usuarios trabajando:", resTrabajos.error);
+      setTrabajosActivos([]);
+    } else {
+      setTrabajosActivos((resTrabajos.data || []) as TrabajoActivo[]);
+    }
 
-    const limpias = (resAsignaciones.data || []).map((item: any) => ({
-      id: item.id,
-      usuario_id: item.usuario_id,
-      empresa_id: item.empresa_id,
-      activo: item.activo !== false,
-      usuario: item.perfiles?.nombre || "Usuario sin nombre",
-      rol: item.perfiles?.rol || "Sin rol",
-      empresa: item.empresas?.nombre || "Empresa sin nombre",
-    }));
-
-    setAsignaciones(limpias);
-  }
-async function quitarAsignacion(id: number) {
-  if (!perfilActual?.id) {
-    toast.error("No se pudo identificar al administrador actual");
-    return;
+    setUsuarios((resUsuarios.data || []) as Perfil[]);
+    setEmpresas((resEmpresas.data || []) as Empresa[]);
+    setAsignaciones((resAsignaciones.data || []) as UsuarioEmpresa[]);
+    setModulos(((resModulos.data || []) as ModuloSistema[]).filter((m) => m.clave !== "admin"));
+    setUsuarioModulos((resUsuarioModulos.data || []) as UsuarioModulo[]);
   }
 
-  const confirmar = window.confirm(
-    "¿Quitar esta empresa del usuario? La asignación quedará inactiva."
-  );
+  function cargarUsuarioParaEditar(usuarioId: string) {
+    const usuario = usuarios.find((u) => u.id === usuarioId);
+    if (!usuario) return;
 
-  if (!confirmar) return;
+    const empresasDelUsuario = asignaciones
+      .filter((a) => a.usuario_id === usuarioId && a.activo !== false)
+      .map((a) => Number(a.empresa_id));
 
-  setProcesando(true);
-  const asignacionRetirada = asignaciones.find((asignacion) => asignacion.id === id);
-  const toastId = toast.loading("Quitando asignación...");
+    const modulosDelUsuario = usuarioModulos
+      .filter((m) => m.usuario_id === usuarioId && m.activo !== false)
+      .map((m) => m.modulo_clave);
 
-  try {
-    const { error } = await supabase
-      .from("usuario_empresas")
-      .update({
-        activo: false,
+    setUsuarioEditando(usuario.id);
+    setRolSeleccionado(normalizarRol(usuario.rol) || "empleado");
+    setActivoSeleccionado(usuario.activo !== false);
+    setEmpresasSeleccionadas(valoresUnicosNumericos(empresasDelUsuario));
+    setModulosSeleccionados(valoresUnicosTexto(modulosDelUsuario));
+  }
+
+  function toggleEmpresa(empresaId: number) {
+    setEmpresasSeleccionadas((prev) =>
+      prev.includes(empresaId)
+        ? prev.filter((id) => id !== empresaId)
+        : [...prev, empresaId]
+    );
+  }
+
+  function toggleModulo(moduloClave: string) {
+    setModulosSeleccionados((prev) =>
+      prev.includes(moduloClave)
+        ? prev.filter((clave) => clave !== moduloClave)
+        : [...prev, moduloClave]
+    );
+  }
+
+  async function crearUsuarioOperativo() {
+    if (!nuevoUsuario.nombre.trim() || !nuevoUsuario.correo.trim() || !nuevoUsuario.uid.trim()) {
+      toast.error("Completa nombre, correo y UID de Supabase Auth");
+      return;
+    }
+
+    setProcesando(true);
+    const toastId = toast.loading("Creando usuario operativo...");
+
+    try {
+      const respuesta = await fetch("/api/admin/perfiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nuevoUsuario),
+      });
+
+      const resultado = await respuesta.json().catch(() => ({}));
+      if (!respuesta.ok) {
+        throw new Error(resultado?.error || "No se pudo crear el usuario.");
+      }
+
+      setNuevoUsuario({ nombre: "", correo: "", uid: "", rol: "empleado" });
+      await cargarDatos();
+      toast.success(resultado?.advertencia || "Usuario creado correctamente", {
+        id: toastId,
+      });
+    } catch (error) {
+      toast.error(getErrorMessage(error), { id: toastId });
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function guardarPermisosUsuario() {
+    if (!usuarioEditando) {
+      toast.error("Selecciona un usuario");
+      return;
+    }
+
+    const rolNormalizado = normalizarRol(rolSeleccionado);
+    if (!ROLES_SISTEMA.includes(rolNormalizado)) {
+      toast.error("El rol seleccionado no es valido");
+      return;
+    }
+
+    if (!perfilActual?.id) {
+      toast.error("No se pudo identificar al operador actual");
+      return;
+    }
+
+    if (
+      usuarioEditando === perfilActual.id &&
+      (!activoSeleccionado || rolNormalizado !== "admin")
+    ) {
+      toast.error("No puedes quitar tu propio acceso administrativo");
+      return;
+    }
+
+    const empresasValidas = new Set(empresas.map((empresa) => Number(empresa.id)));
+    const empresasUnicas = valoresUnicosNumericos(empresasSeleccionadas);
+    const empresaInvalida = empresasUnicas.find((empresaId) => !empresasValidas.has(empresaId));
+    if (empresaInvalida !== undefined) {
+      toast.error("Hay una empresa seleccionada fuera del alcance permitido");
+      return;
+    }
+
+    const modulosValidos = new Set(modulos.map((modulo) => modulo.clave));
+    const modulosUnicos = valoresUnicosTexto(modulosSeleccionados);
+    const moduloInvalido = modulosUnicos.find((moduloClave) => !modulosValidos.has(moduloClave));
+    if (moduloInvalido) {
+      toast.error("Hay un modulo seleccionado que no es valido");
+      return;
+    }
+
+    setProcesando(true);
+    const toastId = toast.loading("Guardando usuario, empresas y modulos...");
+    let auditoriaCompleta = true;
+
+    try {
+      const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
+      const datosAuditoria = {
         actualizado_at: new Date().toISOString(),
         actualizado_por: perfilActual.id,
         motivo_cambio: MOTIVO_CAMBIO_PERMISOS,
-      })
-      .eq("id", id);
+      };
+
+      const { error: perfilError } = await supabase
+        .from("perfiles")
+        .update({ rol: rolNormalizado, activo: activoSeleccionado })
+        .eq("id", usuarioEditando);
+
+      if (perfilError) throw perfilError;
+
+      if (
+        !usuarioAnterior ||
+        normalizarRol(usuarioAnterior.rol) !== rolNormalizado ||
+        usuarioAnterior.activo !== activoSeleccionado
+      ) {
+        auditoriaCompleta =
+          (await registrarAuditoriaAdmin(
+            {
+              modulo: "admin-operativo",
+              accion: "actualizar_usuario_operativo",
+              entidad_tipo: "perfil",
+              entidad_id: usuarioEditando,
+              estado_anterior: usuarioAnterior
+                ? estadoPerfil(usuarioAnterior.rol, usuarioAnterior.activo)
+                : null,
+              estado_nuevo: estadoPerfil(rolNormalizado, activoSeleccionado),
+              descripcion: "Usuario actualizado desde Administrador Operativo",
+              sensible: true,
+              metadatos: {
+                nombre: usuarioAnterior?.nombre ?? null,
+                funcion_operativa: funcionOperativa(rolNormalizado),
+              },
+              origen: "admin_operativo",
+            },
+            "usuario operativo"
+          )) && auditoriaCompleta;
+      }
+
+      await sincronizarEmpresasUsuario(
+        usuarioEditando,
+        empresasUnicas,
+        datosAuditoria,
+        (ok) => {
+          auditoriaCompleta = auditoriaCompleta && ok;
+        }
+      );
+      await sincronizarModulosUsuario(
+        usuarioEditando,
+        modulosUnicos,
+        datosAuditoria,
+        (ok) => {
+          auditoriaCompleta = auditoriaCompleta && ok;
+        }
+      );
+
+      await cargarDatos();
+      setUsuarioEditando("");
+      setRolSeleccionado("");
+      setActivoSeleccionado(true);
+      setEmpresasSeleccionadas([]);
+      setModulosSeleccionados([]);
+
+      if (auditoriaCompleta) {
+        toast.success("Administrador Operativo actualizado", { id: toastId });
+      } else {
+        toast.error("Cambios guardados, pero fallo parte de la auditoria", {
+          id: toastId,
+        });
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(getErrorMessage(error), { id: toastId });
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function sincronizarEmpresasUsuario(
+    usuarioId: string,
+    empresasSeleccionadasNormalizadas: number[],
+    datosAuditoria: Record<string, string>,
+    registrarResultado: (ok: boolean) => void
+  ) {
+    const { data, error } = await supabase
+      .from("usuario_empresas")
+      .select("id,empresa_id,activo")
+      .eq("usuario_id", usuarioId)
+      .in("empresa_id", empresasPermitidasIds);
 
     if (error) throw error;
 
-    const auditoriaRegistrada = await registrarAuditoriaAdmin(
-      {
-        empresa_id: asignacionRetirada?.empresa_id,
-        modulo: "admin",
-        accion: "retirar_empresa_usuario",
-        entidad_tipo: "usuario_empresas",
-        entidad_id: asignacionRetirada?.usuario_id ?? id,
-        estado_anterior: "activo",
-        estado_nuevo: "inactivo",
-        descripcion: "Empresa retirada de usuario",
-        sensible: true,
-        metadatos: {
-          asignacion_id: id,
-          usuario_id: asignacionRetirada?.usuario_id ?? null,
-        },
-        origen: "panel_admin",
-      },
-      "retiro de empresa"
-    );
+    const existentes = (data || []) as AsignacionEmpresaExistente[];
+    const seleccionadas = new Set(empresasSeleccionadasNormalizadas);
+    const existentesPorEmpresa = new Map<number, AsignacionEmpresaExistente[]>();
 
-    await cargarDatos();
-
-    if (auditoriaRegistrada) {
-      toast.success("Asignación retirada correctamente", { id: toastId });
-    } else {
-      toast.error(
-        "Asignación retirada, pero no se pudo registrar la auditoría.",
-        { id: toastId }
-      );
+    for (const asignacion of existentes) {
+      const empresaId = Number(asignacion.empresa_id);
+      const grupo = existentesPorEmpresa.get(empresaId) || [];
+      grupo.push(asignacion);
+      existentesPorEmpresa.set(empresaId, grupo);
     }
-  } catch (error: any) {
-    console.error(error);
-    toast.error(error.message || "Error al quitar asignación", {
-      id: toastId,
-    });
-  } finally {
-    setProcesando(false);
+
+    const idsCanonicosSeleccionados = new Set<number>();
+    for (const empresaId of seleccionadas) {
+      const grupo = existentesPorEmpresa.get(empresaId) || [];
+      const canonica = grupo.find((item) => item.activo === true) || grupo[0];
+      if (canonica) idsCanonicosSeleccionados.add(canonica.id);
+    }
+
+    const activar = existentes.filter(
+      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+    );
+    const desactivar = existentes.filter(
+      (item) =>
+        item.activo !== false &&
+        (!seleccionadas.has(Number(item.empresa_id)) ||
+          !idsCanonicosSeleccionados.has(item.id))
+    );
+    const nuevas = empresasSeleccionadasNormalizadas
+      .filter((empresaId) => !existentesPorEmpresa.has(Number(empresaId)))
+      .map((empresaId) => ({
+        usuario_id: usuarioId,
+        empresa_id: empresaId,
+        activo: true,
+        ...datosAuditoria,
+      }));
+
+    if (activar.length) {
+      const { error: activarError } = await supabase
+        .from("usuario_empresas")
+        .update({ activo: true, ...datosAuditoria })
+        .in("id", activar.map((item) => item.id));
+      if (activarError) throw activarError;
+    }
+
+    if (desactivar.length) {
+      const { error: desactivarError } = await supabase
+        .from("usuario_empresas")
+        .update({ activo: false, ...datosAuditoria })
+        .in("id", desactivar.map((item) => item.id));
+      if (desactivarError) throw desactivarError;
+    }
+
+    if (nuevas.length) {
+      const { error: insertarError } = await supabase
+        .from("usuario_empresas")
+        .insert(nuevas);
+      if (insertarError) throw insertarError;
+    }
+
+    if (activar.length || desactivar.length || nuevas.length) {
+      const ok = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin-operativo",
+          accion: "sincronizar_empresas_usuario",
+          entidad_tipo: "usuario_empresas",
+          entidad_id: usuarioId,
+          descripcion: "Empresas de usuario sincronizadas desde Administrador Operativo",
+          sensible: true,
+          metadatos: {
+            activadas: activar.map((item) => Number(item.empresa_id)),
+            desactivadas: desactivar.map((item) => Number(item.empresa_id)),
+            insertadas: nuevas.map((item) => Number(item.empresa_id)),
+          },
+          origen: "admin_operativo",
+        },
+        "empresas de usuario"
+      );
+      registrarResultado(ok);
+    }
   }
-}
- async function cambiarEstadoModulo(modulo: ModuloSistema) {
-  setProcesando(true);
 
-  const nuevoEstado = !modulo.activo;
-  const toastId = toast.loading(
-    nuevoEstado ? "Activando módulo..." : "Desactivando módulo..."
-  );
-
-  try {
-    const { error } = await supabase
-      .from("modulos_sistema")
-      .update({ activo: nuevoEstado })
-      .eq("id", modulo.id);
+  async function sincronizarModulosUsuario(
+    usuarioId: string,
+    modulosSeleccionadosNormalizados: string[],
+    datosAuditoria: Record<string, string>,
+    registrarResultado: (ok: boolean) => void
+  ) {
+    const { data, error } = await supabase
+      .from("usuario_modulos")
+      .select("id,modulo_clave,activo")
+      .eq("usuario_id", usuarioId);
 
     if (error) throw error;
 
-    const auditoriaRegistrada = await registrarAuditoriaAdmin(
-      {
-        modulo: "admin",
-        accion: "actualizar_estado_modulo",
-        entidad_tipo: "modulo_sistema",
-        entidad_id: modulo.id,
-        estado_anterior: modulo.activo ? "activo" : "inactivo",
-        estado_nuevo: nuevoEstado ? "activo" : "inactivo",
-        descripcion: "Estado global de módulo actualizado",
-        sensible: true,
-        metadatos: {
-          clave: modulo.clave,
-          nombre: modulo.nombre,
-        },
-        origen: "panel_admin",
-      },
-      "estado global del módulo"
-    );
+    const existentes = (data || []) as AsignacionModuloExistente[];
+    const seleccionados = new Set(modulosSeleccionadosNormalizados);
+    const existentesPorClave = new Map<string, AsignacionModuloExistente[]>();
 
-    setModulos((prev) =>
-      prev.map((m) =>
-        m.id === modulo.id ? { ...m, activo: nuevoEstado } : m
-      )
-    );
-
-    if (auditoriaRegistrada) {
-      toast.success(
-        nuevoEstado
-          ? "Módulo activado correctamente"
-          : "Módulo desactivado correctamente",
-        { id: toastId }
-      );
-    } else {
-      toast.error(
-        "El estado del módulo cambió, pero no se pudo registrar la auditoría.",
-        { id: toastId }
-      );
+    for (const modulo of existentes) {
+      const grupo = existentesPorClave.get(modulo.modulo_clave) || [];
+      grupo.push(modulo);
+      existentesPorClave.set(modulo.modulo_clave, grupo);
     }
-  } catch (error: any) {
-    console.error(error);
-    toast.error(error.message || "Error al cambiar estado del módulo", {
-      id: toastId,
-    });
-  } finally {
-    setProcesando(false);
-  }
-}
 
-  const resumen = useMemo(() => {
-    return {
-      usuarios: usuarios.length,
+    const idsCanonicosSeleccionados = new Set<number>();
+    for (const moduloClave of seleccionados) {
+      const grupo = existentesPorClave.get(moduloClave) || [];
+      const canonico = grupo.find((item) => item.activo === true) || grupo[0];
+      if (canonico) idsCanonicosSeleccionados.add(canonico.id);
+    }
+
+    const activar = existentes.filter(
+      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+    );
+    const desactivar = existentes.filter(
+      (item) =>
+        item.activo !== false &&
+        (!seleccionados.has(item.modulo_clave) ||
+          !idsCanonicosSeleccionados.has(item.id))
+    );
+    const nuevos = modulosSeleccionadosNormalizados
+      .filter((moduloClave) => !existentesPorClave.has(moduloClave))
+      .map((moduloClave) => ({
+        usuario_id: usuarioId,
+        modulo_clave: moduloClave,
+        activo: true,
+        ...datosAuditoria,
+      }));
+
+    if (activar.length) {
+      const { error: activarError } = await supabase
+        .from("usuario_modulos")
+        .update({ activo: true, ...datosAuditoria })
+        .in("id", activar.map((item) => item.id));
+      if (activarError) throw activarError;
+    }
+
+    if (desactivar.length) {
+      const { error: desactivarError } = await supabase
+        .from("usuario_modulos")
+        .update({ activo: false, ...datosAuditoria })
+        .in("id", desactivar.map((item) => item.id));
+      if (desactivarError) throw desactivarError;
+    }
+
+    if (nuevos.length) {
+      const { error: insertarError } = await supabase
+        .from("usuario_modulos")
+        .insert(nuevos);
+      if (insertarError) throw insertarError;
+    }
+
+    if (activar.length || desactivar.length || nuevos.length) {
+      const ok = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin-operativo",
+          accion: "sincronizar_modulos_usuario",
+          entidad_tipo: "usuario_modulos",
+          entidad_id: usuarioId,
+          descripcion: "Modulos de usuario sincronizados desde Administrador Operativo",
+          sensible: true,
+          metadatos: {
+            activados: activar.map((item) => item.modulo_clave),
+            desactivados: desactivar.map((item) => item.modulo_clave),
+            insertados: nuevos.map((item) => item.modulo_clave),
+          },
+          origen: "admin_operativo",
+        },
+        "modulos de usuario"
+      );
+      registrarResultado(ok);
+    }
+  }
+
+  const usuariosActivos = usuarios.filter((usuario) => usuario.activo !== false);
+  const usuariosInactivos = usuarios.filter((usuario) => usuario.activo === false);
+  const asignacionesActivas = asignaciones.filter((item) => item.activo !== false);
+  const modulosAsignadosActivos = usuarioModulos.filter((item) => item.activo !== false);
+
+  const resumen = useMemo(
+    () => ({
+      activos: usuariosActivos.length,
+      inactivos: usuariosInactivos.length,
       empresas: empresas.length,
-      asignaciones: asignaciones.length,
-    };
-  }, [usuarios, empresas, asignaciones]);
+      trabajando: trabajosActivos.length,
+    }),
+    [empresas.length, trabajosActivos.length, usuariosActivos.length, usuariosInactivos.length]
+  );
 
   if (validandoAcceso || !autorizado) {
     return (
@@ -964,9 +728,7 @@ async function quitarAsignacion(id: number) {
           },
         }}
       />
-
       <Sidebar />
-
       <main className="flex-1 p-8 overflow-y-auto">
         <div className="max-w-7xl mx-auto">
           <header className="mb-10 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
@@ -975,26 +737,22 @@ async function quitarAsignacion(id: number) {
                 <div className="w-12 h-12 rounded-2xl bg-cyan-500 flex items-center justify-center text-black">
                   <ShieldCheck size={28} />
                 </div>
-
                 <div>
                   <h1 className="text-5xl font-black tracking-tight">
-                    Panel Administrador
+                    Administrador Operativo
                   </h1>
                   <p className="text-gray-400 text-sm mt-1">
-                    Gestión de usuarios, empresas y permisos multiempresa
+                    Usuarios, empresas asignadas, modulos asignados y estado operativo
                   </p>
                 </div>
               </div>
-
               <p className="text-xs text-gray-500">
-                Operador: {perfilActual?.nombre} | Rol:{" "}
-                {perfilActual?.rol?.toUpperCase()}
+                Operador: {perfilActual?.nombre} | Rol: {perfilActual?.rol?.toUpperCase()}
               </p>
             </div>
-
             {!cargandoAdmin && (
               <button
-                onClick={cargarDatos}
+                onClick={() => cargarDatos()}
                 disabled={procesando}
                 className="h-12 px-5 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-sm font-bold text-gray-300 flex items-center gap-2 disabled:opacity-50"
               >
@@ -1007,366 +765,202 @@ async function quitarAsignacion(id: number) {
           {cargandoAdmin ? (
             <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
               <Loader2 className="animate-spin mr-2" />
-              Cargando datos administrativos...
+              Cargando Administrador Operativo...
             </section>
           ) : (
             <>
-          <section className="grid md:grid-cols-4 gap-5 mb-10">
-            <CardResumen
-              icon={<Users size={22} />}
-              label="Usuarios"
-              value={resumen.usuarios}
-              color="text-cyan-400"
-            />
-<CardResumen
-  icon={<Building2 size={22} />}
-  label="Módulos activos"
-  value={modulos.filter((m) => m.clave !== "admin" && m.activo).length}
-  color="text-purple-400"
-/>
+              <section className="grid md:grid-cols-4 gap-5 mb-10">
+                <CardResumen icon={<Users size={22} />} label="Usuarios activos" value={resumen.activos} color="text-green-400" />
+                <CardResumen icon={<XCircle size={22} />} label="Usuarios inactivos" value={resumen.inactivos} color="text-red-400" />
+                <CardResumen icon={<Building2 size={22} />} label="Empresas permitidas" value={resumen.empresas} color="text-cyan-400" />
+                <CardResumen icon={<UserCog size={22} />} label="Trabajando ahora" value={resumen.trabajando} color="text-yellow-400" />
+              </section>
 
-            <CardResumen
-              icon={<Building2 size={22} />}
-              label="Empresas"
-              value={resumen.empresas}
-              color="text-green-400"
-            />
-
-            <CardResumen
-              icon={<ShieldCheck size={22} />}
-              label="Asignaciones"
-              value={resumen.asignaciones}
-              color="text-yellow-400"
-            />
-          </section>
-
-          <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-purple-500">
-  <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2">
-    <ShieldCheck size={16} className="text-purple-400" />
-    Activar / desactivar módulos del sistema
-  </h2>
-
-  <p className="text-sm text-gray-500 mb-6">
-   Estos módulos controlan qué partes comerciales de Control+ estarán disponibles.
-El Panel Admin no se puede desactivar desde aquí para evitar perder el acceso.
-  </p>
-
-  <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
-    {modulos
-  .filter((modulo) => modulo.clave !== "admin")
-  .map((modulo) => (
-      <button
-        key={modulo.id}
-        type="button"
-        onClick={() => cambiarEstadoModulo(modulo)}
-        disabled={procesando}
-        className={`text-left rounded-2xl border p-5 transition-all disabled:opacity-50 ${
-          modulo.activo
-            ? "border-green-500/30 bg-green-500/10 text-green-400"
-            : "border-red-500/30 bg-red-500/10 text-red-400"
-        }`}
-      >
-        <p className="text-[10px] font-black uppercase mb-2 opacity-70">
-          {modulo.clave}
-        </p>
-
-        <h3 className="text-lg font-black text-white">
-          {modulo.nombre}
-        </h3>
-
-        <p className="text-xs mt-3 font-bold">
-          Estado: {modulo.activo ? "Activo" : "Inactivo"}
-        </p>
-
-        <p className="text-[10px] mt-2 opacity-60">
-          Click para {modulo.activo ? "desactivar" : "activar"}
-        </p>
-      </button>
-    ))}
-
-   {modulos.filter((modulo) => modulo.clave !== "admin").length === 0 && (
-  <p className="text-gray-500 text-sm">
-    No hay módulos comerciales registrados.
-  </p>
-)}
-  </div>
-</section>
-
-         <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-cyan-500">
-  <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2">
-    <ShieldCheck size={16} className="text-cyan-400" />
-    Editar usuario, rol y empresas
-  </h2>
-
-  <div className="grid md:grid-cols-3 gap-4 mb-6">
-    <select
-      value={usuarioEditando}
-      onChange={(e) => cargarUsuarioParaEditar(e.target.value)}
-      className="input-custom"
-    >
-      <option value="">Seleccionar usuario...</option>
-      {usuarios.map((usuario) => (
-        <option key={usuario.id} value={usuario.id}>
-          {usuario.nombre} — {usuario.rol}
-        </option>
-      ))}
-    </select>
-
- <select
-  value={rolSeleccionado}
-  onChange={(e) => setRolSeleccionado(e.target.value)}
-  className="input-custom"
-  disabled={!usuarioEditando}
->
-  <option value="">Seleccionar rol...</option>
-  {ROLES_SISTEMA.map((rol) => (
-    <option key={rol} value={rol}>
-      {rol}
-    </option>
-  ))}
-</select>
-
-<select
-  value={activoSeleccionado ? "activo" : "inactivo"}
-  onChange={(e) => setActivoSeleccionado(e.target.value === "activo")}
-  className="input-custom"
-  disabled={!usuarioEditando}
->
-  <option value="activo">Usuario activo</option>
-  <option value="inactivo">Usuario inactivo</option>
-</select>
-  </div>
-
-  {usuarioEditando && (
-    <div className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4 mb-6">
-      <p className="text-xs text-gray-500 uppercase font-black mb-1">
-        ID del trabajador / usuario
-      </p>
-
-      <p className="text-cyan-400 text-xs font-mono break-all">
-        {usuarioEditando}
-      </p>
-    </div>
-  )}
-
-  <div className="flex flex-wrap gap-3 mb-5">
-    <button
-      type="button"
-      onClick={seleccionarTodasLasEmpresas}
-      disabled={!usuarioEditando || procesando}
-      className="px-4 py-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-xs font-black uppercase disabled:opacity-50"
-    >
-      Seleccionar todas
-    </button>
-
-    <button
-      type="button"
-      onClick={limpiarEmpresasSeleccionadas}
-      disabled={!usuarioEditando || procesando}
-      className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-black uppercase disabled:opacity-50"
-    >
-      Limpiar selección
-    </button>
-
-    <div className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase text-gray-400">
-      Empresas seleccionadas: {empresasSeleccionadas.length}
-    </div>
-  </div>
-
-  <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6 max-h-[320px] overflow-y-auto pr-2">
-    {empresas.map((empresa) => {
-      const activa = empresasSeleccionadas.includes(Number(empresa.id));
-
-      return (
-        <button
-          key={empresa.id}
-          type="button"
-          onClick={() => toggleEmpresa(Number(empresa.id))}
-          disabled={!usuarioEditando || procesando}
-          className={`text-left rounded-2xl border p-4 transition-all disabled:opacity-50 ${
-            activa
-              ? "border-cyan-500 bg-cyan-500/10 text-cyan-300"
-              : "border-white/10 bg-white/[0.02] text-gray-400 hover:border-cyan-500/30"
-          }`}
-        >
-          <p className="text-[10px] font-black uppercase mb-1">
-            ID empresa: {empresa.id}
-          </p>
-
-          <p className="text-sm font-black">{empresa.nombre}</p>
-
-          <p className="text-[10px] mt-2">
-            {activa ? "Asignada" : "No asignada"}
-          </p>
-        </button>
-      );
-    })}
-  </div>
-
-  <div className="flex flex-wrap gap-3 mb-5">
-  <button
-    type="button"
-    onClick={seleccionarTodosLosModulos}
-    disabled={!usuarioEditando || procesando}
-    className="px-4 py-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 text-xs font-black uppercase disabled:opacity-50"
-  >
-    Seleccionar módulos
-  </button>
-
-  <button
-    type="button"
-    onClick={limpiarModulosSeleccionados}
-    disabled={!usuarioEditando || procesando}
-    className="px-4 py-2 rounded-xl bg-red-500/10 text-red-400 border border-red-500/20 text-xs font-black uppercase disabled:opacity-50"
-  >
-    Limpiar módulos
-  </button>
-
-  <div className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-xs font-black uppercase text-gray-400">
-    Módulos seleccionados: {modulosSeleccionados.length}
-  </div>
-</div>
-
-<div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6 max-h-[320px] overflow-y-auto pr-2">
-  {modulos
-    .filter((modulo) => modulo.clave !== "admin" && modulo.activo)
-    .map((modulo) => {
-      const activo = modulosSeleccionados.includes(modulo.clave);
-
-      return (
-        <button
-          key={modulo.clave}
-          type="button"
-          onClick={() => toggleModulo(modulo.clave)}
-          disabled={!usuarioEditando || procesando}
-          className={`text-left rounded-2xl border p-4 transition-all disabled:opacity-50 ${
-            activo
-              ? "border-purple-500 bg-purple-500/10 text-purple-300"
-              : "border-white/10 bg-white/[0.02] text-gray-400 hover:border-purple-500/30"
-          }`}
-        >
-          <p className="text-[10px] font-black uppercase mb-1">
-            {modulo.clave}
-          </p>
-
-          <p className="text-sm font-black">{modulo.nombre}</p>
-
-          <p className="text-[10px] mt-2">
-            {activo ? "Asignado" : "No asignado"}
-          </p>
-        </button>
-      );
-    })}
-</div>
-
-  <button
-    type="button"
-    onClick={guardarPermisosUsuario}
-    disabled={!usuarioEditando || procesando}
-    className="w-full h-14 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
-  >
-    {procesando ? (
-      <Loader2 className="animate-spin" size={16} />
-    ) : (
-      <ShieldCheck size={16} />
-    )}
-    Guardar rol, empresas y módulos
-  </button>
-</section>
-
-          <section className="grid lg:grid-cols-2 gap-8">
-            <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
-              <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
-                Usuarios del sistema
-              </h2>
-
-              <div className="space-y-3">
-                {usuarios.map((usuario) => (
-                  <div
-                    key={usuario.id}
-                    className="flex items-center justify-between gap-4 bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4"
-                  >
-                    <div>
-                      <p className="font-black text-white">{usuario.nombre}</p>
-                      <p className="text-[10px] text-gray-500 uppercase mt-1">
-  ID trabajador:
-</p>
-
-<p className="text-xs text-cyan-400 font-mono break-all">
-  {usuario.id}
-</p>
-                    </div>
-
-                   <div className="flex flex-col items-end gap-2">
-  <span className="text-[10px] font-black uppercase px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-    {usuario.rol}
-  </span>
-
-  <span
-    className={`text-[10px] font-black uppercase px-3 py-1 rounded-full border ${
-      usuario.activo === false
-        ? "bg-red-500/10 text-red-400 border-red-500/20"
-        : "bg-green-500/10 text-green-400 border-green-500/20"
-    }`}
-  >
-    {usuario.activo === false ? "Inactivo" : "Activo"}
-  </span>
-</div>
+              <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-green-500">
+                <div className="flex items-start justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                      <Plus size={16} className="text-green-400" />
+                      Crear usuario operativo
+                    </h2>
+                    <p className="text-xs text-gray-500 mt-2">
+                      El UID y correo deben existir en Supabase Auth.
+                    </p>
                   </div>
-                ))}
-
-                {usuarios.length === 0 && (
-                  <p className="text-gray-500 text-sm">
-                    No hay usuarios registrados.
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
-              <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
-                Empresas asignadas
-              </h2>
-
-              <div className="space-y-3">
-                {asignaciones.map((asignacion) => (
-                  <div
-                    key={asignacion.id}
-                    className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4 flex items-center justify-between gap-4"
+                  <Link
+                    href="/usuarios"
+                    className="text-xs font-black text-cyan-300 hover:text-cyan-200"
                   >
-                    <div>
-                      <p className="font-black text-white">
-                        {asignacion.usuario}
-                      </p>
+                    Ver modulo Usuarios
+                  </Link>
+                </div>
+                <div className="grid md:grid-cols-4 gap-4">
+                  <input
+                    value={nuevoUsuario.nombre}
+                    onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, nombre: e.target.value })}
+                    className="input-custom"
+                    placeholder="Nombre completo"
+                  />
+                  <input
+                    type="email"
+                    value={nuevoUsuario.correo}
+                    onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, correo: e.target.value })}
+                    className="input-custom"
+                    placeholder="Correo"
+                  />
+                  <input
+                    value={nuevoUsuario.uid}
+                    onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, uid: e.target.value })}
+                    className="input-custom font-mono"
+                    placeholder="UID Supabase Auth"
+                  />
+                  <select
+                    value={nuevoUsuario.rol}
+                    onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })}
+                    className="input-custom"
+                  >
+                    {ROLES_SISTEMA.filter((rol) => rol !== "admin").map((rol) => (
+                      <option key={rol} value={rol}>{rol}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={crearUsuarioOperativo}
+                  disabled={procesando}
+                  className="mt-5 h-12 px-5 rounded-xl bg-green-500 hover:bg-green-400 text-black font-black text-xs uppercase disabled:opacity-50"
+                >
+                  Crear usuario
+                </button>
+              </section>
 
-                      <p className="text-xs text-gray-500 mt-1">
-                        Rol: {asignacion.rol}
-                      </p>
+              <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-cyan-500">
+                <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2">
+                  <ShieldCheck size={16} className="text-cyan-400" />
+                  Usuario, rol, empresas y modulos asignados
+                </h2>
+                <div className="grid md:grid-cols-3 gap-4 mb-6">
+                  <select
+                    value={usuarioEditando}
+                    onChange={(e) => cargarUsuarioParaEditar(e.target.value)}
+                    className="input-custom"
+                  >
+                    <option value="">Seleccionar usuario...</option>
+                    {usuarios.map((usuario) => (
+                      <option key={usuario.id} value={usuario.id}>
+                        {usuario.nombre} - {usuario.rol} - {usuario.activo === false ? "inactivo" : "activo"}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={rolSeleccionado}
+                    onChange={(e) => setRolSeleccionado(e.target.value)}
+                    className="input-custom"
+                    disabled={!usuarioEditando}
+                  >
+                    <option value="">Seleccionar rol...</option>
+                    {ROLES_SISTEMA.map((rol) => (
+                      <option key={rol} value={rol}>{rol}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={activoSeleccionado ? "activo" : "inactivo"}
+                    onChange={(e) => setActivoSeleccionado(e.target.value === "activo")}
+                    className="input-custom"
+                    disabled={!usuarioEditando}
+                  >
+                    <option value="activo">Usuario activo</option>
+                    <option value="inactivo">Usuario inactivo</option>
+                  </select>
+                </div>
 
-                      <p className="text-xs text-cyan-400 mt-1">
-                        Empresa: {asignacion.empresa}
-                      </p>
-                    </div>
-
-                    <button
-                      onClick={() => quitarAsignacion(asignacion.id)}
-                      disabled={procesando}
-                      className="w-10 h-10 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white flex items-center justify-center disabled:opacity-50"
-                      title="Quitar empresa"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+                {usuarioEditando && (
+                  <div className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4 mb-6">
+                    <p className="text-xs text-gray-500 uppercase font-black mb-1">Funcion operativa</p>
+                    <p className="text-cyan-200 text-sm">{funcionOperativa(rolSeleccionado)}</p>
+                    <p className="text-cyan-400 text-xs font-mono break-all mt-2">{usuarioEditando}</p>
                   </div>
-                ))}
-
-                {asignaciones.length === 0 && (
-                  <p className="text-gray-500 text-sm">
-                    No hay empresas asignadas todavía.
-                  </p>
                 )}
-              </div>
-            </div>
-          </section>
+
+                <div className="flex flex-wrap gap-3 mb-5">
+                  <button type="button" onClick={() => setEmpresasSeleccionadas(empresas.map((empresa) => Number(empresa.id)))} disabled={!usuarioEditando || procesando} className="btn-lite">
+                    Todas las empresas permitidas
+                  </button>
+                  <button type="button" onClick={() => setEmpresasSeleccionadas([])} disabled={!usuarioEditando || procesando} className="btn-lite">
+                    Limpiar empresas
+                  </button>
+                  <span className="chip">Empresas seleccionadas: {empresasSeleccionadas.length}</span>
+                </div>
+
+                <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6 max-h-[320px] overflow-y-auto pr-2">
+                  {empresas.map((empresa) => {
+                    const activa = empresasSeleccionadas.includes(Number(empresa.id));
+                    return (
+                      <button
+                        key={empresa.id}
+                        type="button"
+                        onClick={() => toggleEmpresa(Number(empresa.id))}
+                        disabled={!usuarioEditando || procesando}
+                        className={`option-card ${activa ? "option-card-active" : ""}`}
+                      >
+                        <p className="text-[10px] font-black uppercase mb-1">ID empresa: {empresa.id}</p>
+                        <p className="text-sm font-black">{empresa.nombre}</p>
+                        <p className="text-[10px] mt-2">{activa ? "Asignada" : "No asignada"}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-wrap gap-3 mb-5">
+                  <button type="button" onClick={() => setModulosSeleccionados(modulos.map((modulo) => modulo.clave))} disabled={!usuarioEditando || procesando} className="btn-lite">
+                    Todos los modulos operativos
+                  </button>
+                  <button type="button" onClick={() => setModulosSeleccionados([])} disabled={!usuarioEditando || procesando} className="btn-lite">
+                    Limpiar modulos
+                  </button>
+                  <span className="chip">Modulos seleccionados: {modulosSeleccionados.length}</span>
+                </div>
+
+                <div className="grid md:grid-cols-3 lg:grid-cols-4 gap-3 mb-6 max-h-[320px] overflow-y-auto pr-2">
+                  {modulos.map((modulo) => {
+                    const activo = modulosSeleccionados.includes(modulo.clave);
+                    return (
+                      <button
+                        key={modulo.clave}
+                        type="button"
+                        onClick={() => toggleModulo(modulo.clave)}
+                        disabled={!usuarioEditando || procesando}
+                        className={`option-card ${activo ? "option-card-active-purple" : ""}`}
+                      >
+                        <p className="text-[10px] font-black uppercase mb-1">{modulo.clave}</p>
+                        <p className="text-sm font-black">{modulo.nombre}</p>
+                        <p className="text-[10px] mt-2">{activo ? "Asignado" : "No asignado"}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={guardarPermisosUsuario}
+                  disabled={!usuarioEditando || procesando}
+                  className="w-full h-14 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase text-xs flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {procesando ? <Loader2 className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
+                  Guardar usuario, empresas y modulos
+                </button>
+              </section>
+
+              <section className="grid xl:grid-cols-3 gap-8">
+                <PanelUsuarios titulo="Usuarios activos" usuarios={usuariosActivos} />
+                <PanelUsuarios titulo="Usuarios inactivos" usuarios={usuariosInactivos} />
+                <PanelTrabajando trabajos={trabajosActivos} />
+              </section>
+
+              <section className="grid lg:grid-cols-2 gap-8 mt-8">
+                <PanelAsignaciones asignaciones={asignacionesActivas} />
+                <PanelModulos usuarios={usuarios} modulos={modulosAsignadosActivos} catalogo={modulos} />
+              </section>
             </>
           )}
         </div>
@@ -1383,14 +977,51 @@ El Panel Admin no se puede desactivar desde aquí para evitar perder el acceso.
           outline: none;
           font-size: 0.82rem;
         }
-
         .input-custom option {
           background: #0f172a;
           color: white;
         }
-
         .input-custom:focus {
           border-color: #06b6d4;
+        }
+        .btn-lite {
+          padding: 0.5rem 1rem;
+          border-radius: 0.75rem;
+          background: rgba(6, 182, 212, 0.1);
+          color: rgb(103, 232, 249);
+          border: 1px solid rgba(6, 182, 212, 0.2);
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+        }
+        .chip {
+          padding: 0.5rem 1rem;
+          border-radius: 0.75rem;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          font-size: 0.72rem;
+          font-weight: 900;
+          text-transform: uppercase;
+          color: rgb(156, 163, 175);
+        }
+        .option-card {
+          text-align: left;
+          border-radius: 1rem;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          padding: 1rem;
+          background: rgba(255, 255, 255, 0.02);
+          color: rgb(156, 163, 175);
+          transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .option-card-active {
+          border-color: rgb(6, 182, 212);
+          background: rgba(6, 182, 212, 0.1);
+          color: rgb(103, 232, 249);
+        }
+        .option-card-active-purple {
+          border-color: rgb(168, 85, 247);
+          background: rgba(168, 85, 247, 0.1);
+          color: rgb(216, 180, 254);
         }
       `}</style>
     </div>
@@ -1414,8 +1045,126 @@ function CardResumen({
         {icon}
         <p className="text-xs font-black uppercase tracking-widest">{label}</p>
       </div>
-
       <h2 className="text-4xl font-black mt-4">{value}</h2>
+    </div>
+  );
+}
+
+function PanelUsuarios({ titulo, usuarios }: { titulo: string; usuarios: Perfil[] }) {
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
+        {titulo}
+      </h2>
+      <div className="space-y-3">
+        {usuarios.map((usuario) => (
+          <div key={usuario.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+            <p className="font-black text-white">{usuario.nombre}</p>
+            <p className="text-xs text-cyan-300 mt-1">{usuario.rol}</p>
+            <p className="text-xs text-gray-500 mt-1">{funcionOperativa(usuario.rol)}</p>
+          </div>
+        ))}
+        {usuarios.length === 0 && <p className="text-gray-500 text-sm">No hay usuarios.</p>}
+      </div>
+    </div>
+  );
+}
+
+function PanelTrabajando({ trabajos }: { trabajos: TrabajoActivo[] }) {
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
+        Usuarios trabajando
+      </h2>
+      <div className="space-y-3">
+        {trabajos.map((trabajo) => (
+          <div key={trabajo.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+            <p className="font-black text-white">
+              {trabajo.perfiles?.nombre || trabajo.usuario_id}
+            </p>
+            <p className="text-xs text-cyan-300 mt-1">
+              {trabajo.modulo} | {trabajo.empresas?.nombre || "Empresa asignada"}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {trabajo.titulo || trabajo.ruta || "Trabajo operativo activo"}
+            </p>
+          </div>
+        ))}
+        {trabajos.length === 0 && (
+          <p className="text-gray-500 text-sm">No hay trabajos activos visibles.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PanelAsignaciones({ asignaciones }: { asignaciones: UsuarioEmpresa[] }) {
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
+        Empresas asignadas
+      </h2>
+      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-2">
+        {asignaciones.map((asignacion) => (
+          <div key={asignacion.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+            <p className="font-black text-white">
+              {asignacion.perfiles?.nombre || "Usuario sin nombre"}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Rol: {asignacion.perfiles?.rol || "Sin rol"}
+            </p>
+            <p className="text-xs text-cyan-400 mt-1">
+              Empresa: {asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`}
+            </p>
+          </div>
+        ))}
+        {asignaciones.length === 0 && (
+          <p className="text-gray-500 text-sm">No hay empresas asignadas visibles.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PanelModulos({
+  usuarios,
+  modulos,
+  catalogo,
+}: {
+  usuarios: Perfil[];
+  modulos: UsuarioModulo[];
+  catalogo: ModuloSistema[];
+}) {
+  const usuariosPorId = new Map(usuarios.map((usuario) => [usuario.id, usuario]));
+  const modulosPorClave = new Map(catalogo.map((modulo) => [modulo.clave, modulo]));
+
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
+        Modulos asignados
+      </h2>
+      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-2">
+        {modulos.map((modulo) => {
+          const usuario = usuariosPorId.get(modulo.usuario_id);
+          const moduloCatalogo = modulosPorClave.get(modulo.modulo_clave);
+          return (
+            <div key={modulo.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+              <p className="font-black text-white">
+                {usuario?.nombre || modulo.usuario_id}
+              </p>
+              <p className="text-xs text-purple-300 mt-1">
+                {moduloCatalogo?.nombre || modulo.modulo_clave}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Clave: {modulo.modulo_clave}
+              </p>
+            </div>
+          );
+        })}
+        {modulos.length === 0 && (
+          <p className="text-gray-500 text-sm">No hay modulos asignados.</p>
+        )}
+      </div>
     </div>
   );
 }

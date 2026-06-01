@@ -140,7 +140,7 @@ export default function Sidebar() {
   const rolNormalizado = (rol || "").trim().toLowerCase();
 
  function moduloActivo(clave: string) {
-  if (clave === "admin") return rolNormalizado === "admin";
+  if (clave === "admin") return ROLES_ADMIN.includes(rolNormalizado);
 
   if (rolNormalizado === "admin") {
     return modulosActivos.includes(clave);
@@ -247,10 +247,10 @@ const menusAdmin = [
   },
 ];
 
-  // Ruta exclusiva del admin principal
+  // Administracion operativa: usuarios, empresas asignadas y modulos por usuario.
   const menusSoloAdmin = [
     {
-      name: "Admin",
+      name: "Admin Operativo",
       path: "/admin",
       icon: ShieldCheck,
       clave: "admin",
@@ -290,7 +290,7 @@ const menusAdmin = [
     : rolNormalizado === "admin"
     ? [...menusBase, ...menusAdmin, ...menusSoloAdmin]
     : ROLES_ADMIN.includes(rolNormalizado)
-    ? [...menusBase, ...menusAdmin]
+    ? [...menusBase, ...menusAdmin, ...menusSoloAdmin]
     : menusBase;
 
   const menusFiltrados = menus.filter((menu) =>
