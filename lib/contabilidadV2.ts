@@ -89,6 +89,23 @@ export interface MovimientoContableDetalle {
   catalogo_cuentas?: Pick<CatalogoCuenta, "codigo" | "nombre" | "tipo" | "naturaleza"> | null;
 }
 
+export interface DistribucionDocumentoContable {
+  id: string | number;
+  creado_at: string | null;
+  actualizado_at: string | null;
+  empresa_id: number;
+  documento_contable_id: string | number;
+  cuenta_id: string | number;
+  descripcion: string | null;
+  debito: number;
+  credito: number;
+  moneda: string;
+  activo: boolean;
+  creado_por: string | null;
+  metadatos: ValorJsonAuditoria | null;
+  catalogo_cuentas?: Pick<CatalogoCuenta, "codigo" | "nombre" | "tipo" | "naturaleza"> | null;
+}
+
 export interface CrearCuentaContableParams {
   empresa_id?: number | null;
   codigo: string;
@@ -252,6 +269,26 @@ export interface CorregirDocumentoContableRevisionParams {
   observacion: string;
 }
 
+export interface LineaDistribucionDocumentoInput {
+  cuenta_id: string | number;
+  descripcion?: string | null;
+  debito?: number;
+  credito?: number;
+  moneda?: string;
+}
+
+export interface GuardarDistribucionDocumentoContableParams {
+  empresa_id: number;
+  documento_contable_id: string | number;
+  lineas: LineaDistribucionDocumentoInput[];
+  motivo?: string | null;
+}
+
+export interface ListarDistribucionDocumentoContableParams {
+  empresa_id: number;
+  documento_contable_id?: string | number;
+}
+
 export interface CalcularBalanceComprobacionParams {
   empresa_id: number;
   fecha_desde?: string;
@@ -270,6 +307,9 @@ const COLUMNAS_DETALLE =
 const COLUMNAS_ASIENTO_CON_DETALLE = `${COLUMNAS_ASIENTO},movimientos_contables_detalle(${COLUMNAS_DETALLE})`;
 const COLUMNAS_DOCUMENTO_REVISION =
   "id,creado_at,actualizado_at,empresa_id,proveedor_id,cliente_id,tipo_documento,serie,numero_documento,fecha_documento,fecha_vencimiento,moneda,subtotal,iva,isr,total,descripcion,estado,creado_por,revisado_por,contabilizado_por,revisado_at,contabilizado_at,observacion,metadatos";
+const COLUMNAS_DISTRIBUCION_DOCUMENTO =
+  "id,creado_at,actualizado_at,empresa_id,documento_contable_id,cuenta_id,descripcion,debito,credito,moneda,activo,creado_por,metadatos";
+const COLUMNAS_DISTRIBUCION_CON_CUENTA = `${COLUMNAS_DISTRIBUCION_DOCUMENTO},catalogo_cuentas(codigo,nombre,tipo,naturaleza)`;
 const LIMITE_PREDETERMINADO = 200;
 const LIMITE_MAXIMO = 1000;
 const TOLERANCIA_BALANCE = 0.005;
@@ -405,6 +445,10 @@ function normalizarDocumentoRevision(data: unknown) {
   return data as DocumentoContableRevision;
 }
 
+function normalizarDistribucionDocumento(data: unknown) {
+  return data as DistribucionDocumentoContable;
+}
+
 function validarEstadoDocumentoContable(estado: string) {
   if (!ESTADOS_DOCUMENTO_CONTABLE.includes(estado as EstadoDocumentoContable)) {
     throw new Error("Estado de documento contable no valido.");
@@ -472,6 +516,97 @@ async function validarCuentasDetalle(
       );
     }
   });
+}
+
+async function validarLineasDistribucionDocumento(
+  documento: DocumentoContableRevision,
+  lineasInput: LineaDistribucionDocumentoInput[]
+) {
+  if (!Array.isArray(lineasInput) || lineasInput.length < 2) {
+    throw new Error("La distribucion debe tener al menos dos lineas.");
+  }
+
+  const empresaId = validarEmpresaId(documento.empresa_id);
+  const monedaDocumento = normalizarMoneda(documento.moneda);
+  const lineas = lineasInput.map((linea, index) => {
+    if (linea.cuenta_id === null || linea.cuenta_id === undefined || linea.cuenta_id === "") {
+      throw new Error(`La linea ${index + 1} no tiene cuenta contable.`);
+    }
+
+    const debito = numero(linea.debito);
+    const credito = numero(linea.credito);
+
+    if (debito > 0 && credito > 0) {
+      throw new Error(`La linea ${index + 1} no puede tener debito y credito al mismo tiempo.`);
+    }
+
+    if (debito <= 0 && credito <= 0) {
+      throw new Error(`La linea ${index + 1} debe tener debito o credito.`);
+    }
+
+    const moneda = normalizarMoneda(linea.moneda);
+    if (moneda !== monedaDocumento) {
+      throw new Error(
+        `La linea ${index + 1} usa ${moneda}, pero el documento esta en ${monedaDocumento}.`
+      );
+    }
+
+    return {
+      cuenta_id: linea.cuenta_id,
+      descripcion: texto(linea.descripcion),
+      debito,
+      credito,
+      moneda,
+    };
+  });
+
+  const cuentaIds = Array.from(new Set(lineas.map((linea) => String(linea.cuenta_id))));
+  const { data, error } = await supabase
+    .from("catalogo_cuentas")
+    .select("id,empresa_id,activo,permite_movimientos")
+    .in("id", cuentaIds);
+
+  if (error) {
+    throw errorSupabase("No se pudieron validar cuentas de distribucion", error);
+  }
+
+  const cuentas = new Map((data || []).map((cuenta) => [String(cuenta.id), cuenta]));
+
+  cuentaIds.forEach((cuentaId) => {
+    const cuenta = cuentas.get(cuentaId);
+
+    if (!cuenta) {
+      throw new Error(`La cuenta ${cuentaId} no existe o no es accesible.`);
+    }
+
+    if (cuenta.activo !== true) {
+      throw new Error(`La cuenta ${cuentaId} esta inactiva.`);
+    }
+
+    if (cuenta.permite_movimientos !== true) {
+      throw new Error(`La cuenta ${cuentaId} no permite movimientos.`);
+    }
+
+    if (cuenta.empresa_id !== null && Number(cuenta.empresa_id) !== empresaId) {
+      throw new Error(`La cuenta ${cuentaId} no pertenece a la empresa del documento.`);
+    }
+  });
+
+  const totalDebito = numero(lineas.reduce((total, linea) => total + linea.debito, 0));
+  const totalCredito = numero(lineas.reduce((total, linea) => total + linea.credito, 0));
+
+  if (Math.abs(totalDebito - totalCredito) > TOLERANCIA_BALANCE) {
+    throw new Error(
+      `Distribucion descuadrada. Debito: ${totalDebito.toFixed(2)} Credito: ${totalCredito.toFixed(2)}.`
+    );
+  }
+
+  return {
+    lineas,
+    totalDebito,
+    totalCredito,
+    moneda: monedaDocumento,
+  };
 }
 
 function validarDetalle(detalles: MovimientoDetalleInput[], monedaBase: string) {
@@ -1020,6 +1155,193 @@ export async function listarDocumentosContablesRevision(
   return (data || []) as DocumentoContableRevision[];
 }
 
+export async function listarDistribucionDocumentoContable(
+  params: ListarDistribucionDocumentoContableParams
+): Promise<DistribucionDocumentoContable[]> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+
+  let query: any = supabase
+    .from("distribuciones_documentos_contables")
+    .select(COLUMNAS_DISTRIBUCION_CON_CUENTA)
+    .eq("empresa_id", empresaId)
+    .eq("activo", true);
+
+  if (params.documento_contable_id !== undefined) {
+    query = query.eq("documento_contable_id", params.documento_contable_id);
+  }
+
+  const { data, error } = await query.order("creado_at", { ascending: true });
+
+  if (error) {
+    throw errorSupabase("No se pudo listar la distribucion del documento", error);
+  }
+
+  return (data || []) as DistribucionDocumentoContable[];
+}
+
+export async function guardarDistribucionDocumentoContable(
+  params: GuardarDistribucionDocumentoContableParams
+): Promise<DistribucionDocumentoContable[]> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+
+  if (
+    params.documento_contable_id === "" ||
+    params.documento_contable_id === null ||
+    params.documento_contable_id === undefined
+  ) {
+    throw new Error("Debe indicar el documento contable para distribuir.");
+  }
+
+  const { data: documentoData, error: documentoError } = await supabase
+    .from("documentos_contables_revision")
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .eq("id", params.documento_contable_id)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+
+  if (documentoError) {
+    throw errorSupabase("No se pudo cargar el documento a distribuir", documentoError);
+  }
+
+  if (!documentoData) {
+    throw new Error("No se encontro el documento contable en la empresa indicada.");
+  }
+
+  const documento = normalizarDocumentoRevision(documentoData);
+  if (["Contabilizado", "Rechazado"].includes(documento.estado)) {
+    throw new Error("El documento ya esta cerrado y no permite cambiar distribucion.");
+  }
+
+  const distribucion = await validarLineasDistribucionDocumento(
+    documento,
+    params.lineas
+  );
+  const userId = await obtenerUsuarioIdActual();
+  const ahora = new Date().toISOString();
+
+  const { data: existentes, error: existentesError } = await supabase
+    .from("distribuciones_documentos_contables")
+    .select("id")
+    .eq("empresa_id", empresaId)
+    .eq("documento_contable_id", documento.id)
+    .eq("activo", true);
+
+  if (existentesError) {
+    throw errorSupabase("No se pudo revisar la distribucion existente", existentesError);
+  }
+
+  if (existentes?.length) {
+    const { error: inactivarError } = await supabase
+      .from("distribuciones_documentos_contables")
+      .update({
+        activo: false,
+        actualizado_at: ahora,
+        metadatos: {
+          reemplazada_por_correccion: true,
+          motivo: texto(params.motivo),
+        },
+      })
+      .in("id", existentes.map((item) => item.id));
+
+    if (inactivarError) {
+      throw errorSupabase("No se pudo inactivar la distribucion anterior", inactivarError);
+    }
+  }
+
+  const insert = distribucion.lineas.map((linea) => ({
+    empresa_id: empresaId,
+    documento_contable_id: documento.id,
+    cuenta_id: linea.cuenta_id,
+    descripcion: linea.descripcion,
+    debito: linea.debito,
+    credito: linea.credito,
+    moneda: linea.moneda,
+    activo: true,
+    creado_por: userId,
+    actualizado_at: ahora,
+    metadatos: {
+      origen: "documento_contable_revision",
+      asiento_automatico_creado: false,
+    },
+  }));
+
+  const { data, error } = await supabase
+    .from("distribuciones_documentos_contables")
+    .insert(insert)
+    .select(COLUMNAS_DISTRIBUCION_CON_CUENTA);
+
+  if (error) {
+    throw errorSupabase("No se pudo guardar la distribucion contable", error);
+  }
+
+  await supabase
+    .from("documentos_contables_revision")
+    .update({
+      actualizado_at: ahora,
+      metadatos: {
+        ...(documento.metadatos &&
+        typeof documento.metadatos === "object" &&
+        !Array.isArray(documento.metadatos)
+          ? documento.metadatos
+          : {}),
+        distribucion_contable_validada: true,
+        distribucion_total_debito: distribucion.totalDebito,
+        distribucion_total_credito: distribucion.totalCredito,
+        distribucion_moneda: distribucion.moneda,
+        asiento_automatico_creado: false,
+      },
+    })
+    .eq("id", documento.id)
+    .eq("empresa_id", empresaId);
+
+  await auditarSinBloquear({
+    empresa_id: empresaId,
+    modulo: "contabilidad_v2",
+    accion: existentes?.length
+      ? "corregir_distribucion_documento"
+      : "crear_distribucion_documento",
+    entidad_tipo: "documento_contable_revision",
+    entidad_id: documento.id,
+    estado_nuevo: documento.estado,
+    motivo: texto(params.motivo),
+    descripcion: "Distribucion contable de documento guardada y validada",
+    sensible: true,
+    metadatos: {
+      lineas: distribucion.lineas.length,
+      total_debito: distribucion.totalDebito,
+      total_credito: distribucion.totalCredito,
+      moneda: distribucion.moneda,
+      asiento_automatico_creado: false,
+    },
+  });
+
+  return (data || []).map(normalizarDistribucionDocumento);
+}
+
+async function validarDistribucionDocumentoContableLista(
+  documento: DocumentoContableRevision
+) {
+  const lineas = await listarDistribucionDocumentoContable({
+    empresa_id: documento.empresa_id,
+    documento_contable_id: documento.id,
+  });
+
+  if (!lineas.length) {
+    throw new Error("Debe registrar una distribucion contable antes de contabilizar.");
+  }
+
+  await validarLineasDistribucionDocumento(
+    documento,
+    lineas.map((linea) => ({
+      cuenta_id: linea.cuenta_id,
+      descripcion: linea.descripcion,
+      debito: linea.debito,
+      credito: linea.credito,
+      moneda: linea.moneda,
+    }))
+  );
+}
+
 async function contarAdjuntosDocumentoContable(
   documento: DocumentoContableRevision
 ) {
@@ -1077,6 +1399,8 @@ export async function cambiarEstadoDocumentoContable(
     if (adjuntos <= 0) {
       throw new Error("Debe existir al menos un documento adjunto antes de contabilizar.");
     }
+
+    await validarDistribucionDocumentoContableLista(documentoActual);
   }
 
   if (["Observado", "Rechazado"].includes(estadoNuevo) && !observacion) {

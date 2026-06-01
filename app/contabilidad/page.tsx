@@ -27,14 +27,17 @@ import {
   crearCuentaContable,
   crearDocumentoContableRevision,
   documentoContableRequiereAlerta24h,
+  guardarDistribucionDocumentoContable,
   listarAsientosContables,
   listarCatalogoCuentas,
+  listarDistribucionDocumentoContable,
   listarDocumentosContablesRevision,
   listarPeriodosContables,
   obtenerOCrearPeriodoContable,
   type AsientoContable,
   type BalanceComprobacionFila,
   type CatalogoCuenta,
+  type DistribucionDocumentoContable,
   type DocumentoContableRevision,
   type MovimientoDetalleInput,
   type NaturalezaCuenta,
@@ -83,6 +86,15 @@ interface LineaAsientoForm {
   haber: string;
   moneda: string;
   tipoCambio: string;
+}
+
+interface LineaDistribucionForm {
+  id: string;
+  cuentaId: string;
+  descripcion: string;
+  debito: string;
+  credito: string;
+  moneda: string;
 }
 
 const TABS: Array<{
@@ -152,6 +164,17 @@ function nuevaLineaAsiento(): LineaAsientoForm {
   };
 }
 
+function nuevaLineaDistribucion(moneda = "GTQ"): LineaDistribucionForm {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    cuentaId: "",
+    descripcion: "",
+    debito: "",
+    credito: "",
+    moneda,
+  };
+}
+
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Ocurrio un error inesperado.";
 }
@@ -191,6 +214,9 @@ export default function ContabilidadPage() {
   const [catalogoCuentas, setCatalogoCuentas] = useState<CatalogoCuenta[]>([]);
   const [documentosRevision, setDocumentosRevision] = useState<
     DocumentoContableRevision[]
+  >([]);
+  const [distribucionesDocumento, setDistribucionesDocumento] = useState<
+    DistribucionDocumentoContable[]
   >([]);
   const [periodosContables, setPeriodosContables] = useState<PeriodoContable[]>([]);
   const [asientosContables, setAsientosContables] = useState<AsientoContable[]>([]);
@@ -238,6 +264,12 @@ export default function ContabilidadPage() {
   });
 
   const [documentosFiltroEstado, setDocumentosFiltroEstado] = useState("");
+  const [documentoDistribucionId, setDocumentoDistribucionId] = useState<
+    string | number | null
+  >(null);
+  const [lineasDistribucion, setLineasDistribucion] = useState<
+    LineaDistribucionForm[]
+  >([nuevaLineaDistribucion()]);
 
   const [periodoForm, setPeriodoForm] = useState({
     empresaId: "",
@@ -711,11 +743,18 @@ export default function ContabilidadPage() {
         estado: documentosFiltroEstado || undefined,
         limite: 200,
       });
+      const [distribuciones, cuentas] = await Promise.all([
+        listarDistribucionDocumentoContable({ empresa_id: empresaId }),
+        listarCatalogoCuentas({ empresa_id: empresaId, incluir_globales: true }),
+      ]);
       setDocumentosRevision(documentos);
+      setDistribucionesDocumento(distribuciones);
+      setCatalogoCuentas(cuentas);
     } catch (error) {
       console.error("Error cargando documentos para revision:", error);
       setMensajeV2(getErrorMessage(error));
       setDocumentosRevision([]);
+      setDistribucionesDocumento([]);
     } finally {
       setCargandoV2(false);
     }
@@ -985,6 +1024,74 @@ export default function ContabilidadPage() {
       alert("Documento corregido y auditado.");
     } catch (error) {
       console.error("Error corrigiendo documento:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function abrirDistribucionDocumento(documento: DocumentoContableRevision) {
+    const existentes = distribucionesDocumento.filter(
+      (linea) => String(linea.documento_contable_id) === String(documento.id)
+    );
+
+    setDocumentoDistribucionId(documento.id);
+    setLineasDistribucion(
+      existentes.length
+        ? existentes.map((linea) => ({
+            id: String(linea.id),
+            cuentaId: String(linea.cuenta_id),
+            descripcion: linea.descripcion || "",
+            debito: linea.debito ? String(linea.debito) : "",
+            credito: linea.credito ? String(linea.credito) : "",
+            moneda: linea.moneda || documento.moneda,
+          }))
+        : [nuevaLineaDistribucion(documento.moneda), nuevaLineaDistribucion(documento.moneda)]
+    );
+  }
+
+  function actualizarLineaDistribucion(
+    id: string,
+    cambios: Partial<LineaDistribucionForm>
+  ) {
+    setLineasDistribucion((lineas) =>
+      lineas.map((linea) => (linea.id === id ? { ...linea, ...cambios } : linea))
+    );
+  }
+
+  async function guardarDistribucionDocumento(documento: DocumentoContableRevision) {
+    try {
+      validarEmpresaPermitida(documento.empresa_id, "guardar distribucion contable");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    const motivo = window.prompt(
+      "Motivo o referencia de la distribucion:",
+      "Distribucion contable del documento"
+    );
+    if (motivo === null) return;
+
+    try {
+      setLoading(true);
+      await guardarDistribucionDocumentoContable({
+        empresa_id: documento.empresa_id,
+        documento_contable_id: documento.id,
+        motivo,
+        lineas: lineasDistribucion.map((linea) => ({
+          cuenta_id: linea.cuentaId,
+          descripcion: linea.descripcion || null,
+          debito: numero(linea.debito),
+          credito: numero(linea.credito),
+          moneda: linea.moneda,
+        })),
+      });
+      await cargarDocumentosRevision(String(documento.empresa_id));
+      abrirDistribucionDocumento(documento);
+      alert("Distribucion guardada y validada.");
+    } catch (error) {
+      console.error("Error guardando distribucion:", error);
       alert(getErrorMessage(error));
     } finally {
       setLoading(false);
@@ -1964,6 +2071,26 @@ export default function ContabilidadPage() {
               const cerrado = ["Contabilizado", "Rechazado"].includes(
                 documento.estado
               );
+              const distribucion = distribucionesDocumento.filter(
+                (linea) => String(linea.documento_contable_id) === String(documento.id)
+              );
+              const totalDebitoDistribucion = redondear(
+                distribucion.reduce((total, linea) => total + numero(linea.debito), 0)
+              );
+              const totalCreditoDistribucion = redondear(
+                distribucion.reduce((total, linea) => total + numero(linea.credito), 0)
+              );
+              const distribucionBalanceada =
+                distribucion.length >= 2 &&
+                Math.abs(totalDebitoDistribucion - totalCreditoDistribucion) <= 0.005;
+              const editandoDistribucion =
+                String(documentoDistribucionId) === String(documento.id);
+              const totalDebitoEdicion = redondear(
+                lineasDistribucion.reduce((total, linea) => total + numero(linea.debito), 0)
+              );
+              const totalCreditoEdicion = redondear(
+                lineasDistribucion.reduce((total, linea) => total + numero(linea.credito), 0)
+              );
 
               return (
                 <div
@@ -2002,11 +2129,29 @@ export default function ContabilidadPage() {
                         {documento.revisado_at || "pendiente"} | Contabilizado:{" "}
                         {documento.contabilizado_at || "pendiente"}
                       </p>
-                      {documento.observacion && (
+                        {documento.observacion && (
                         <p className="text-sm text-orange-200 mt-3">
                           Observacion: {documento.observacion}
                         </p>
                       )}
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <span
+                          className={`inline-flex rounded-full border px-3 py-1 text-xs font-black ${
+                            distribucionBalanceada
+                              ? "border-green-400/30 bg-green-400/10 text-green-200"
+                              : "border-orange-400/30 bg-orange-400/10 text-orange-200"
+                          }`}
+                        >
+                          Distribucion:{" "}
+                          {distribucionBalanceada ? "balanceada" : "pendiente/descuadrada"}
+                        </span>
+                        <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-black text-gray-300">
+                          Debito {money(totalDebitoDistribucion, documento.moneda)}
+                        </span>
+                        <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-black text-gray-300">
+                          Credito {money(totalCreditoDistribucion, documento.moneda)}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="text-sm text-gray-300">
@@ -2050,6 +2195,14 @@ export default function ContabilidadPage() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => abrirDistribucionDocumento(documento)}
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-200 text-xs font-black"
+                        >
+                          Distribuir
+                        </button>
+                        <button
+                          type="button"
                           onClick={() =>
                             cambiarEstadoDocumentoRevision(documento, "Contabilizado")
                           }
@@ -2083,6 +2236,178 @@ export default function ContabilidadPage() {
                       </div>
                     )}
                   </div>
+
+                  {distribucion.length > 0 && !editandoDistribucion && (
+                    <div className="mt-5 border-t border-white/10 pt-4">
+                      <p className="text-xs uppercase font-black text-gray-500 mb-3">
+                        Distribucion contable activa
+                      </p>
+                      <div className="grid gap-2">
+                        {distribucion.map((linea) => (
+                          <div
+                            key={linea.id}
+                            className="grid md:grid-cols-5 gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm"
+                          >
+                            <p className="font-black text-cyan-200">
+                              {linea.catalogo_cuentas?.codigo || linea.cuenta_id}
+                            </p>
+                            <p className="md:col-span-2 text-gray-300">
+                              {linea.descripcion ||
+                                linea.catalogo_cuentas?.nombre ||
+                                "Sin descripcion"}
+                            </p>
+                            <p className="text-green-200">
+                              Debito {money(linea.debito, linea.moneda)}
+                            </p>
+                            <p className="text-red-200">
+                              Credito {money(linea.credito, linea.moneda)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {editandoDistribucion && !cerrado && (
+                    <div className="mt-5 border-t border-white/10 pt-5">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                        <div>
+                          <p className="text-xs uppercase font-black text-blue-200">
+                            Distribucion contable del documento
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Ej. proveedor: gasto/compra e IVA al debe; proveedores locales al haber.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs font-black">
+                          <span className="rounded-xl bg-green-500/10 text-green-200 px-3 py-2">
+                            Debito {money(totalDebitoEdicion, documento.moneda)}
+                          </span>
+                          <span className="rounded-xl bg-red-500/10 text-red-200 px-3 py-2">
+                            Credito {money(totalCreditoEdicion, documento.moneda)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3">
+                        {lineasDistribucion.map((linea, index) => (
+                          <div
+                            key={linea.id}
+                            className="grid md:grid-cols-7 gap-3 rounded-xl border border-white/10 bg-[#020617] p-3"
+                          >
+                            <Campo label={`Cuenta ${index + 1}`} className="md:col-span-2">
+                              <select
+                                value={linea.cuentaId}
+                                onChange={(e) =>
+                                  actualizarLineaDistribucion(linea.id, {
+                                    cuentaId: e.target.value,
+                                  })
+                                }
+                                className="input-control"
+                              >
+                                <option value="">Seleccionar cuenta...</option>
+                                {cuentasParaMovimiento.map((cuenta) => (
+                                  <option key={cuenta.id} value={String(cuenta.id)}>
+                                    {cuenta.codigo} - {cuenta.nombre}
+                                  </option>
+                                ))}
+                              </select>
+                            </Campo>
+                            <Campo label="Descripcion" className="md:col-span-2">
+                              <input
+                                value={linea.descripcion}
+                                onChange={(e) =>
+                                  actualizarLineaDistribucion(linea.id, {
+                                    descripcion: e.target.value,
+                                  })
+                                }
+                                className="input-control"
+                              />
+                            </Campo>
+                            <Campo label="Debito">
+                              <input
+                                type="number"
+                                value={linea.debito}
+                                onChange={(e) =>
+                                  actualizarLineaDistribucion(linea.id, {
+                                    debito: e.target.value,
+                                  })
+                                }
+                                className="input-control font-mono"
+                              />
+                            </Campo>
+                            <Campo label="Credito">
+                              <input
+                                type="number"
+                                value={linea.credito}
+                                onChange={(e) =>
+                                  actualizarLineaDistribucion(linea.id, {
+                                    credito: e.target.value,
+                                  })
+                                }
+                                className="input-control font-mono"
+                              />
+                            </Campo>
+                            <Campo label="Moneda">
+                              <select
+                                value={linea.moneda}
+                                onChange={(e) =>
+                                  actualizarLineaDistribucion(linea.id, {
+                                    moneda: e.target.value,
+                                  })
+                                }
+                                className="input-control"
+                              >
+                                <option value="GTQ">GTQ</option>
+                                <option value="USD">USD</option>
+                              </select>
+                            </Campo>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="flex flex-wrap gap-3 mt-4">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLineasDistribucion((lineas) => [
+                              ...lineas,
+                              nuevaLineaDistribucion(documento.moneda),
+                            ])
+                          }
+                          className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-200 text-xs font-black"
+                        >
+                          Agregar linea
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setLineasDistribucion((lineas) =>
+                              lineas.length <= 2 ? lineas : lineas.slice(0, -1)
+                            )
+                          }
+                          className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black"
+                        >
+                          Quitar ultima
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => guardarDistribucionDocumento(documento)}
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black"
+                        >
+                          Guardar distribucion
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDocumentoDistribucionId(null)}
+                          className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-300 text-xs font-black"
+                        >
+                          Cerrar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
