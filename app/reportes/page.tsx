@@ -31,6 +31,12 @@ import {
   type ReporteMensual,
   type ReportesFinancierosParams,
 } from "../../lib/reportesFinancieros";
+import {
+  obtenerEstadosFinancierosFormales,
+  type BalanceComprobacionFormalFila,
+  type EstadoResultadosSeccion,
+  type EstadosFinancierosFormales,
+} from "../../lib/estadosFinancieros";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import {
@@ -135,6 +141,8 @@ export default function ReportesPage() {
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [filtros, setFiltros] = useState<FiltrosReportes>(FILTROS_INICIALES);
   const [reporte, setReporte] = useState<ReporteMensual | null>(null);
+  const [estadosFinancieros, setEstadosFinancieros] =
+    useState<EstadosFinancierosFormales | null>(null);
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [cargandoReportes, setCargandoReportes] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
@@ -180,6 +188,7 @@ export default function ReportesPage() {
         if (!idsPermitidos.length) {
           setEmpresas([]);
           setReporte(null);
+          setEstadosFinancieros(null);
           setAviso("No tienes empresas asignadas para consultar reportes.");
           return;
         }
@@ -231,6 +240,7 @@ export default function ReportesPage() {
     try {
       if (!idsPermitidos.length) {
         setReporte(null);
+        setEstadosFinancieros(null);
         setAviso("No tienes empresas asignadas para consultar reportes.");
         return;
       }
@@ -244,6 +254,7 @@ export default function ReportesPage() {
         (!Number.isInteger(empresaId) || !idsPermitidos.includes(empresaId))
       ) {
         setReporte(null);
+        setEstadosFinancieros(null);
         setErrorCarga("La empresa seleccionada no esta autorizada.");
         return;
       }
@@ -257,17 +268,24 @@ export default function ReportesPage() {
         limite: LIMITE_REPORTES,
       };
 
-      const reporteMensual = await obtenerReporteMensual(params);
+      const [reporteMensual, estadosFormales] = await Promise.all([
+        obtenerReporteMensual(params),
+        obtenerEstadosFinancierosFormales(params),
+      ]);
       setReporte(reporteMensual);
+      setEstadosFinancieros(estadosFormales);
       await auditarReporte("consultar_reporte", {
         filtros: filtrosAplicados,
         empresas_consultadas: idsPermitidos,
         total_movimientos: reporteMensual.resumen.total_movimientos,
+        balance_formal_cuentas: estadosFormales.balance_comprobacion.length,
+        estados_formales_preliminares: estadosFormales.preliminar,
       });
       setAviso(null);
     } catch (error) {
       console.error("Error cargando reportes:", error);
       setReporte(null);
+      setEstadosFinancieros(null);
       setErrorCarga(getErrorMessage(error));
     } finally {
       setCargandoReportes(false);
@@ -318,7 +336,7 @@ export default function ReportesPage() {
       Moneda: filtros.moneda || "Todas",
     };
 
-    return [
+    const secciones: SeccionExportacion[] = [
       {
         titulo: "Filtros aplicados",
         columnas: [
@@ -474,6 +492,81 @@ export default function ReportesPage() {
         filas: reporte.calendario.map((fila) => ({ ...fila })),
       },
     ];
+
+    if (estadosFinancieros) {
+      secciones.push(
+        {
+          titulo: "Balance de comprobacion formal",
+          resumen: {
+            Estado: estadosFinancieros.preliminar ? "Preliminar" : "Periodo cerrado",
+            Mensaje: estadosFinancieros.mensaje_preliminar,
+          },
+          columnas: [
+            { clave: "codigo", titulo: "Codigo" },
+            { clave: "nombre", titulo: "Cuenta" },
+            { clave: "tipo", titulo: "Tipo" },
+            { clave: "moneda", titulo: "Moneda" },
+            { clave: "debe", titulo: "Debe" },
+            { clave: "haber", titulo: "Haber" },
+            { clave: "saldo_deudor", titulo: "Saldo deudor" },
+            { clave: "saldo_acreedor", titulo: "Saldo acreedor" },
+          ],
+          filas: estadosFinancieros.balance_comprobacion.map((fila) => ({ ...fila })),
+        },
+        {
+          titulo: "Balance general formal",
+          columnas: [
+            { clave: "seccion", titulo: "Seccion" },
+            { clave: "moneda", titulo: "Moneda" },
+            { clave: "total", titulo: "Total" },
+            { clave: "cuentas", titulo: "Cuentas" },
+          ],
+          filas: [
+            ...estadosFinancieros.balance_general.activos.map((fila) => ({
+              seccion: "Activos",
+              moneda: fila.moneda,
+              total: fila.total,
+              cuentas: fila.cuentas.length,
+            })),
+            ...estadosFinancieros.balance_general.pasivos.map((fila) => ({
+              seccion: "Pasivos",
+              moneda: fila.moneda,
+              total: fila.total,
+              cuentas: fila.cuentas.length,
+            })),
+            ...estadosFinancieros.balance_general.patrimonio.map((fila) => ({
+              seccion: "Patrimonio",
+              moneda: fila.moneda,
+              total: fila.total,
+              cuentas: fila.cuentas.length,
+            })),
+          ],
+        },
+        {
+          titulo: "Estado de resultados formal",
+          columnas: [
+            { clave: "moneda", titulo: "Moneda" },
+            { clave: "ingresos", titulo: "Ingresos" },
+            { clave: "costos", titulo: "Costos" },
+            { clave: "gastos_operativos", titulo: "Gastos operativos" },
+            { clave: "gastos_financieros", titulo: "Gastos financieros" },
+            { clave: "utilidad_perdida", titulo: "Utilidad/perdida" },
+          ],
+          filas: estadosFinancieros.estado_resultados.map((fila) => ({ ...fila })),
+        },
+        {
+          titulo: "Periodos contables",
+          columnas: [
+            { clave: "anio", titulo: "Anio" },
+            { clave: "mes", titulo: "Mes" },
+            { clave: "estado", titulo: "Estado" },
+          ],
+          filas: estadosFinancieros.periodos.map((fila) => ({ ...fila })),
+        }
+      );
+    }
+
+    return secciones;
   }
 
   function exportarCsv() {
@@ -740,6 +833,44 @@ export default function ReportesPage() {
             </Panel>
           </div>
 
+          <section className="mb-6">
+            <Panel
+              titulo="Estados financieros formales"
+              subtitulo="Solo catalogo de cuentas, asientos registrados, detalle contable y periodos"
+            >
+              <div className="space-y-5">
+                <div
+                  className={`rounded-2xl border p-4 text-sm ${
+                    estadosFinancieros?.preliminar
+                      ? "border-yellow-400/20 bg-yellow-400/10 text-yellow-100"
+                      : "border-green-400/20 bg-green-400/10 text-green-100"
+                  }`}
+                >
+                  {estadosFinancieros?.mensaje_preliminar ||
+                    "Sin datos formales para los filtros seleccionados."}
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+                  <div>
+                    <h3 className="text-lg font-black mb-3">Balance general</h3>
+                    <ResumenBalanceGeneralFormal estados={estadosFinancieros} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black mb-3">Estado de resultados</h3>
+                    <TablaEstadoResultadosFormal filas={estadosFinancieros?.estado_resultados || []} />
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-black mb-3">Balance de comprobacion</h3>
+                  <TablaBalanceFormal filas={estadosFinancieros?.balance_comprobacion || []} />
+                </div>
+
+                <PanelPeriodosFormales estados={estadosFinancieros} />
+              </div>
+            </Panel>
+          </section>
+
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
             <Panel titulo="Cheques pendientes y pagados" subtitulo="Control operativo por fecha de pago">
               <TablaCheques cheques={reporte?.cheques.proximos_pagos || []} />
@@ -768,8 +899,8 @@ export default function ReportesPage() {
                   Esta V1 prioriza alcance seguro por empresas permitidas.
                 </div>
                 <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-cyan-100">
-                  Balance general formal, estado de resultados contable y conciliacion bancaria quedan
-                  para una fase posterior con catalogo de cuentas y cierres.
+                  Los estados financieros formales usan solo asientos registrados y se muestran
+                  separados por moneda. Si hay periodos abiertos, el resultado es preliminar.
                 </div>
               </div>
             </Panel>
@@ -1015,6 +1146,148 @@ function TablaCalendario({ eventos }: { eventos: CalendarioPago[] }) {
         ))}
       </tbody>
     </Tabla>
+  );
+}
+
+function TablaBalanceFormal({ filas }: { filas: BalanceComprobacionFormalFila[] }) {
+  if (!filas.length) {
+    return <EmptyState texto="No hay asientos registrados para balance de comprobacion." />;
+  }
+
+  return (
+    <Tabla>
+      <thead>
+        <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+          <th className="pb-3">Cuenta</th>
+          <th className="pb-3">Moneda</th>
+          <th className="pb-3">Debe</th>
+          <th className="pb-3">Haber</th>
+          <th className="pb-3">Saldo deudor</th>
+          <th className="pb-3">Saldo acreedor</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((fila) => (
+          <tr key={`${fila.cuenta_id}-${fila.moneda}`} className="border-t border-white/10">
+            <td className="py-3">
+              <p className="font-semibold">{fila.codigo} - {fila.nombre}</p>
+              <p className="text-xs text-gray-500">{textoLegible(fila.tipo)}</p>
+            </td>
+            <td className="py-3 font-bold">{fila.moneda}</td>
+            <td className="py-3 text-cyan-100">{formatoMonto(fila.debe, fila.moneda)}</td>
+            <td className="py-3 text-cyan-100">{formatoMonto(fila.haber, fila.moneda)}</td>
+            <td className="py-3 text-green-300">{formatoMonto(fila.saldo_deudor, fila.moneda)}</td>
+            <td className="py-3 text-yellow-300">{formatoMonto(fila.saldo_acreedor, fila.moneda)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </Tabla>
+  );
+}
+
+function ResumenBalanceGeneralFormal({
+  estados,
+}: {
+  estados: EstadosFinancierosFormales | null;
+}) {
+  if (!estados) return <EmptyState texto="No hay balance general para mostrar." />;
+
+  const filas = [
+    ...estados.balance_general.activos.map((fila) => ({ ...fila, seccion: "Activos" })),
+    ...estados.balance_general.pasivos.map((fila) => ({ ...fila, seccion: "Pasivos" })),
+    ...estados.balance_general.patrimonio.map((fila) => ({ ...fila, seccion: "Patrimonio" })),
+  ];
+
+  if (!filas.length) return <EmptyState texto="No hay cuentas clasificadas para balance general." />;
+
+  return (
+    <Tabla>
+      <thead>
+        <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+          <th className="pb-3">Seccion</th>
+          <th className="pb-3">Moneda</th>
+          <th className="pb-3">Total</th>
+          <th className="pb-3">Cuentas</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((fila) => (
+          <tr key={`${fila.seccion}-${fila.moneda}`} className="border-t border-white/10">
+            <td className="py-3 font-semibold">{fila.seccion}</td>
+            <td className="py-3 font-bold">{fila.moneda}</td>
+            <td className="py-3 text-cyan-100">{formatoMonto(fila.total, fila.moneda)}</td>
+            <td className="py-3 text-gray-400">{fila.cuentas.length}</td>
+          </tr>
+        ))}
+      </tbody>
+    </Tabla>
+  );
+}
+
+function TablaEstadoResultadosFormal({ filas }: { filas: EstadoResultadosSeccion[] }) {
+  if (!filas.length) return <EmptyState texto="No hay cuentas de resultado registradas." />;
+
+  return (
+    <Tabla>
+      <thead>
+        <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+          <th className="pb-3">Moneda</th>
+          <th className="pb-3">Ingresos</th>
+          <th className="pb-3">Costos</th>
+          <th className="pb-3">Gastos</th>
+          <th className="pb-3">Financieros</th>
+          <th className="pb-3">Utilidad/perdida</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((fila) => (
+          <tr key={fila.moneda} className="border-t border-white/10">
+            <td className="py-3 font-bold">{fila.moneda}</td>
+            <td className="py-3 text-green-300">{formatoMonto(fila.ingresos, fila.moneda)}</td>
+            <td className="py-3 text-yellow-300">{formatoMonto(fila.costos, fila.moneda)}</td>
+            <td className="py-3 text-red-300">{formatoMonto(fila.gastos_operativos, fila.moneda)}</td>
+            <td className="py-3 text-red-200">{formatoMonto(fila.gastos_financieros, fila.moneda)}</td>
+            <td className={fila.utilidad_perdida >= 0 ? "py-3 text-cyan-200" : "py-3 text-red-200"}>
+              {formatoMonto(fila.utilidad_perdida, fila.moneda)}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </Tabla>
+  );
+}
+
+function PanelPeriodosFormales({
+  estados,
+}: {
+  estados: EstadosFinancierosFormales | null;
+}) {
+  const periodos = estados?.periodos || [];
+
+  if (!periodos.length) {
+    return <EmptyState texto="No se encontraron periodos contables asociados al filtro." />;
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">
+        Periodos incluidos
+      </h3>
+      <div className="flex flex-wrap gap-2">
+        {periodos.map((periodo) => (
+          <span
+            key={String(periodo.id)}
+            className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${
+              periodo.estado === "cerrado"
+                ? "border-green-400/30 bg-green-400/10 text-green-200"
+                : "border-yellow-400/30 bg-yellow-400/10 text-yellow-200"
+            }`}
+          >
+            {periodo.mes}/{periodo.anio} - {textoLegible(periodo.estado)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
