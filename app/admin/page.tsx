@@ -55,6 +55,18 @@ interface UsuarioModulo {
   activo: boolean;
 }
 
+interface AsignacionEmpresaExistente {
+  id: number;
+  empresa_id: number;
+  activo?: boolean | null;
+}
+
+interface AsignacionModuloExistente {
+  id: number;
+  modulo_clave: string;
+  activo?: boolean | null;
+}
+
 const ROLES_ADMIN = ["admin"];
 const MOTIVO_CAMBIO_PERMISOS = "Actualización de permisos desde Admin";
 const ROLES_SISTEMA = [
@@ -72,6 +84,22 @@ const ROLES_SISTEMA = [
 
 function estadoPerfil(rol: string | null | undefined, activo: boolean | null | undefined) {
   return `rol=${rol || "sin_rol"};activo=${activo === false ? "inactivo" : "activo"}`;
+}
+
+function normalizarRol(rol?: string | null) {
+  return (rol || "").trim().toLowerCase();
+}
+
+function valoresUnicosNumericos(valores: number[]) {
+  return Array.from(
+    new Set(valores.map(Number).filter((valor) => Number.isFinite(valor)))
+  );
+}
+
+function valoresUnicosTexto(valores: string[]) {
+  return Array.from(
+    new Set(valores.map((valor) => valor.trim()).filter(Boolean))
+  );
 }
 
 export default function AdminPage() {
@@ -166,12 +194,12 @@ function cargarUsuarioParaEditar(usuarioId: string) {
   setUsuarioEditando(usuario.id);
   setRolSeleccionado(usuario.rol || "empleado");
   setActivoSeleccionado(usuario.activo !== false);
-  setEmpresasSeleccionadas(empresasDelUsuario);
+  setEmpresasSeleccionadas(valoresUnicosNumericos(empresasDelUsuario));
  const modulosDelUsuario = usuarioModulos
   .filter((m) => m.usuario_id === usuarioId && m.activo)
   .map((m) => m.modulo_clave);
 
-setModulosSeleccionados(modulosDelUsuario); 
+setModulosSeleccionados(valoresUnicosTexto(modulosDelUsuario)); 
 }
 
 function toggleEmpresa(empresaId: number) {
@@ -202,7 +230,7 @@ function limpiarModulosSeleccionados() {
   setModulosSeleccionados([]);
 }
 function seleccionarTodasLasEmpresas() {
-  setEmpresasSeleccionadas(empresas.map((empresa) => Number(empresa.id)));
+  setEmpresasSeleccionadas(valoresUnicosNumericos(empresas.map((empresa) => Number(empresa.id))));
 }
 
 function limpiarEmpresasSeleccionadas() {
@@ -219,8 +247,51 @@ async function guardarPermisosUsuario() {
     return;
   }
 
+  const rolNormalizado = normalizarRol(rolSeleccionado);
+  if (!ROLES_SISTEMA.includes(rolNormalizado)) {
+    toast.error("El rol seleccionado no es valido");
+    return;
+  }
+
   if (!perfilActual?.id) {
     toast.error("No se pudo identificar al administrador actual");
+    return;
+  }
+
+  if (usuarioEditando === perfilActual.id && (!activoSeleccionado || rolNormalizado !== "admin")) {
+    toast.error("No puedes quitar tu propio acceso administrativo");
+    return;
+  }
+
+  const usuarioExiste = usuarios.some((usuario) => usuario.id === usuarioEditando);
+  if (!usuarioExiste) {
+    toast.error("El usuario seleccionado no existe o ya no esta disponible");
+    return;
+  }
+
+  const empresasValidas = new Set(empresas.map((empresa) => Number(empresa.id)));
+  const empresasUnicas = valoresUnicosNumericos(empresasSeleccionadas);
+  const empresaInvalida = empresasUnicas.find(
+    (empresaId) => !empresasValidas.has(empresaId)
+  );
+
+  if (empresaInvalida !== undefined) {
+    toast.error("Hay una empresa seleccionada que no esta permitida");
+    return;
+  }
+
+  const modulosValidos = new Set(
+    modulos
+      .filter((modulo) => modulo.clave !== "admin" && modulo.activo)
+      .map((modulo) => modulo.clave)
+  );
+  const modulosUnicos = valoresUnicosTexto(modulosSeleccionados);
+  const moduloInvalido = modulosUnicos.find(
+    (moduloClave) => !modulosValidos.has(moduloClave)
+  );
+
+  if (moduloInvalido) {
+    toast.error("Hay un modulo seleccionado que no esta activo o permitido");
     return;
   }
 
@@ -230,6 +301,8 @@ async function guardarPermisosUsuario() {
 
   try {
     const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
+    const empresasSeleccionadasNormalizadas = empresasUnicas;
+    const modulosSeleccionadosNormalizados = modulosUnicos;
     const datosAuditoria = {
       actualizado_at: new Date().toISOString(),
       actualizado_por: perfilActual.id,
@@ -239,7 +312,7 @@ async function guardarPermisosUsuario() {
     const { error: rolError } = await supabase
       .from("perfiles")
       .update({
-        rol: rolSeleccionado,
+        rol: rolNormalizado,
         activo: activoSeleccionado,
       })
       .eq("id", usuarioEditando);
@@ -248,7 +321,7 @@ async function guardarPermisosUsuario() {
 
     const perfilActualizado =
       !usuarioAnterior ||
-      usuarioAnterior.rol !== rolSeleccionado ||
+      normalizarRol(usuarioAnterior.rol) !== rolNormalizado ||
       usuarioAnterior.activo !== activoSeleccionado;
 
     if (perfilActualizado) {
@@ -261,16 +334,16 @@ async function guardarPermisosUsuario() {
           estado_anterior: usuarioAnterior
             ? estadoPerfil(usuarioAnterior.rol, usuarioAnterior.activo)
             : null,
-          estado_nuevo: estadoPerfil(rolSeleccionado, activoSeleccionado),
+          estado_nuevo: estadoPerfil(rolNormalizado, activoSeleccionado),
           descripcion: "Perfil actualizado desde panel admin",
           sensible: true,
           metadatos: {
             nombre: usuarioAnterior?.nombre ?? null,
             campos_cambiados: {
-              ...(usuarioAnterior?.rol !== rolSeleccionado && {
+              ...(normalizarRol(usuarioAnterior?.rol) !== rolNormalizado && {
                 rol: {
                   anterior: usuarioAnterior?.rol ?? null,
-                  nuevo: rolSeleccionado,
+                  nuevo: rolNormalizado,
                 },
               }),
               ...(usuarioAnterior?.activo !== activoSeleccionado && {
@@ -297,18 +370,45 @@ async function guardarPermisosUsuario() {
 
     if (empresasExistentesError) throw empresasExistentesError;
 
-    const empresasSeleccionadasSet = new Set(empresasSeleccionadas.map(Number));
-    const asignacionesEmpresaParaActivar = (empresasExistentes || []).filter(
+    const empresasSeleccionadasSet = new Set(empresasSeleccionadasNormalizadas);
+    const empresasExistentesNormalizadas =
+      (empresasExistentes || []) as AsignacionEmpresaExistente[];
+    const empresasExistentesPorEmpresa = new Map<
+      number,
+      AsignacionEmpresaExistente[]
+    >();
+
+    for (const asignacion of empresasExistentesNormalizadas) {
+      const empresaId = Number(asignacion.empresa_id);
+      const asignacionesEmpresa = empresasExistentesPorEmpresa.get(empresaId) || [];
+      asignacionesEmpresa.push(asignacion);
+      empresasExistentesPorEmpresa.set(empresaId, asignacionesEmpresa);
+    }
+
+    const idsEmpresaCanonicosSeleccionados = new Set<number>();
+
+    for (const empresaId of empresasSeleccionadasSet) {
+      const asignacionesEmpresa = empresasExistentesPorEmpresa.get(empresaId) || [];
+      const canonica =
+        asignacionesEmpresa.find((asignacion) => asignacion.activo === true) ||
+        asignacionesEmpresa[0];
+
+      if (canonica) {
+        idsEmpresaCanonicosSeleccionados.add(canonica.id);
+      }
+    }
+
+    const asignacionesEmpresaParaActivar = empresasExistentesNormalizadas.filter(
       (asignacion) =>
         asignacion.activo !== true &&
-        empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
+        idsEmpresaCanonicosSeleccionados.has(asignacion.id)
     );
-    const asignacionesEmpresaParaDesactivar = (empresasExistentes || [])
-      .filter(
-        (asignacion) =>
-          asignacion.activo !== false &&
-          !empresasSeleccionadasSet.has(Number(asignacion.empresa_id))
-      );
+    const asignacionesEmpresaParaDesactivar = empresasExistentesNormalizadas.filter(
+      (asignacion) =>
+        asignacion.activo !== false &&
+        (!empresasSeleccionadasSet.has(Number(asignacion.empresa_id)) ||
+          !idsEmpresaCanonicosSeleccionados.has(asignacion.id))
+    );
     const idsEmpresasParaActivar = asignacionesEmpresaParaActivar.map(
       (asignacion) => asignacion.id
     );
@@ -391,9 +491,9 @@ async function guardarPermisosUsuario() {
     }
 
     const empresasRegistradasSet = new Set(
-      (empresasExistentes || []).map((asignacion) => Number(asignacion.empresa_id))
+      Array.from(empresasExistentesPorEmpresa.keys())
     );
-    const nuevasAsignaciones = empresasSeleccionadas
+    const nuevasAsignaciones = empresasSeleccionadasNormalizadas
       .filter((empresaId) => !empresasRegistradasSet.has(Number(empresaId)))
       .map((empresaId) => ({
         usuario_id: usuarioEditando,
@@ -445,16 +545,42 @@ async function guardarPermisosUsuario() {
 
     if (modulosExistentesError) throw modulosExistentesError;
 
-    const modulosSeleccionadosSet = new Set(modulosSeleccionados);
-    const asignacionesModuloParaActivar = (modulosExistentes || []).filter(
+    const modulosSeleccionadosSet = new Set(modulosSeleccionadosNormalizados);
+    const modulosExistentesNormalizados =
+      (modulosExistentes || []) as AsignacionModuloExistente[];
+    const modulosExistentesPorClave = new Map<
+      string,
+      AsignacionModuloExistente[]
+    >();
+
+    for (const modulo of modulosExistentesNormalizados) {
+      const modulosClave = modulosExistentesPorClave.get(modulo.modulo_clave) || [];
+      modulosClave.push(modulo);
+      modulosExistentesPorClave.set(modulo.modulo_clave, modulosClave);
+    }
+
+    const idsModuloCanonicosSeleccionados = new Set<number>();
+
+    for (const moduloClave of modulosSeleccionadosSet) {
+      const modulosClave = modulosExistentesPorClave.get(moduloClave) || [];
+      const canonico =
+        modulosClave.find((modulo) => modulo.activo === true) || modulosClave[0];
+
+      if (canonico) {
+        idsModuloCanonicosSeleccionados.add(canonico.id);
+      }
+    }
+
+    const asignacionesModuloParaActivar = modulosExistentesNormalizados.filter(
       (modulo) =>
         modulo.activo !== true &&
-        modulosSeleccionadosSet.has(modulo.modulo_clave)
+        idsModuloCanonicosSeleccionados.has(modulo.id)
     );
-    const asignacionesModuloParaDesactivar = (modulosExistentes || []).filter(
+    const asignacionesModuloParaDesactivar = modulosExistentesNormalizados.filter(
       (modulo) =>
         modulo.activo !== false &&
-        !modulosSeleccionadosSet.has(modulo.modulo_clave)
+        (!modulosSeleccionadosSet.has(modulo.modulo_clave) ||
+          !idsModuloCanonicosSeleccionados.has(modulo.id))
     );
     const idsModulosParaActivar = asignacionesModuloParaActivar.map(
       (modulo) => modulo.id
@@ -537,9 +663,9 @@ async function guardarPermisosUsuario() {
     }
 
     const modulosRegistradosSet = new Set(
-      (modulosExistentes || []).map((modulo) => modulo.modulo_clave)
+      Array.from(modulosExistentesPorClave.keys())
     );
-    const nuevosModulos = modulosSeleccionados
+    const nuevosModulos = modulosSeleccionadosNormalizados
       .filter((moduloClave) => !modulosRegistradosSet.has(moduloClave))
       .map((moduloClave) => ({
         usuario_id: usuarioEditando,

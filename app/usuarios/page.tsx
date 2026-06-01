@@ -9,15 +9,20 @@ import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { Users, Plus, Trash2, Loader2 } from "lucide-react";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
-const MOTIVO_DESACTIVACION = "Desactivado desde módulo Usuarios";
+const MOTIVO_DESACTIVACION = "Desactivado desde modulo Usuarios";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
 }
 
+function obtenerMensajeError(error: unknown) {
+  return error instanceof Error ? error.message : "Error desconocido";
+}
+
 interface Perfil {
   id: string;
   nombre: string;
+  correo: string | null;
   rol: string;
   activo: boolean | null;
   created_at: string | null;
@@ -34,6 +39,7 @@ export default function UsuariosPage() {
   const [form, setForm] = useState({
     nombre: "",
     uid: "",
+    correo: "",
     rol: "empleado",
   });
 
@@ -49,7 +55,7 @@ export default function UsuariosPage() {
             acceso.motivo === "usuario_inactivo"
           ) {
             if (acceso.motivo === "usuario_inactivo") {
-              alert("Tu usuario está inactivo. Contacta al administrador.");
+              alert("Tu usuario esta inactivo. Contacta al administrador.");
             }
 
             router.replace("/login");
@@ -60,9 +66,9 @@ export default function UsuariosPage() {
             acceso.motivo === "modulo_inactivo" ||
             acceso.motivo === "modulo_no_encontrado"
           ) {
-            alert("El módulo de Usuarios está desactivado.");
+            alert("El modulo de Usuarios esta desactivado.");
           } else {
-            alert("No tienes acceso al módulo de Usuarios.");
+            alert("No tienes acceso al modulo de Usuarios.");
           }
 
           router.replace("/dashboard");
@@ -80,7 +86,7 @@ export default function UsuariosPage() {
         await obtenerPerfiles();
         setAutorizado(true);
       } catch (error) {
-        console.error("Error de inicialización:", error);
+        console.error("Error de inicializacion:", error);
       } finally {
         setLoading(false);
       }
@@ -92,7 +98,7 @@ export default function UsuariosPage() {
   async function obtenerPerfiles() {
     const { data, error } = await supabase
       .from("perfiles")
-      .select("id,nombre,rol,activo,created_at")
+      .select("id,nombre,correo,rol,activo,created_at")
       .eq("activo", true)
       .order("created_at", { ascending: false });
 
@@ -105,62 +111,40 @@ export default function UsuariosPage() {
   }
 
   async function crearPerfil() {
-    if (!form.nombre.trim() || !form.uid.trim()) {
-      alert("Completa el nombre y el UID existente de Supabase Auth.");
+    if (!form.nombre.trim() || !form.uid.trim() || !form.correo.trim()) {
+      alert("Completa el nombre, correo y UID existente de Supabase Auth.");
       return;
     }
 
     setProcesando(true);
 
     try {
-      const perfilCreado = {
-        id: form.uid.trim(),
-        nombre: form.nombre.trim(),
-        rol: form.rol,
-        activo: true,
-      };
+      const respuesta = await fetch("/api/admin/perfiles", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nombre: form.nombre,
+          uid: form.uid,
+          correo: form.correo,
+          rol: form.rol,
+        }),
+      });
 
-      const { error } = await supabase.from("perfiles").insert([
-        perfilCreado,
-      ]);
+      const resultado = await respuesta.json().catch(() => ({}));
 
-      if (error) throw error;
-
-      let auditoriaRegistrada = true;
-
-      try {
-        await registrarAuditoriaEvento({
-          modulo: "usuarios",
-          accion: "crear_perfil",
-          entidad_tipo: "perfil",
-          entidad_id: perfilCreado.id,
-          estado_nuevo: "activo",
-          descripcion: "Perfil de usuario creado",
-          sensible: true,
-          metadatos: {
-            nombre: perfilCreado.nombre,
-            rol: perfilCreado.rol,
-            activo: perfilCreado.activo,
-          },
-          origen: "modulo_usuarios",
-        });
-      } catch (auditoriaError) {
-        auditoriaRegistrada = false;
-        console.error(
-          "El perfil fue creado, pero no se pudo registrar la auditoría:",
-          auditoriaError
+      if (!respuesta.ok) {
+        throw new Error(
+          resultado?.error || "No se pudo crear el perfil de usuario."
         );
       }
 
-      setForm({ nombre: "", uid: "", rol: "empleado" });
+      setForm({ nombre: "", uid: "", correo: "", rol: "empleado" });
       await obtenerPerfiles();
-      alert(
-        auditoriaRegistrada
-          ? "Perfil de usuario creado correctamente."
-          : "Perfil creado, pero no se pudo registrar la auditoría. Contacta al administrador."
-      );
-    } catch (error: any) {
-      alert("Error al crear perfil de usuario: " + error.message);
+      alert(resultado?.advertencia || "Perfil de usuario creado correctamente.");
+    } catch (error: unknown) {
+      alert("Error al crear perfil de usuario: " + obtenerMensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -174,7 +158,7 @@ export default function UsuariosPage() {
 
     if (
       !window.confirm(
-        "¿Estás seguro de desactivar este perfil de usuario? Perderá acceso al sistema."
+        "Estas seguro de desactivar este perfil de usuario? Perdera acceso al sistema."
       )
     ) {
       return;
@@ -206,6 +190,7 @@ export default function UsuariosPage() {
           sensible: true,
           metadatos: {
             nombre: perfilDesactivado?.nombre ?? null,
+            correo: perfilDesactivado?.correo ?? null,
             rol: perfilDesactivado?.rol ?? null,
           },
           origen: "modulo_usuarios",
@@ -213,7 +198,7 @@ export default function UsuariosPage() {
       } catch (auditoriaError) {
         auditoriaRegistrada = false;
         console.error(
-          "El perfil fue desactivado, pero no se pudo registrar la auditoría:",
+          "El perfil fue desactivado, pero no se pudo registrar la auditoria:",
           auditoriaError
         );
       }
@@ -222,10 +207,10 @@ export default function UsuariosPage() {
       alert(
         auditoriaRegistrada
           ? "Perfil de usuario desactivado correctamente."
-          : "Perfil desactivado, pero no se pudo registrar la auditoría. Contacta al administrador."
+          : "Perfil desactivado, pero no se pudo registrar la auditoria. Contacta al administrador."
       );
-    } catch (error: any) {
-      alert("No se pudo desactivar el perfil: " + error.message);
+    } catch (error: unknown) {
+      alert("No se pudo desactivar el perfil: " + obtenerMensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -250,17 +235,24 @@ export default function UsuariosPage() {
               USUARIOS
             </h1>
             <p className="text-gray-400 mt-2">
-              Administración de perfiles de usuario del sistema
+              Administracion de perfiles de usuario del sistema
             </p>
           </header>
 
           <section className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
-            <div className="grid md:grid-cols-3 gap-4">
+            <div className="grid md:grid-cols-4 gap-4">
               <input
                 type="text"
                 placeholder="Nombre completo"
                 value={form.nombre}
                 onChange={(e) => setForm({ ...form, nombre: e.target.value })}
+                className="input-style"
+              />
+              <input
+                type="email"
+                placeholder="Correo de Supabase Auth"
+                value={form.correo}
+                onChange={(e) => setForm({ ...form, correo: e.target.value })}
                 className="input-style"
               />
               <input
@@ -276,13 +268,15 @@ export default function UsuariosPage() {
                 className="input-style"
               >
                 <option value="empleado">Empleado</option>
+                <option value="contador">Contador</option>
                 <option value="supervisor">Supervisor</option>
                 <option value="jefe">Jefe</option>
                 <option value="admin">Administrador</option>
               </select>
             </div>
             <p className="text-xs text-cyan-500/70 mt-3">
-              El UID debe existir previamente en Supabase Authentication.
+              El UID y el correo deben existir previamente en Supabase
+              Authentication.
             </p>
             <button
               onClick={crearPerfil}
@@ -307,6 +301,11 @@ export default function UsuariosPage() {
                     <h2 className="text-xl font-bold truncate">
                       {perfil.nombre}
                     </h2>
+                    {perfil.correo && (
+                      <p className="text-gray-400 text-xs mt-1 truncate">
+                        {perfil.correo}
+                      </p>
+                    )}
                     <p className="text-gray-400 text-xs mt-1 font-mono truncate">
                       UID: {perfil.id}
                     </p>
