@@ -1,397 +1,1077 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
-
+import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import {
+  registrarAuditoriaEvento,
+  type ValorJsonAuditoria,
+} from "../../lib/auditoria";
+import {
+  Archive,
   Building2,
+  CheckCircle2,
+  Edit3,
+  Eye,
+  Loader2,
   Plus,
-  Trash2,
+  RefreshCcw,
+  Save,
+  XCircle,
 } from "lucide-react";
 
-interface Empresa {
+type EstadoEmpresa = "Activa" | "Pendiente" | "Inactiva" | "Archivada";
 
+interface Empresa {
   id: number;
+  nit?: string | null;
+  rtn?: string | null;
+  razon_social?: string | null;
+  nombre_comercial?: string | null;
+  nombre?: string | null;
+  direccion_fiscal?: string | null;
+  direccion?: string | null;
+  telefono?: string | null;
+  correo?: string | null;
+  representante_legal?: string | null;
+  actividad_economica?: string | null;
+  estado?: string | null;
+  observaciones?: string | null;
+  cai?: string | null;
+  isr?: number | string | null;
+}
+
+interface PerfilActual {
+  id: string;
   nombre: string;
-  rtn: string;
+  rol: string;
+}
+
+interface DependenciaEmpresa {
+  tabla: string;
+  descripcion: string;
+  conteo: number;
+  critica: boolean;
+}
+
+interface FormEmpresa {
+  nit: string;
+  razonSocial: string;
+  nombreComercial: string;
+  direccionFiscal: string;
   telefono: string;
   correo: string;
-  direccion: string;
+  representanteLegal: string;
+  actividadEconomica: string;
+  estado: EstadoEmpresa;
+  observaciones: string;
+}
 
-  cai: string;
-  isr: string;
-  estado: string;
+const ESTADOS_EMPRESA: EstadoEmpresa[] = [
+  "Activa",
+  "Pendiente",
+  "Inactiva",
+  "Archivada",
+];
+
+const FORM_INICIAL: FormEmpresa = {
+  nit: "",
+  razonSocial: "",
+  nombreComercial: "",
+  direccionFiscal: "",
+  telefono: "",
+  correo: "",
+  representanteLegal: "",
+  actividadEconomica: "",
+  estado: "Activa",
+  observaciones: "",
+};
+
+const TABLAS_DEPENDENCIAS: Array<{
+  tabla: string;
+  descripcion: string;
+  critica: boolean;
+}> = [
+  { tabla: "movimientos", descripcion: "Movimientos operativos", critica: true },
+  { tabla: "tareas", descripcion: "Tareas", critica: true },
+  { tabla: "cheques", descripcion: "Cheques", critica: true },
+  { tabla: "ordenes_compra", descripcion: "Ordenes de compra", critica: true },
+  { tabla: "fondos_empresa", descripcion: "Fondos y cuentas", critica: true },
+  { tabla: "chequeras", descripcion: "Chequeras", critica: true },
+  { tabla: "cheques_fisicos", descripcion: "Cheques fisicos", critica: true },
+  { tabla: "proveedores", descripcion: "Proveedores", critica: true },
+  { tabla: "documentos_tramites", descripcion: "Documentos", critica: true },
+  { tabla: "calendario_eventos", descripcion: "Calendario operativo", critica: true },
+  { tabla: "catalogo_cuentas", descripcion: "Catalogo contable", critica: true },
+  { tabla: "periodos_contables", descripcion: "Periodos contables", critica: true },
+  { tabla: "asientos_contables", descripcion: "Asientos contables", critica: true },
+  { tabla: "usuario_empresas", descripcion: "Permisos de usuarios", critica: true },
+  { tabla: "borradores_trabajo", descripcion: "Borradores de trabajo", critica: false },
+  { tabla: "reinicios_controlados", descripcion: "Reinicios controlados", critica: true },
+  { tabla: "auditoria_eventos", descripcion: "Auditoria", critica: true },
+];
+
+function normalizarRol(rol?: string | null) {
+  return (rol || "").trim().toLowerCase();
+}
+
+function texto(valor?: string | null) {
+  return (valor || "").trim();
+}
+
+function estadoNormalizado(valor?: string | null): EstadoEmpresa {
+  const estado = texto(valor).toLowerCase();
+  if (estado === "pendiente") return "Pendiente";
+  if (estado === "inactiva" || estado === "inactivo") return "Inactiva";
+  if (estado === "archivada" || estado === "archivado") return "Archivada";
+  return "Activa";
+}
+
+function empresaNombre(empresa: Empresa) {
+  return (
+    texto(empresa.nombre_comercial) ||
+    texto(empresa.nombre) ||
+    texto(empresa.razon_social) ||
+    `Empresa ${empresa.id}`
+  );
+}
+
+function empresaRazonSocial(empresa: Empresa) {
+  return texto(empresa.razon_social) || texto(empresa.nombre) || empresaNombre(empresa);
+}
+
+function empresaNit(empresa: Empresa) {
+  return texto(empresa.nit) || texto(empresa.rtn);
+}
+
+function empresaDireccion(empresa: Empresa) {
+  return texto(empresa.direccion_fiscal) || texto(empresa.direccion);
+}
+
+function limpiarForm(form: FormEmpresa) {
+  return {
+    nit: texto(form.nit),
+    razonSocial: texto(form.razonSocial),
+    nombreComercial: texto(form.nombreComercial),
+    direccionFiscal: texto(form.direccionFiscal),
+    telefono: texto(form.telefono),
+    correo: texto(form.correo).toLowerCase(),
+    representanteLegal: texto(form.representanteLegal),
+    actividadEconomica: texto(form.actividadEconomica),
+    estado: form.estado,
+    observaciones: texto(form.observaciones),
+  };
+}
+
+function mensajeError(error: unknown) {
+  return error instanceof Error ? error.message : "Error inesperado.";
 }
 
 export default function EmpresasPage() {
   const router = useRouter();
 
-  const [empresas, setEmpresas] =
-    useState<Empresa[]>([]);
+  const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
+  const [perfilActual, setPerfilActual] = useState<PerfilActual | null>(null);
+  const [validandoAcceso, setValidandoAcceso] = useState(true);
+  const [autorizado, setAutorizado] = useState(false);
+  const [procesando, setProcesando] = useState(false);
+  const [mensaje, setMensaje] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("operativas");
+  const [busqueda, setBusqueda] = useState("");
+  const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [form, setForm] = useState<FormEmpresa>(FORM_INICIAL);
+  const [dependencias, setDependencias] = useState<DependenciaEmpresa[]>([]);
+  const [empresaPrevisualizada, setEmpresaPrevisualizada] =
+    useState<Empresa | null>(null);
 
-  const [validandoAcceso, setValidandoAcceso] =
-    useState(true);
+  useEffect(() => {
+    async function iniciar() {
+      try {
+        setValidandoAcceso(true);
+        const acceso = await validarAccesoModuloUsuario("empresas");
 
-  const [autorizado, setAutorizado] =
-    useState(false);
+        if (!acceso.ok) {
+          if (
+            acceso.motivo === "sin_sesion" ||
+            acceso.motivo === "sin_perfil" ||
+            acceso.motivo === "usuario_inactivo"
+          ) {
+            if (acceso.motivo === "usuario_inactivo") {
+              alert("Tu usuario esta inactivo. Contacta al administrador.");
+            }
 
-  const [nombre, setNombre] =
-    useState("");
+            router.replace("/login");
+            return;
+          }
 
-  const [rtn, setRtn] =
-    useState("");
-
-  const [telefono, setTelefono] =
-    useState("");
-
-  const [correo, setCorreo] =
-    useState("");
-
-  const [direccion, setDireccion] =
-    useState("");
-  
-  const [cai, setCai] =
-  useState("");
-
-const [isr, setIsr] =
-  useState(0);
-
-  const [estado, setEstado] =
-  useState("Activa");
-
-useEffect(() => {
-  async function iniciar() {
-    const acceso = await validarAccesoModuloUsuario("empresas");
-
-    if (!acceso.ok) {
-      if (
-        acceso.motivo === "sin_sesion" ||
-        acceso.motivo === "sin_perfil" ||
-        acceso.motivo === "usuario_inactivo"
-      ) {
-        if (acceso.motivo === "usuario_inactivo") {
-          alert("Tu usuario está inactivo. Contacta al administrador.");
+          alert(
+            acceso.motivo === "modulo_inactivo" ||
+              acceso.motivo === "modulo_no_encontrado"
+              ? "El modulo de Empresas esta desactivado."
+              : "No tienes acceso al modulo de Empresas."
+          );
+          router.replace("/dashboard");
+          return;
         }
 
-        router.replace("/login");
-        return;
-      }
+        const perfil = acceso.perfil!;
+        const rol = normalizarRol(perfil.rol);
 
-      if (
-        acceso.motivo === "modulo_inactivo" ||
-        acceso.motivo === "modulo_no_encontrado"
-      ) {
-        alert("El módulo de Empresas está desactivado.");
-      } else {
-        alert("No tienes acceso al módulo de Empresas.");
-      }
+        if (!["admin", "supervisor", "jefe"].includes(rol)) {
+          router.replace("/dashboard");
+          return;
+        }
 
-      router.replace("/dashboard");
-      return;
+        const idsPermitidos = await obtenerEmpresasPermitidas(
+          acceso.user!.id,
+          perfil.rol || ""
+        );
+
+        setPerfilActual({
+          id: perfil.id,
+          nombre: perfil.nombre,
+          rol,
+        });
+        setEmpresasPermitidasIds(idsPermitidos);
+        await obtenerEmpresas(idsPermitidos);
+        setAutorizado(true);
+      } catch (error) {
+        console.error("Error inicializando Empresas:", error);
+        alert("No se pudo cargar el modulo de Empresas.");
+      } finally {
+        setValidandoAcceso(false);
+      }
     }
 
-    const perfil = acceso.perfil!;
-    const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
+    iniciar();
+  }, [router]);
 
-    if (!["admin", "supervisor"].includes(rolNormalizado)) {
-      router.replace("/dashboard");
-      return;
+  const puedeCrearActualizar = ["admin", "jefe", "supervisor"].includes(
+    perfilActual?.rol || ""
+  );
+  const puedeArchivar = ["admin", "jefe"].includes(perfilActual?.rol || "");
+
+  async function auditarEmpresa(params: {
+    empresaId?: number | null;
+    accion: string;
+    estadoAnterior?: string | null;
+    estadoNuevo?: string | null;
+    motivo?: string | null;
+    descripcion: string;
+    metadatos?: ValorJsonAuditoria | null;
+  }) {
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: params.empresaId ?? null,
+        modulo: "empresas",
+        accion: params.accion,
+        entidad_tipo: "empresa",
+        entidad_id: params.empresaId ?? null,
+        estado_anterior: params.estadoAnterior,
+        estado_nuevo: params.estadoNuevo,
+        motivo: params.motivo,
+        descripcion: params.descripcion,
+        sensible: true,
+        metadatos: params.metadatos || null,
+        origen: "modulo_empresas",
+      });
+      return true;
+    } catch (error) {
+      console.error("La operacion de Empresas se guardo, pero fallo la auditoria:", error);
+      return false;
     }
-
-    await obtenerEmpresas();
-    setAutorizado(true);
-    setValidandoAcceso(false);
   }
 
-  iniciar();
-}, [router]);
+  async function obtenerEmpresas(idsPermitidos = empresasPermitidasIds) {
+    setMensaje("");
 
+    if (!idsPermitidos.length) {
+      setEmpresas([]);
+      return;
+    }
 
-
-  async function obtenerEmpresas() {
-
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("empresas")
       .select("*")
+      .in("id", idsPermitidos)
       .order("id", { ascending: false });
 
-    if (data) {
-      setEmpresas(data);
+    if (error) {
+      throw error;
+    }
+
+    setEmpresas(data || []);
+  }
+
+  function validarEmpresaPermitida(id: number) {
+    if (!empresasPermitidasIds.includes(Number(id))) {
+      throw new Error("No tienes permiso para gestionar esta empresa.");
     }
   }
 
-async function crearEmpresa() {
+  function validarFormulario(formulario: FormEmpresa) {
+    const limpio = limpiarForm(formulario);
 
-  if (!nombre) return;
+    if (!limpio.razonSocial && !limpio.nombreComercial) {
+      throw new Error("La razon social o el nombre comercial son obligatorios.");
+    }
 
-  const { error } = await supabase
-    .from("empresas")
-    .insert([
-      {
-        nombre,
-        rtn,
-        telefono,
-        correo,
-        direccion,
-        cai,
-        isr,
-        estado,
-      },
-    ]);
+    if (limpio.correo && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(limpio.correo)) {
+      throw new Error("El correo no tiene un formato valido.");
+    }
 
-  if (error) {
-    console.log(error);
-    alert(error.message);
-    return;
+    return limpio;
   }
 
-  setNombre("");
-  setRtn("");
-  setTelefono("");
-  setCorreo("");
-  setDireccion("");
-  setCai("");
-setIsr(0);
-  setEstado("Activa");
+  function payloadEmpresa(formulario: FormEmpresa) {
+    const limpio = validarFormulario(formulario);
+    const nombrePrincipal = limpio.nombreComercial || limpio.razonSocial;
 
-  obtenerEmpresas();
-}
+    return {
+      nit: limpio.nit || null,
+      rtn: limpio.nit || null,
+      razon_social: limpio.razonSocial || nombrePrincipal,
+      nombre_comercial: limpio.nombreComercial || nombrePrincipal,
+      nombre: nombrePrincipal,
+      direccion_fiscal: limpio.direccionFiscal || null,
+      direccion: limpio.direccionFiscal || null,
+      telefono: limpio.telefono || null,
+      correo: limpio.correo || null,
+      representante_legal: limpio.representanteLegal || null,
+      actividad_economica: limpio.actividadEconomica || null,
+      estado: limpio.estado,
+      observaciones: limpio.observaciones || null,
+    };
+  }
 
-  async function eliminarEmpresa(id: number) {
+  async function guardarEmpresa() {
+    if (!puedeCrearActualizar) {
+      alert("No tienes permiso para guardar empresas.");
+      return;
+    }
 
-    const confirmarInactivacion = window.confirm(
-      "¿Deseas inactivar esta empresa?"
+    let payload: ReturnType<typeof payloadEmpresa>;
+
+    try {
+      payload = payloadEmpresa(form);
+      if (editandoId !== null) validarEmpresaPermitida(editandoId);
+    } catch (error) {
+      alert(mensajeError(error));
+      return;
+    }
+
+    setProcesando(true);
+    setMensaje("");
+
+    try {
+      if (editandoId === null) {
+        const { data, error } = await supabase
+          .from("empresas")
+          .insert([payload])
+          .select("*")
+          .single();
+
+        if (error) throw error;
+
+        const empresaCreada = data as Empresa;
+        const auditoriaOk = await auditarEmpresa({
+          empresaId: empresaCreada.id,
+          accion: "crear_empresa",
+          estadoNuevo: estadoNormalizado(empresaCreada.estado),
+          descripcion: "Empresa creada desde modulo Empresas",
+          metadatos: {
+            nit: empresaNit(empresaCreada),
+            razon_social: empresaRazonSocial(empresaCreada),
+            nombre_comercial: empresaNombre(empresaCreada),
+          },
+        });
+
+        setMensaje(
+          auditoriaOk
+            ? "Empresa creada correctamente."
+            : "Empresa creada, pero fallo la auditoria administrativa."
+        );
+      } else {
+        const empresaAnterior = empresas.find((empresa) => empresa.id === editandoId);
+        const { data, error } = await supabase
+          .from("empresas")
+          .update(payload)
+          .eq("id", editandoId)
+          .select("*")
+          .single();
+
+        if (error) throw error;
+
+        const empresaActualizada = data as Empresa;
+        const auditoriaOk = await auditarEmpresa({
+          empresaId: editandoId,
+          accion: "actualizar_empresa",
+          estadoAnterior: estadoNormalizado(empresaAnterior?.estado),
+          estadoNuevo: estadoNormalizado(empresaActualizada.estado),
+          descripcion: "Empresa actualizada desde modulo Empresas",
+          metadatos: {
+            anterior: empresaAnterior
+              ? {
+                  nit: empresaNit(empresaAnterior),
+                  razon_social: empresaRazonSocial(empresaAnterior),
+                  nombre_comercial: empresaNombre(empresaAnterior),
+                  estado: estadoNormalizado(empresaAnterior.estado),
+                }
+              : null,
+            nuevo: {
+              nit: empresaNit(empresaActualizada),
+              razon_social: empresaRazonSocial(empresaActualizada),
+              nombre_comercial: empresaNombre(empresaActualizada),
+              estado: estadoNormalizado(empresaActualizada.estado),
+            },
+          },
+        });
+
+        setMensaje(
+          auditoriaOk
+            ? "Empresa actualizada correctamente."
+            : "Empresa actualizada, pero fallo la auditoria administrativa."
+        );
+      }
+
+      limpiarEdicion();
+      await obtenerEmpresas();
+    } catch (error) {
+      console.error("Error guardando empresa:", error);
+      alert(mensajeError(error));
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  function cargarParaEditar(empresa: Empresa) {
+    validarEmpresaPermitida(empresa.id);
+    setEditandoId(empresa.id);
+    setForm({
+      nit: empresaNit(empresa),
+      razonSocial: empresaRazonSocial(empresa),
+      nombreComercial: empresaNombre(empresa),
+      direccionFiscal: empresaDireccion(empresa),
+      telefono: texto(empresa.telefono),
+      correo: texto(empresa.correo),
+      representanteLegal: texto(empresa.representante_legal),
+      actividadEconomica: texto(empresa.actividad_economica),
+      estado: estadoNormalizado(empresa.estado),
+      observaciones: texto(empresa.observaciones),
+    });
+    setDependencias([]);
+    setEmpresaPrevisualizada(null);
+  }
+
+  function limpiarEdicion() {
+    setEditandoId(null);
+    setForm(FORM_INICIAL);
+  }
+
+  async function cambiarEstadoEmpresa(
+    empresa: Empresa,
+    estadoNuevo: EstadoEmpresa,
+    accion: string
+  ) {
+    if (estadoNuevo === "Archivada" && !puedeArchivar) {
+      alert("Solo admin o jefe pueden archivar empresas.");
+      return;
+    }
+
+    try {
+      validarEmpresaPermitida(empresa.id);
+    } catch (error) {
+      alert(mensajeError(error));
+      return;
+    }
+
+    const motivo = window.prompt(`Motivo para marcar la empresa como ${estadoNuevo}:`);
+
+    if (!motivo || motivo.trim().length < 5) {
+      alert("Debes escribir un motivo valido.");
+      return;
+    }
+
+    const confirmar = window.confirm(
+      `Confirmas cambiar el estado de ${empresaNombre(empresa)} a ${estadoNuevo}?`
     );
 
-    if (!confirmarInactivacion) {
-      return;
+    if (!confirmar) return;
+
+    setProcesando(true);
+    setMensaje("");
+
+    try {
+      const estadoAnterior = estadoNormalizado(empresa.estado);
+      const { error } = await supabase
+        .from("empresas")
+        .update({
+          estado: estadoNuevo,
+          observaciones:
+            texto(empresa.observaciones) ||
+            `Estado actualizado a ${estadoNuevo} desde modulo Empresas.`,
+        })
+        .eq("id", empresa.id);
+
+      if (error) throw error;
+
+      const auditoriaOk = await auditarEmpresa({
+        empresaId: empresa.id,
+        accion,
+        estadoAnterior,
+        estadoNuevo,
+        motivo: motivo.trim(),
+        descripcion: `Empresa marcada como ${estadoNuevo}`,
+        metadatos: {
+          nit: empresaNit(empresa),
+          razon_social: empresaRazonSocial(empresa),
+          nombre_comercial: empresaNombre(empresa),
+        },
+      });
+
+      setMensaje(
+        auditoriaOk
+          ? `Empresa marcada como ${estadoNuevo}.`
+          : `Empresa marcada como ${estadoNuevo}, pero fallo la auditoria.`
+      );
+      await obtenerEmpresas();
+    } catch (error) {
+      console.error("Error cambiando estado de empresa:", error);
+      alert(mensajeError(error));
+    } finally {
+      setProcesando(false);
     }
-
-    const { error } = await supabase
-      .from("empresas")
-      .update({ estado: "Inactiva" })
-      .eq("id", id);
-
-    if (error) {
-      alert("Error al inactivar la empresa: " + error.message);
-      return;
-    }
-
-    alert("Empresa inactivada correctamente.");
-    obtenerEmpresas();
   }
+
+  async function contarDependencias(empresaId: number) {
+    const resultados = await Promise.all(
+      TABLAS_DEPENDENCIAS.map(async (dep) => {
+        const { count, error } = await supabase
+          .from(dep.tabla)
+          .select("id", { count: "exact", head: true })
+          .eq("empresa_id", empresaId);
+
+        if (error) {
+          console.warn(`No se pudo previsualizar ${dep.tabla}:`, error.message);
+          return { ...dep, conteo: 0 };
+        }
+
+        return { ...dep, conteo: count || 0 };
+      })
+    );
+
+    return resultados;
+  }
+
+  async function previsualizarLimpieza(empresa: Empresa) {
+    try {
+      validarEmpresaPermitida(empresa.id);
+    } catch (error) {
+      alert(mensajeError(error));
+      return;
+    }
+
+    setProcesando(true);
+    setMensaje("");
+
+    try {
+      const deps = await contarDependencias(empresa.id);
+      setDependencias(deps);
+      setEmpresaPrevisualizada(empresa);
+
+      const total = deps.reduce((acc, dep) => acc + dep.conteo, 0);
+      const criticas = deps
+        .filter((dep) => dep.critica)
+        .reduce((acc, dep) => acc + dep.conteo, 0);
+
+      await auditarEmpresa({
+        empresaId: empresa.id,
+        accion: "previsualizar_limpieza_empresa",
+        estadoAnterior: estadoNormalizado(empresa.estado),
+        descripcion: "Previsualizacion de limpieza segura de empresa",
+        metadatos: {
+          nombre: empresaNombre(empresa),
+          total_dependencias: total,
+          dependencias_criticas: criticas,
+          dependencias: deps,
+          recomendacion:
+            total > 0
+              ? "No eliminar fisicamente; usar inactivacion o archivado."
+              : "Sin dependencias visibles; preparar eliminacion segura con RPC administrativa si la politica lo permite.",
+        },
+      });
+
+      setMensaje(
+        total > 0
+          ? "La empresa tiene dependencias. No se debe eliminar fisicamente; usa inactivar o archivar."
+          : "No se detectaron dependencias visibles. La eliminacion fisica queda preparada solo para RPC administrativa con confirmacion externa."
+      );
+    } catch (error) {
+      console.error("Error previsualizando limpieza:", error);
+      alert(mensajeError(error));
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  const empresasFiltradas = useMemo(() => {
+    const textoBusqueda = busqueda.trim().toLowerCase();
+
+    return empresas.filter((empresa) => {
+      const estado = estadoNormalizado(empresa.estado);
+      const coincideEstado =
+        filtroEstado === "todas" ||
+        (filtroEstado === "operativas" && estado !== "Archivada") ||
+        estado.toLowerCase() === filtroEstado;
+
+      if (!coincideEstado) return false;
+
+      if (!textoBusqueda) return true;
+
+      return [
+        empresaNombre(empresa),
+        empresaRazonSocial(empresa),
+        empresaNit(empresa),
+        empresa.correo || "",
+        empresa.representante_legal || "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(textoBusqueda);
+    });
+  }, [busqueda, empresas, filtroEstado]);
 
   if (validandoAcceso || !autorizado) {
     return (
       <div className="flex bg-[#020617] min-h-screen items-center justify-center text-white">
+        <Loader2 className="animate-spin mr-3 text-cyan-400" />
         Validando acceso...
       </div>
     );
   }
 
   return (
-
     <div className="flex bg-[#020617] min-h-screen text-white">
-
       <Sidebar />
 
       <main className="flex-1 p-8">
-
         <div className="max-w-7xl mx-auto">
+          <header className="mb-8 flex flex-col md:flex-row md:items-end md:justify-between gap-4">
+            <div>
+              <h1 className="text-5xl font-black">Empresas</h1>
+              <p className="text-gray-400 mt-2">
+                Registro formal y control operativo por alcance autorizado
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                Operador: {perfilActual?.nombre} | Rol: {perfilActual?.rol}
+              </p>
+            </div>
 
-          {/* HEADER */}
-          <div className="mb-10">
-
-            <h1 className="text-5xl font-black">
-              Empresas
-            </h1>
-
-            <p className="text-gray-400 mt-2">
-              Gestión empresarial contable
-            </p>
-
-          </div>
-
-          {/* FORM */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
-
-            <div className="grid md:grid-cols-2 gap-4">
-
-              <input
-                type="text"
-                placeholder="Nombre empresa"
-                value={nombre}
-                onChange={(e) =>
-                  setNombre(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
-
-              <input
-                type="text"
-                placeholder="RTN"
-                value={rtn}
-                onChange={(e) =>
-                  setRtn(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
-
-              <input
-                type="text"
-                placeholder="Teléfono"
-                value={telefono}
-                onChange={(e) =>
-                  setTelefono(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
-
-              <input
-                type="email"
-                placeholder="Correo"
-                value={correo}
-                onChange={(e) =>
-                  setCorreo(e.target.value)
-                }
-                className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-              />
-
-<input
-  type="text"
-  placeholder="Dirección"
-  value={direccion}
-  onChange={(e) =>
-    setDireccion(e.target.value)
-  }
-  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none md:col-span-2"
-/>
-
-<input
-  type="text"
-  placeholder="CAI"
-  value={cai}
-  onChange={(e) =>
-    setCai(e.target.value)
-  }
-  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
-/>
-
-
-<select
-  value={estado}
-  onChange={(e) =>
-    setEstado(e.target.value)
-  }
-  className="h-14 px-5 rounded-2xl bg-[#0B1120] border border-white/10 outline-none"
->
-
-  <option value="Activa">
-    Activa
-  </option>
-
-  <option value="Pendiente">
-    Pendiente
-  </option>
-
-  <option value="Suspendida">
-    Suspendida
-  </option>
-
-</select>
-
-<input
-  type="number"
-  placeholder="ISR"
-  value={isr}
-  onChange={(e) =>
-setIsr(Number(e.target.value))
-  }
-  className="bg-[#0B1120] border border-white/10 rounded-2xl p-4 outline-none"
-/>
-</div>
-
-<button
-  onClick={crearEmpresa} 
-              className="mt-5 bg-cyan-500 hover:bg-cyan-400 transition px-6 py-4 rounded-2xl flex items-center gap-2 font-bold text-black"
+            <button
+              onClick={() => obtenerEmpresas()}
+              disabled={procesando}
+              className="h-12 px-5 rounded-2xl bg-white/5 border border-white/10 hover:border-cyan-500/40 text-sm font-bold text-gray-300 flex items-center gap-2 disabled:opacity-50"
             >
-
-              <Plus size={20} />
-
-              Crear Empresa
-
+              <RefreshCcw size={16} />
+              Actualizar
             </button>
+          </header>
 
-          </div>
+          {mensaje && (
+            <div className="mb-6 rounded-2xl border border-cyan-500/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+              {mensaje}
+            </div>
+          )}
 
-          {/* LISTA */}
-          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+          <section className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
+            <div className="flex items-center justify-between gap-4 mb-5">
+              <div>
+                <h2 className="text-xl font-black">
+                  {editandoId === null ? "Nueva empresa" : `Editando #${editandoId}`}
+                </h2>
+                <p className="text-sm text-gray-500">
+                  Datos fiscales y administrativos formales
+                </p>
+              </div>
+              {editandoId !== null && (
+                <button
+                  onClick={limpiarEdicion}
+                  className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-sm text-gray-300"
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
 
-            {empresas.map((empresa) => (
+            <div className="grid md:grid-cols-3 gap-4">
+              <Campo label="NIT">
+                <input
+                  value={form.nit}
+                  onChange={(e) => setForm({ ...form, nit: e.target.value })}
+                  className="input"
+                  placeholder="NIT"
+                />
+              </Campo>
 
-              <div
-                key={empresa.id}
-                className="bg-white/5 border border-white/10 rounded-3xl p-6"
-              >
+              <Campo label="Razon social">
+                <input
+                  value={form.razonSocial}
+                  onChange={(e) =>
+                    setForm({ ...form, razonSocial: e.target.value })
+                  }
+                  className="input"
+                  placeholder="Razon social"
+                />
+              </Campo>
 
-                <div className="flex justify-between items-start">
+              <Campo label="Nombre comercial">
+                <input
+                  value={form.nombreComercial}
+                  onChange={(e) =>
+                    setForm({ ...form, nombreComercial: e.target.value })
+                  }
+                  className="input"
+                  placeholder="Nombre comercial"
+                />
+              </Campo>
 
-                  <div>
+              <Campo label="Direccion fiscal" className="md:col-span-2">
+                <input
+                  value={form.direccionFiscal}
+                  onChange={(e) =>
+                    setForm({ ...form, direccionFiscal: e.target.value })
+                  }
+                  className="input"
+                  placeholder="Direccion fiscal"
+                />
+              </Campo>
 
-                    <div className="bg-cyan-500/20 w-14 h-14 rounded-2xl flex items-center justify-center mb-4">
+              <Campo label="Telefono">
+                <input
+                  value={form.telefono}
+                  onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+                  className="input"
+                  placeholder="Telefono"
+                />
+              </Campo>
 
-                      <Building2 className="text-cyan-400" />
+              <Campo label="Correo">
+                <input
+                  type="email"
+                  value={form.correo}
+                  onChange={(e) => setForm({ ...form, correo: e.target.value })}
+                  className="input"
+                  placeholder="correo@empresa.com"
+                />
+              </Campo>
 
+              <Campo label="Representante legal">
+                <input
+                  value={form.representanteLegal}
+                  onChange={(e) =>
+                    setForm({ ...form, representanteLegal: e.target.value })
+                  }
+                  className="input"
+                  placeholder="Representante legal"
+                />
+              </Campo>
+
+              <Campo label="Actividad economica">
+                <input
+                  value={form.actividadEconomica}
+                  onChange={(e) =>
+                    setForm({ ...form, actividadEconomica: e.target.value })
+                  }
+                  className="input"
+                  placeholder="Actividad economica"
+                />
+              </Campo>
+
+              <Campo label="Estado">
+                <select
+                  value={form.estado}
+                  onChange={(e) =>
+                    setForm({ ...form, estado: e.target.value as EstadoEmpresa })
+                  }
+                  className="input"
+                >
+                  {ESTADOS_EMPRESA.map((estado) => (
+                    <option key={estado} value={estado}>
+                      {estado}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+
+              <Campo label="Observaciones" className="md:col-span-3">
+                <textarea
+                  value={form.observaciones}
+                  onChange={(e) =>
+                    setForm({ ...form, observaciones: e.target.value })
+                  }
+                  className="input min-h-24 py-4"
+                  placeholder="Notas administrativas"
+                />
+              </Campo>
+            </div>
+
+            <button
+              onClick={guardarEmpresa}
+              disabled={procesando || !puedeCrearActualizar}
+              className="mt-5 bg-cyan-500 hover:bg-cyan-400 transition px-6 py-4 rounded-2xl flex items-center gap-2 font-bold text-black disabled:opacity-50"
+            >
+              {editandoId === null ? <Plus size={20} /> : <Save size={20} />}
+              {editandoId === null ? "Crear empresa" : "Guardar cambios"}
+            </button>
+          </section>
+
+          <section className="mb-8 grid md:grid-cols-3 gap-4">
+            <input
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              className="input md:col-span-2"
+              placeholder="Buscar por NIT, razon social, nombre comercial o representante"
+            />
+            <select
+              value={filtroEstado}
+              onChange={(e) => setFiltroEstado(e.target.value)}
+              className="input"
+            >
+              <option value="operativas">Operativas</option>
+              <option value="activa">Activas</option>
+              <option value="pendiente">Pendientes</option>
+              <option value="inactiva">Inactivas</option>
+              <option value="archivada">Archivadas</option>
+              <option value="todas">Todas</option>
+            </select>
+          </section>
+
+          {empresaPrevisualizada && (
+            <section className="mb-8 bg-orange-500/10 border border-orange-500/20 rounded-3xl p-6">
+              <h2 className="text-orange-200 font-black mb-2">
+                Previsualizacion de limpieza: {empresaNombre(empresaPrevisualizada)}
+              </h2>
+              <p className="text-sm text-gray-300 mb-4">
+                Si existe cualquier dependencia, la limpieza permitida es inactivar o
+                archivar. Auditoria, documentos, usuarios y permisos no se tocan.
+              </p>
+              <div className="grid md:grid-cols-3 gap-3">
+                {dependencias.map((dep) => (
+                  <div
+                    key={dep.tabla}
+                    className={`rounded-2xl border p-4 ${
+                      dep.conteo > 0
+                        ? "border-orange-500/30 bg-orange-500/10"
+                        : "border-white/10 bg-white/5"
+                    }`}
+                  >
+                    <p className="font-black text-sm">{dep.descripcion}</p>
+                    <p className="text-xs text-gray-500">{dep.tabla}</p>
+                    <p className="text-2xl font-black mt-2">{dep.conteo}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {empresasFiltradas.map((empresa) => {
+              const estado = estadoNormalizado(empresa.estado);
+              const esControlPlus =
+                empresaNombre(empresa).toLowerCase().includes("control plus") ||
+                empresaRazonSocial(empresa).toLowerCase().includes("control plus");
+
+              return (
+                <div
+                  key={empresa.id}
+                  className="bg-white/5 border border-white/10 rounded-3xl p-6"
+                >
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="min-w-0">
+                      <div className="bg-cyan-500/20 w-14 h-14 rounded-2xl flex items-center justify-center mb-4">
+                        <Building2 className="text-cyan-400" />
+                      </div>
+                      <h2 className="text-2xl font-bold truncate">
+                        {empresaNombre(empresa)}
+                      </h2>
+                      <p className="text-gray-400 mt-2 text-sm">
+                        Razon social: {empresaRazonSocial(empresa)}
+                      </p>
+                      <p className="text-gray-400 text-sm">
+                        NIT: {empresaNit(empresa) || "Pendiente"}
+                      </p>
+                      <p className="text-gray-400 text-sm">
+                        Tel: {texto(empresa.telefono) || "N/A"}
+                      </p>
+                      <p className="text-gray-400 text-sm truncate">
+                        {texto(empresa.correo) || "Sin correo"}
+                      </p>
+                      <p className="text-gray-500 mt-3 text-sm">
+                        {empresaDireccion(empresa) || "Sin direccion fiscal"}
+                      </p>
+                      <p className="text-gray-500 mt-2 text-xs">
+                        Representante:{" "}
+                        {texto(empresa.representante_legal) || "Pendiente"}
+                      </p>
+                      <div className="flex flex-wrap gap-2 mt-4">
+                        <EstadoPill estado={estado} />
+                        {esControlPlus && (
+                          <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-black uppercase text-orange-300">
+                            Posible prueba
+                          </span>
+                        )}
+                      </div>
                     </div>
-
-                    <h2 className="text-2xl font-bold">
-                      {empresa.nombre}
-                    </h2>
-
-                    <p className="text-gray-400 mt-3">
-                      RTN: {empresa.rtn}
-                    </p>
-
-                    <p className="text-gray-400">
-                      {empresa.telefono}
-                    </p>
-
-                    <p className="text-gray-400">
-                      {empresa.correo}
-                    </p>
-
-                    <p className="text-gray-500 mt-3 text-sm">
-                      {empresa.direccion}
-                    </p>
-
                   </div>
 
-                  <button
-                    onClick={() =>
-                      eliminarEmpresa(empresa.id)
-                    }
-                    className="bg-red-500/20 hover:bg-red-500/30 text-red-400 p-3 rounded-2xl transition"
-                  >
-
-                    <Trash2 size={20} />
-
-                  </button>
-
+                  <div className="mt-5 grid grid-cols-2 gap-2">
+                    <BotonAccion
+                      onClick={() => cargarParaEditar(empresa)}
+                      disabled={procesando}
+                      icon={<Edit3 size={16} />}
+                      label="Editar"
+                    />
+                    <BotonAccion
+                      onClick={() => previsualizarLimpieza(empresa)}
+                      disabled={procesando}
+                      icon={<Eye size={16} />}
+                      label="Previsualizar"
+                    />
+                    {estado !== "Inactiva" && (
+                      <BotonAccion
+                        onClick={() =>
+                          cambiarEstadoEmpresa(
+                            empresa,
+                            "Inactiva",
+                            "inactivar_empresa"
+                          )
+                        }
+                        disabled={procesando}
+                        icon={<XCircle size={16} />}
+                        label="Inactivar"
+                      />
+                    )}
+                    {estado !== "Activa" && (
+                      <BotonAccion
+                        onClick={() =>
+                          cambiarEstadoEmpresa(empresa, "Activa", "activar_empresa")
+                        }
+                        disabled={procesando}
+                        icon={<CheckCircle2 size={16} />}
+                        label="Activar"
+                      />
+                    )}
+                    {estado !== "Archivada" && (
+                      <BotonAccion
+                        onClick={() =>
+                          cambiarEstadoEmpresa(
+                            empresa,
+                            "Archivada",
+                            "archivar_empresa"
+                          )
+                        }
+                        disabled={procesando || !puedeArchivar}
+                        icon={<Archive size={16} />}
+                        label="Archivar"
+                      />
+                    )}
+                  </div>
                 </div>
+              );
+            })}
 
-              </div>
-
-            ))}
-
-          </div>
-
+            {empresasFiltradas.length === 0 && (
+              <div className="text-gray-500">No hay empresas para mostrar.</div>
+            )}
+          </section>
         </div>
-
       </main>
 
+      <style jsx>{`
+        .input {
+          min-height: 3.5rem;
+          width: 100%;
+          border-radius: 1rem;
+          background: #0b1120;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          padding: 0 1.25rem;
+          outline: none;
+          color: white;
+        }
+        .input:focus {
+          border-color: #06b6d4;
+        }
+        .input option {
+          background: #0b1120;
+          color: white;
+        }
+      `}</style>
     </div>
+  );
+}
+
+function Campo({
+  label,
+  children,
+  className = "",
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={`flex flex-col gap-2 ${className}`}>
+      <span className="text-[10px] font-black text-gray-500 uppercase ml-2">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function EstadoPill({ estado }: { estado: EstadoEmpresa }) {
+  const color =
+    estado === "Activa"
+      ? "bg-green-500/10 text-green-300 border-green-500/20"
+      : estado === "Archivada"
+        ? "bg-purple-500/10 text-purple-300 border-purple-500/20"
+        : estado === "Inactiva"
+          ? "bg-red-500/10 text-red-300 border-red-500/20"
+          : "bg-orange-500/10 text-orange-300 border-orange-500/20";
+
+  return (
+    <span
+      className={`rounded-full border px-3 py-1 text-xs font-black uppercase ${color}`}
+    >
+      {estado}
+    </span>
+  );
+}
+
+function BotonAccion({
+  onClick,
+  disabled,
+  icon,
+  label,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="h-11 rounded-xl bg-white/5 border border-white/10 hover:border-cyan-500/30 text-xs font-black text-gray-300 flex items-center justify-center gap-2 disabled:opacity-40"
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
