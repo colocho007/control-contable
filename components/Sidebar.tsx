@@ -196,6 +196,12 @@ export default function Sidebar() {
     clave: "cuentas-cobrar",
   },
   {
+    name: "Cuentas por Pagar",
+    path: "/cuentas-pagar",
+    icon: WalletCards,
+    clave: "cuentas-pagar",
+  },
+  {
     name: "Reportes",
     path: "/reportes",
     icon: BarChart3,
