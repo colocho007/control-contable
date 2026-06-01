@@ -6,6 +6,11 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 import { Building2, Loader2, Plus, Search, UserRound, XCircle } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 
@@ -83,6 +88,7 @@ export default function ClientesPage() {
   const [procesando, setProcesando] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -133,9 +139,11 @@ export default function ClientesPage() {
         acceso.user!.id,
         acceso.perfil?.rol || ""
       );
+      const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
 
       setUserId(acceso.user!.id);
       setEmpresasPermitidasIds(idsPermitidos);
+      setFuncionesOperativas(funciones);
       setAutorizado(true);
       setValidandoAcceso(false);
       setCargando(true);
@@ -210,6 +218,34 @@ export default function ClientesPage() {
       throw new Error("No tienes permiso para operar sobre esa empresa.");
     }
     return empresaId;
+  }
+
+  function esAuditorSoloLectura(empresaId?: string | number | null) {
+    return esAuditorSoloLecturaLocal(
+      funcionesOperativas,
+      empresaId ? [empresaId] : empresasPermitidasIds
+    );
+  }
+
+  async function bloquearAuditor(accion: string, empresaId?: string | number | null, entidadId?: string | number | null) {
+    const empresaNumero = Number(empresaId || 0);
+    const mensaje = "El auditor solo lectura no puede modificar clientes.";
+    toast.error(mensaje);
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: Number.isFinite(empresaNumero) && empresaNumero > 0 ? empresaNumero : null,
+        modulo: "clientes",
+        accion: "intento_bloqueado_auditor_solo_lectura",
+        entidad_tipo: "cliente",
+        entidad_id: entidadId || null,
+        descripcion: mensaje,
+        sensible: true,
+        metadatos: { accion_intentada: accion },
+        origen: "modulo_clientes",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar bloqueo de auditor:", error);
+    }
   }
 
   function validarReferencias(empresaId: number) {
@@ -299,6 +335,11 @@ export default function ClientesPage() {
       return;
     }
 
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("guardar_cliente", empresaId, clienteEditandoId || null);
+      return;
+    }
+
     const duplicado = clientes.find(
       (cliente) =>
         Number(cliente.empresa_id) === empresaId &&
@@ -370,6 +411,11 @@ export default function ClientesPage() {
   }
 
   async function inactivarCliente(cliente: Cliente) {
+    if (esAuditorSoloLectura(cliente.empresa_id)) {
+      await bloquearAuditor("inactivar_cliente", cliente.empresa_id, cliente.id);
+      return;
+    }
+
     try {
       validarEmpresaPermitida(cliente.empresa_id);
     } catch (error) {
@@ -414,6 +460,11 @@ export default function ClientesPage() {
   }
 
   function cargarClienteParaEditar(cliente: Cliente) {
+    if (esAuditorSoloLectura(cliente.empresa_id)) {
+      void bloquearAuditor("editar_cliente", cliente.empresa_id, cliente.id);
+      return;
+    }
+
     setClienteEditandoId(cliente.id);
     setForm({
       empresaId: String(cliente.empresa_id),
@@ -658,10 +709,12 @@ export default function ClientesPage() {
                     </div>
 
                     <div className="flex gap-2 mt-5">
-                      <button onClick={() => cargarClienteParaEditar(cliente)} className="flex-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black py-3">
-                        Editar
-                      </button>
-                      {cliente.estado !== "Inactivo" && (
+                      {!esAuditorSoloLectura(cliente.empresa_id) && (
+                        <button onClick={() => cargarClienteParaEditar(cliente)} className="flex-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black py-3">
+                          Editar
+                        </button>
+                      )}
+                      {cliente.estado !== "Inactivo" && !esAuditorSoloLectura(cliente.empresa_id) && (
                         <button onClick={() => inactivarCliente(cliente)} className="flex-1 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black py-3">
                           Inactivar
                         </button>

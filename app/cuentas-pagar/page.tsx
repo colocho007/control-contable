@@ -7,6 +7,11 @@ import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 import { AlertTriangle, Ban, Loader2, Plus, RefreshCcw, Search, WalletCards } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
@@ -117,6 +122,7 @@ export default function CuentasPagarPage() {
   const [procesando, setProcesando] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
@@ -174,9 +180,11 @@ export default function CuentasPagarPage() {
         acceso.user!.id,
         acceso.perfil?.rol || ""
       );
+      const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
 
       setUserId(acceso.user!.id);
       setEmpresasPermitidasIds(idsPermitidos);
+      setFuncionesOperativas(funciones);
       setAutorizado(true);
       setValidandoAcceso(false);
       setCargando(true);
@@ -251,6 +259,34 @@ export default function CuentasPagarPage() {
       throw new Error("No tienes permiso para operar sobre esa empresa.");
     }
     return empresaId;
+  }
+
+  function esAuditorSoloLectura(empresaId?: string | number | null) {
+    return esAuditorSoloLecturaLocal(
+      funcionesOperativas,
+      empresaId ? [empresaId] : empresasPermitidasIds
+    );
+  }
+
+  async function bloquearAuditor(accion: string, empresaId?: string | number | null, entidadId?: string | number | null) {
+    const empresaNumero = Number(empresaId || 0);
+    const mensaje = "El auditor solo lectura no puede modificar Cuentas por Pagar.";
+    toast.error(mensaje);
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: Number.isFinite(empresaNumero) && empresaNumero > 0 ? empresaNumero : null,
+        modulo: "cuentas-pagar",
+        accion: "intento_bloqueado_auditor_solo_lectura",
+        entidad_tipo: "cuentas_por_pagar",
+        entidad_id: entidadId || null,
+        descripcion: mensaje,
+        sensible: true,
+        metadatos: { accion_intentada: accion },
+        origen: "modulo_cuentas_pagar",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar bloqueo de auditor:", error);
+    }
   }
 
   function proveedorSeleccionado() {
@@ -373,6 +409,10 @@ export default function CuentasPagarPage() {
   }
 
   function abrirPago(cuenta: CuentaPagar) {
+    if (esAuditorSoloLectura(cuenta.empresa_id)) {
+      void bloquearAuditor("abrir_pago_cxp", cuenta.empresa_id, cuenta.id);
+      return;
+    }
     if (cuenta.estado === "Anulado" || cuenta.estado === "Pagado") {
       toast.error("Esta cuenta no acepta nuevos pagos.");
       return;
@@ -402,6 +442,11 @@ export default function CuentasPagarPage() {
       monto = numero(formPago.monto);
     } catch (error) {
       toast.error(getErrorMessage(error));
+      return;
+    }
+
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("registrar_pago_cxp", empresaId, cuenta.id);
       return;
     }
 
@@ -555,6 +600,11 @@ export default function CuentasPagarPage() {
       return;
     }
 
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("anular_pago_cxp", empresaId, pago.cuenta_por_pagar_id);
+      return;
+    }
+
     if (pago.estado === "Anulado") {
       toast.error("El pago ya esta anulado.");
       return;
@@ -650,6 +700,11 @@ export default function CuentasPagarPage() {
       saldoPendiente = numero(form.saldoPendiente || form.total);
     } catch (error) {
       toast.error(getErrorMessage(error));
+      return;
+    }
+
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("guardar_cxp", empresaId, cuentaEditandoId || null);
       return;
     }
 
@@ -754,6 +809,11 @@ export default function CuentasPagarPage() {
   }
 
   async function anularCuenta(cuenta: CuentaPagar) {
+    if (esAuditorSoloLectura(cuenta.empresa_id)) {
+      await bloquearAuditor("anular_cxp", cuenta.empresa_id, cuenta.id);
+      return;
+    }
+
     const motivo = window.prompt("Motivo para anular la cuenta por pagar:");
     if (!motivo || motivo.trim().length < 5) {
       toast.error("Debes indicar un motivo valido.");
@@ -791,6 +851,11 @@ export default function CuentasPagarPage() {
   }
 
   function cargarParaEditar(cuenta: CuentaPagar) {
+    if (esAuditorSoloLectura(cuenta.empresa_id)) {
+      void bloquearAuditor("editar_cxp", cuenta.empresa_id, cuenta.id);
+      return;
+    }
+
     setCuentaEditandoId(cuenta.id);
     setForm({
       empresaId: String(cuenta.empresa_id),
@@ -1012,11 +1077,13 @@ export default function CuentasPagarPage() {
                           <p>Obs: {cuenta.observaciones || "N/A"}</p>
                         </div>
                         <div className="flex flex-col gap-2 min-w-36">
-                          {cuenta.estado !== "Anulado" && cuenta.estado !== "Pagado" && (
+                          {cuenta.estado !== "Anulado" && cuenta.estado !== "Pagado" && !esAuditorSoloLectura(cuenta.empresa_id) && (
                             <button onClick={() => abrirPago(cuenta)} className="px-4 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black">Registrar pago</button>
                           )}
-                          <button onClick={() => cargarParaEditar(cuenta)} className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black">Editar</button>
-                          {cuenta.estado !== "Anulado" && (
+                          {!esAuditorSoloLectura(cuenta.empresa_id) && (
+                            <button onClick={() => cargarParaEditar(cuenta)} className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black">Editar</button>
+                          )}
+                          {cuenta.estado !== "Anulado" && !esAuditorSoloLectura(cuenta.empresa_id) && (
                             <button onClick={() => anularCuenta(cuenta)} className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black">Anular</button>
                           )}
                         </div>
@@ -1067,7 +1134,7 @@ export default function CuentasPagarPage() {
                                   <EstadoPill estado={pago.estado} />
                                   {pago.motivo_anulacion && <p className="mt-1 text-red-200">{pago.motivo_anulacion}</p>}
                                 </div>
-                                {pago.estado !== "Anulado" && (
+                                {pago.estado !== "Anulado" && !esAuditorSoloLectura(pago.empresa_id) && (
                                   <button onClick={() => anularPago(pago)} disabled={procesando} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 font-black text-red-200">
                                     <Ban size={14} />
                                     Anular pago

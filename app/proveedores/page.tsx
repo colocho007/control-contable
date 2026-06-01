@@ -6,6 +6,11 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 import { Loader2, Plus, Search, Truck } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 
@@ -96,6 +101,7 @@ export default function ProveedoresPage() {
   const [procesando, setProcesando] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [cuentas, setCuentas] = useState<CuentaContable[]>([]);
@@ -166,7 +172,9 @@ export default function ProveedoresPage() {
     const ids = usuarioId
       ? await obtenerEmpresasPermitidas(usuarioId, acceso.perfil?.rol || "")
       : [];
+    const funciones = usuarioId ? await listarFuncionesOperativasUsuario(usuarioId, ids) : [];
     setEmpresasPermitidasIds(ids);
+    setFuncionesOperativas(funciones);
     setAutorizado(true);
     setValidandoAcceso(false);
     await cargarDatos(ids);
@@ -245,6 +253,34 @@ export default function ProveedoresPage() {
     return empresaId > 0 && empresasPermitidasIds.includes(empresaId);
   }
 
+  function esAuditorSoloLectura(empresaId?: string | number | null) {
+    return esAuditorSoloLecturaLocal(
+      funcionesOperativas,
+      empresaId ? [empresaId] : empresasPermitidasIds
+    );
+  }
+
+  async function bloquearAuditor(accion: string, empresaId?: string | number | null, entidadId?: string | number | null) {
+    const empresaNumero = Number(empresaId || 0);
+    const mensaje = "El auditor solo lectura no puede modificar proveedores.";
+    toast.error(mensaje);
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: Number.isFinite(empresaNumero) && empresaNumero > 0 ? empresaNumero : null,
+        modulo: "proveedores",
+        accion: "intento_bloqueado_auditor_solo_lectura",
+        entidad_tipo: "proveedor",
+        entidad_id: entidadId || null,
+        descripcion: mensaje,
+        sensible: true,
+        metadatos: { accion_intentada: accion },
+        origen: "modulo_proveedores",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar bloqueo de auditor:", error);
+    }
+  }
+
   function validarReferencias(empresaId: number) {
     if (form.cuentaPorPagarId) {
       const cuenta = cuentas.find((item) => String(item.id) === String(form.cuentaPorPagarId));
@@ -279,6 +315,11 @@ export default function ProveedoresPage() {
   }
 
   function cargarProveedorParaEditar(proveedor: Proveedor) {
+    if (esAuditorSoloLectura(proveedor.empresa_id)) {
+      void bloquearAuditor("editar_proveedor", proveedor.empresa_id, proveedor.id);
+      return;
+    }
+
     setProveedorEditandoId(proveedor.id);
     setForm({
       empresaId: String(proveedor.empresa_id),
@@ -332,6 +373,10 @@ export default function ProveedoresPage() {
 
     if (!validarEmpresaPermitida(empresaId)) {
       toast.error("Empresa no permitida para este usuario.");
+      return;
+    }
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("guardar_proveedor", empresaId, proveedorEditandoId || null);
       return;
     }
     if (!nit) {
@@ -467,6 +512,10 @@ export default function ProveedoresPage() {
     const empresaId = Number(proveedor.empresa_id);
     if (!validarEmpresaPermitida(empresaId)) {
       toast.error("Empresa no permitida para este usuario.");
+      return;
+    }
+    if (esAuditorSoloLectura(empresaId)) {
+      await bloquearAuditor("inactivar_proveedor", empresaId, proveedor.id);
       return;
     }
 
@@ -876,14 +925,16 @@ export default function ProveedoresPage() {
                       <p className="text-sm text-gray-600">{proveedor.empresa || "Empresa sin nombre"}</p>
                     </div>
                     <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => cargarProveedorParaEditar(proveedor)}
-                        className="rounded-md border border-blue-200 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
-                      >
-                        Editar
-                      </button>
-                      {proveedor.estado !== "Inactivo" && (
+                      {!esAuditorSoloLectura(proveedor.empresa_id) && (
+                        <button
+                          type="button"
+                          onClick={() => cargarProveedorParaEditar(proveedor)}
+                          className="rounded-md border border-blue-200 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                        >
+                          Editar
+                        </button>
+                      )}
+                      {proveedor.estado !== "Inactivo" && !esAuditorSoloLectura(proveedor.empresa_id) && (
                         <button
                           type="button"
                           onClick={() => inactivarProveedor(proveedor)}
