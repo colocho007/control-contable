@@ -9,6 +9,7 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
+  esAuditorSoloLecturaLocal,
   listarFuncionesOperativasEmpresas,
   tieneFuncionOperativaLocal,
   type UsuarioFuncionOperativa,
@@ -785,6 +786,13 @@ function usuarioActualPuedeCrearOrden(empresaId: number | string | null | undefi
   return ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol));
 }
 
+function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
+  return esAuditorSoloLecturaLocal(
+    funcionesOperativas,
+    empresaId ? [empresaId] : empresasPermitidasIds
+  );
+}
+
  async function obtenerOrdenes(
   idsPermitidos: number[],
   usuarioId: string,
@@ -921,6 +929,11 @@ function usuarioActualPuedeCrearOrden(empresaId: number | string | null | undefi
   async function crearOrden() {
     if (!userId) {
       toast.error("Sesión no válida");
+      return;
+    }
+
+    if (esAuditorSoloLecturaOrden(form.empresaId)) {
+      toast.error("El auditor solo lectura no puede crear ordenes.");
       return;
     }
 
@@ -1313,6 +1326,11 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
   async function confirmarFirma(orden: OrdenCompra) {
     if (!userId) return;
+
+    if (esAuditorSoloLecturaOrden(orden.empresa_id)) {
+      toast.error("El auditor solo lectura no puede firmar ni aprobar ordenes.");
+      return;
+    }
 
     const firma = orden.ordenes_compra_firmas?.find(
       (f) => f.firmante_id === userId

@@ -9,6 +9,7 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
+  esAuditorSoloLecturaLocal,
   listarFuncionesOperativasEmpresas,
   tieneFuncionOperativaLocal,
   type UsuarioFuncionOperativa,
@@ -509,6 +510,13 @@ function usuarioPuedeAutorizarCheque(usuario: Perfil, empresaId?: number | strin
 function usuarioActualPuedePagarCheque(cheque: Cheque) {
   if (tieneFuncionCheque(userId, cheque.empresa_id, ["pagador_cheque"])) return true;
   return ROLES_JEFATURA.includes((perfilActual?.rol || "").trim().toLowerCase());
+}
+
+function esAuditorSoloLecturaCheque(empresaId?: number | string | null) {
+  return esAuditorSoloLecturaLocal(
+    funcionesOperativas,
+    empresaId ? [empresaId] : empresasPermitidasIds
+  );
 }
 
   async function obtenerCheques(
@@ -1171,6 +1179,11 @@ async function esperarAutoguardadoEnCurso() {
 }
 
 async function crearFondo() {
+  if (esAuditorSoloLecturaCheque(formFondo.empresaId)) {
+    toast.error("El auditor solo lectura no puede crear fondos.");
+    return;
+  }
+
   if (
     !formFondo.empresaId ||
     !formFondo.empresa ||
@@ -1227,6 +1240,11 @@ async function crearFondo() {
 }
 
 async function crearChequera() {
+  if (esAuditorSoloLecturaCheque(formChequera.empresaId)) {
+    toast.error("El auditor solo lectura no puede crear chequeras.");
+    return;
+  }
+
   if (
     !formChequera.fondoEmpresaId ||
     !formChequera.empresaId ||
@@ -1350,6 +1368,11 @@ async function crearChequera() {
  }
 
  async function crearCheque() {
+  if (esAuditorSoloLecturaCheque(form.empresaId)) {
+    toast.error("El auditor solo lectura no puede crear cheques.");
+    return;
+  }
+
   if (
     !form.empresa ||
     !form.empresaId ||
@@ -1814,6 +1837,10 @@ async function crearChequera() {
 
 async function autorizarCheque(cheque: Cheque) {
   if (!userId) return;
+  if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
+    toast.error("El auditor solo lectura no puede autorizar cheques.");
+    return;
+  }
   if (!tieneFuncionCheque(userId, cheque.empresa_id, ["autorizador_cheque", "firmante_cheque"]) && !puedeAprobar) {
     toast.error("No tienes funcion operativa para autorizar cheques en esta empresa.");
     return;
@@ -1971,6 +1998,11 @@ async function autorizarCheque(cheque: Cheque) {
 }
 
 async function rechazarCheque(cheque: Cheque) {
+  if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
+    toast.error("El auditor solo lectura no puede rechazar cheques.");
+    return;
+  }
+
   if (!userId) return;
 
   const motivo = window.prompt("Indica el motivo del rechazo:");
@@ -2135,6 +2167,11 @@ if (userId && perfilActual) {
 }
 
 async function archivarCheque(cheque: Cheque) {
+  if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
+    toast.error("El auditor solo lectura no puede archivar cheques.");
+    return;
+  }
+
   if (!userId) return;
 
 const motivo = window.prompt("Indica el motivo de anulación:");
@@ -2301,6 +2338,10 @@ if (userId && perfilActual) {
 
 async function marcarPagado(cheque: Cheque) {
   if (!userId) return;
+  if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
+    toast.error("El auditor solo lectura no puede pagar cheques.");
+    return;
+  }
   if (!cheque.empresa_id) {
     toast.error("No se puede pagar un cheque sin empresa asociada.");
     return;

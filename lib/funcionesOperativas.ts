@@ -92,3 +92,21 @@ export function tieneFuncionOperativaLocal(
       funcionesRequeridas.includes(item.funcion as FuncionOperativa)
   );
 }
+
+export function esAuditorSoloLecturaLocal(
+  funciones: UsuarioFuncionOperativa[],
+  empresasIds?: Array<number | string | null | undefined>
+) {
+  const empresasValidas = new Set(
+    (empresasIds || [])
+      .map((empresaId) => Number(empresaId))
+      .filter((empresaId) => Number.isFinite(empresaId))
+  );
+
+  return funciones.some(
+    (item) =>
+      item.activo !== false &&
+      item.funcion === "auditor_solo_lectura" &&
+      (!empresasValidas.size || empresasValidas.has(Number(item.empresa_id)))
+  );
+}

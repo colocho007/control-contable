@@ -32,6 +32,12 @@ import {
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 
 interface Empresa {
   id: number;
@@ -114,6 +120,7 @@ export default function DocumentosPage() {
   const [procesandoId, setProcesandoId] = useState<string | number | null>(null);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   useEffect(() => {
     let activo = true;
@@ -143,10 +150,12 @@ export default function DocumentosPage() {
           acceso.user!.id,
           acceso.perfil?.rol || ""
         );
+        const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
 
         if (!activo) return;
 
         setEmpresasPermitidasIds(idsPermitidos);
+        setFuncionesOperativas(funciones);
         setAutorizado(true);
         setValidandoAcceso(false);
 
@@ -308,6 +317,14 @@ export default function DocumentosPage() {
 
     try {
       const url = await obtenerUrlDocumento(documento);
+      await auditarLectura("abrir_documento", {
+        documento_id: documento.id,
+        modulo_origen: documento.modulo,
+        entidad_tipo: documento.entidad_tipo,
+        entidad_id: documento.entidad_id,
+        tipo_documento: documento.tipo_documento,
+        archivo_nombre: documento.archivo_nombre,
+      }, documento.empresa_id);
       const ventana = window.open(url, "_blank", "noopener,noreferrer");
 
       if (!ventana) {
@@ -331,6 +348,11 @@ export default function DocumentosPage() {
   }
 
   async function inactivarDocumento(documento: DocumentoTramite) {
+    if (esAuditorSoloLecturaLocal(funcionesOperativas, [documento.empresa_id])) {
+      window.alert("El auditor solo lectura no puede desactivar documentos.");
+      return;
+    }
+
     if (!empresasPermitidasIds.includes(Number(documento.empresa_id))) {
       window.alert("No tienes acceso para desactivar este documento.");
       return;
@@ -445,6 +467,11 @@ export default function DocumentosPage() {
       return;
     }
 
+    void auditarLectura("exportar_documentos", {
+      formato: "csv",
+      cantidad: filas.length,
+      filtros,
+    });
     descargarCsv("documentos.csv", columnasExportacion, filas);
   }
 
@@ -455,6 +482,11 @@ export default function DocumentosPage() {
       return;
     }
 
+    void auditarLectura("imprimir_documentos", {
+      formato: "pdf_vista_imprimible",
+      cantidad: filas.length,
+      filtros,
+    });
     abrirVistaImprimible(
       "Documentos",
       "Busqueda y respaldo de documentos de tramites",
@@ -467,6 +499,34 @@ export default function DocumentosPage() {
         "Cheques / vouchers": resumen.cheques,
       }
     );
+  }
+
+  async function auditarLectura(
+    accion: string,
+    metadatos: Record<string, unknown>,
+    empresaId?: number | null
+  ) {
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: empresaId ?? null,
+        modulo: "documentos",
+        accion,
+        entidad_tipo: "documento_tramite",
+        entidad_id:
+          typeof metadatos.documento_id === "string" || typeof metadatos.documento_id === "number"
+            ? metadatos.documento_id
+            : null,
+        descripcion: "Consulta de documentos auditada",
+        sensible: true,
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+        origen: "modulo_documentos",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar consulta de documentos:", error);
+    }
   }
 
   if (validandoAcceso || !autorizado) {
@@ -843,7 +903,10 @@ export default function DocumentosPage() {
                             <button
                               type="button"
                               onClick={() => void inactivarDocumento(documento)}
-                              disabled={procesandoId === documento.id}
+                              disabled={
+                                procesandoId === documento.id ||
+                                esAuditorSoloLecturaLocal(funcionesOperativas, [documento.empresa_id])
+                              }
                               className="inline-flex items-center justify-center gap-2 bg-red-500/10 border border-red-400/30 text-red-200 hover:bg-red-500/20 rounded-lg px-3 py-2 font-semibold disabled:opacity-50"
                             >
                               <Archive size={14} />

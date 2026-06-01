@@ -24,6 +24,12 @@ import {
   type ColumnaExportacion,
   type FilaExportacion,
 } from "../../lib/exportaciones";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 
 interface Empresa {
   id: number;
@@ -112,6 +118,7 @@ export default function HistorialPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [avisoCarga, setAvisoCarga] = useState<string | null>(null);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   useEffect(() => {
     let activo = true;
@@ -137,21 +144,22 @@ export default function HistorialPage() {
           return;
         }
 
-        const rolNormalizado = (acceso.perfil?.rol || "").trim().toLowerCase();
-
-        if (!ROLES_PERMITIDOS.includes(rolNormalizado)) {
-          router.replace("/dashboard");
-          return;
-        }
-
         const idsPermitidos = await obtenerEmpresasPermitidas(
           acceso.user!.id,
           acceso.perfil?.rol || ""
         );
+        const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
+        const rolNormalizado = (acceso.perfil?.rol || "").trim().toLowerCase();
+
+        if (!ROLES_PERMITIDOS.includes(rolNormalizado) && !esAuditorSoloLecturaLocal(funciones, idsPermitidos)) {
+          router.replace("/dashboard");
+          return;
+        }
 
         if (!activo) return;
 
         setEmpresasPermitidasIds(idsPermitidos);
+        setFuncionesOperativas(funciones);
         setAutorizado(true);
         setValidandoAcceso(false);
 
@@ -282,6 +290,10 @@ export default function HistorialPage() {
       if (error) throw error;
 
       setEventos((data || []) as AuditoriaEvento[]);
+      await auditarConsultaHistorial("consultar_historial", {
+        cantidad: (data || []).length,
+        filtros: filtrosAplicados,
+      });
     } catch (error) {
       console.error("Error cargando auditoria_eventos:", error);
       setErrorCarga("No se pudo cargar el historial general.");
@@ -400,6 +412,11 @@ export default function HistorialPage() {
       return;
     }
 
+    void auditarConsultaHistorial("exportar_historial", {
+      formato: "csv",
+      cantidad: filas.length,
+      filtros,
+    });
     descargarCsv("historial-general.csv", columnasExportacion, filas);
   }
 
@@ -410,6 +427,11 @@ export default function HistorialPage() {
       return;
     }
 
+    void auditarConsultaHistorial("imprimir_historial", {
+      formato: "pdf_vista_imprimible",
+      cantidad: filas.length,
+      filtros,
+    });
     abrirVistaImprimible(
       "Historial general",
       "Bitacora central de operaciones del sistema",
@@ -422,6 +444,25 @@ export default function HistorialPage() {
         "Modulos activos": resumen.modulos,
       }
     );
+  }
+
+  async function auditarConsultaHistorial(accion: string, metadatos: Record<string, unknown>) {
+    try {
+      await registrarAuditoriaEvento({
+        modulo: "historial",
+        accion,
+        entidad_tipo: "auditoria_eventos",
+        descripcion: "Consulta de historial auditada",
+        sensible: true,
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+        origen: "modulo_historial",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar consulta de historial:", error);
+    }
   }
 
   if (validandoAcceso || !autorizado) {

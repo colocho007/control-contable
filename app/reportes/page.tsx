@@ -21,6 +21,7 @@ import {
   type SeccionExportacion,
 } from "../../lib/exportaciones";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import {
   obtenerReporteMensual,
   type CalendarioPago,
@@ -32,6 +33,11 @@ import {
 } from "../../lib/reportesFinancieros";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import {
+  esAuditorSoloLecturaLocal,
+  listarFuncionesOperativasUsuario,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 
 interface Empresa {
   id: number;
@@ -134,6 +140,7 @@ export default function ReportesPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   useEffect(() => {
     let activo = true;
@@ -161,10 +168,12 @@ export default function ReportesPage() {
           acceso.user!.id,
           acceso.perfil?.rol || ""
         );
+        const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
 
         if (!activo) return;
 
         setEmpresasPermitidasIds(idsPermitidos);
+        setFuncionesOperativas(funciones);
         setAutorizado(true);
         setValidandoAcceso(false);
 
@@ -250,6 +259,11 @@ export default function ReportesPage() {
 
       const reporteMensual = await obtenerReporteMensual(params);
       setReporte(reporteMensual);
+      await auditarReporte("consultar_reporte", {
+        filtros: filtrosAplicados,
+        empresas_consultadas: idsPermitidos,
+        total_movimientos: reporteMensual.resumen.total_movimientos,
+      });
       setAviso(null);
     } catch (error) {
       console.error("Error cargando reportes:", error);
@@ -469,6 +483,11 @@ export default function ReportesPage() {
       return;
     }
 
+    void auditarReporte("exportar_reporte", {
+      formato: "csv",
+      filtros,
+      secciones: secciones.length,
+    });
     descargarCsvSecciones(`reportes-${fechaLocalISO()}.csv`, secciones);
   }
 
@@ -479,11 +498,36 @@ export default function ReportesPage() {
       return;
     }
 
+    void auditarReporte("imprimir_reporte", {
+      formato: "pdf_vista_imprimible",
+      filtros,
+      secciones: secciones.length,
+    });
     abrirVistaImprimibleSecciones(
       "Reportes",
       "Resumen financiero y operativo por empresa",
       secciones
     );
+  }
+
+  async function auditarReporte(accion: string, metadatos: Record<string, unknown>) {
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: filtros.empresaId ? Number(filtros.empresaId) : null,
+        modulo: "reportes",
+        accion,
+        entidad_tipo: "reporte",
+        descripcion: "Consulta o exportacion de reporte auditada",
+        sensible: true,
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+        origen: "modulo_reportes",
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar reporte:", error);
+    }
   }
 
   if (validandoAcceso || !autorizado) {

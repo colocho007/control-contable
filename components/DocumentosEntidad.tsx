@@ -10,6 +10,7 @@ import {
   subirDocumentoTramite,
   type DocumentoTramite,
 } from "../lib/documentosTramites";
+import { registrarAuditoriaEvento } from "../lib/auditoria";
 
 type DocumentosEntidadProps = {
   empresaId?: number | null;
@@ -24,6 +25,7 @@ type DocumentosEntidadProps = {
   moneda?: string | null;
   tiposDocumento?: string[];
   disabled?: boolean;
+  soloLectura?: boolean;
 };
 
 const TIPOS_DEFAULT = ["Documento", "Otro"];
@@ -61,6 +63,7 @@ export default function DocumentosEntidad({
   moneda,
   tiposDocumento,
   disabled = false,
+  soloLectura = false,
 }: DocumentosEntidadProps) {
   const tiposDisponibles = useMemo(
     () => (tiposDocumento && tiposDocumento.length > 0 ? tiposDocumento : TIPOS_DEFAULT),
@@ -82,7 +85,7 @@ export default function DocumentosEntidad({
 
   const empresaIdValida = typeof empresaId === "number" && Number.isFinite(empresaId) && empresaId > 0;
   const entidadIdValida = entidadId !== null && entidadId !== undefined && String(entidadId).trim() !== "";
-  const puedeGestionar = !disabled && empresaIdValida && entidadIdValida;
+  const puedeGestionar = !disabled && !soloLectura && empresaIdValida && entidadIdValida;
   const montoFormateado = formatMonto(monto, moneda);
 
   useEffect(() => {
@@ -192,6 +195,23 @@ export default function DocumentosEntidad({
     setProcesandoId(documento.id);
     try {
       const url = await obtenerUrlDocumento(documento);
+      await registrarAuditoriaEvento({
+        empresa_id: documento.empresa_id,
+        modulo: documento.modulo,
+        accion: "abrir_documento_relacionado",
+        entidad_tipo: documento.entidad_tipo || "documento_tramite",
+        entidad_id: documento.entidad_id || documento.id,
+        descripcion: "Documento relacionado abierto con URL temporal segura",
+        sensible: true,
+        metadatos: {
+          documento_id: documento.id,
+          tipo_documento: documento.tipo_documento,
+          archivo_nombre: documento.archivo_nombre,
+          bucket_privado: documento.archivo_bucket,
+          usa_signed_url: true,
+        },
+        origen: "componente_documentos_entidad",
+      });
       window.open(url, "_blank", "noopener,noreferrer");
     } catch (error) {
       const mensaje = getErrorMessage(error);
@@ -206,6 +226,11 @@ export default function DocumentosEntidad({
   };
 
   const desactivar = async (documento: DocumentoTramite) => {
+    if (soloLectura) {
+      toast.error("El auditor solo lectura no puede desactivar documentos.");
+      return;
+    }
+
     const confirmar = window.confirm("¿Deseas desactivar este documento? No se borrará físicamente.");
     if (!confirmar) return;
 
@@ -410,7 +435,7 @@ export default function DocumentosEntidad({
                 <button
                   type="button"
                   onClick={() => desactivar(documento)}
-                  disabled={procesandoId === documento.id}
+                  disabled={procesandoId === documento.id || soloLectura}
                   className="inline-flex items-center gap-2 rounded-xl border border-red-400/30 px-3 py-2 text-xs font-semibold text-red-100 transition hover:bg-red-500/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Archive className="h-3.5 w-3.5" />
