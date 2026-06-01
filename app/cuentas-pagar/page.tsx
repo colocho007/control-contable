@@ -6,7 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
-import { AlertTriangle, Loader2, Plus, RefreshCcw, Search, WalletCards } from "lucide-react";
+import { AlertTriangle, Ban, Loader2, Plus, RefreshCcw, Search, WalletCards } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
 interface Empresa {
@@ -57,10 +57,33 @@ interface CuentaPagar {
   actualizado_por: string | null;
 }
 
+interface PagoCuentaPagar {
+  id: string | number;
+  cuenta_por_pagar_id: string | number;
+  empresa_id: number;
+  proveedor_id: string | number | null;
+  fecha_pago: string;
+  metodo_pago: string;
+  banco: string | null;
+  referencia: string | null;
+  moneda: string;
+  monto: number;
+  observaciones: string | null;
+  estado: string;
+  creado_por: string | null;
+  creado_at: string | null;
+  anulado_por: string | null;
+  anulado_at: string | null;
+  motivo_anulacion: string | null;
+}
+
 const ESTADOS_CXP = ["Pendiente", "Parcial", "Pagado", "Vencido", "Anulado"];
 const MONEDAS = ["GTQ", "USD"];
+const METODOS_PAGO = ["Efectivo", "Transferencia", "Depósito", "Cheque", "Otro"];
 const COLUMNAS_CXP =
   "id,creado_at,actualizado_at,empresa_id,proveedor_id,documento_contable_id,serie,numero_documento,fecha_documento,fecha_vencimiento,moneda,total,saldo_pendiente,estado,observaciones,creado_por,actualizado_por";
+const COLUMNAS_PAGOS_CXP =
+  "id,cuenta_por_pagar_id,empresa_id,proveedor_id,fecha_pago,metodo_pago,banco,referencia,moneda,monto,observaciones,estado,creado_por,creado_at,anulado_por,anulado_at,motivo_anulacion";
 
 function textoONull(valor: string) {
   const texto = valor.trim();
@@ -98,8 +121,10 @@ export default function CuentasPagarPage() {
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [documentos, setDocumentos] = useState<DocumentoContable[]>([]);
   const [cuentasPagar, setCuentasPagar] = useState<CuentaPagar[]>([]);
+  const [pagos, setPagos] = useState<PagoCuentaPagar[]>([]);
   const [busqueda, setBusqueda] = useState("");
   const [cuentaEditandoId, setCuentaEditandoId] = useState<string | number | null>(null);
+  const [cuentaPagoId, setCuentaPagoId] = useState<string | number | null>(null);
 
   const [form, setForm] = useState({
     empresaId: "",
@@ -113,6 +138,15 @@ export default function CuentasPagarPage() {
     total: "",
     saldoPendiente: "",
     estado: "Pendiente",
+    observaciones: "",
+  });
+
+  const [formPago, setFormPago] = useState({
+    fechaPago: fechaHoyISO(),
+    metodoPago: "Transferencia",
+    banco: "",
+    referencia: "",
+    monto: "",
     observaciones: "",
   });
 
@@ -161,10 +195,11 @@ export default function CuentasPagarPage() {
       setProveedores([]);
       setDocumentos([]);
       setCuentasPagar([]);
+      setPagos([]);
       return;
     }
 
-    const [resEmpresas, resProveedores, resDocumentos, resCxp] = await Promise.all([
+    const [resEmpresas, resProveedores, resDocumentos, resCxp, resPagos] = await Promise.all([
       supabase.from("empresas").select("id,nombre").in("id", idsPermitidos).order("nombre"),
       supabase
         .from("proveedores")
@@ -182,17 +217,24 @@ export default function CuentasPagarPage() {
         .select(COLUMNAS_CXP)
         .in("empresa_id", idsPermitidos)
         .order("fecha_vencimiento", { ascending: true }),
+      supabase
+        .from("pagos_cuentas_por_pagar")
+        .select(COLUMNAS_PAGOS_CXP)
+        .in("empresa_id", idsPermitidos)
+        .order("fecha_pago", { ascending: false }),
     ]);
 
     if (resEmpresas.error) throw resEmpresas.error;
     if (resProveedores.error) throw resProveedores.error;
     if (resDocumentos.error) throw resDocumentos.error;
     if (resCxp.error) throw resCxp.error;
+    if (resPagos.error) throw resPagos.error;
 
     setEmpresas((resEmpresas.data || []) as Empresa[]);
     setProveedores((resProveedores.data || []) as Proveedor[]);
     setDocumentos((resDocumentos.data || []) as DocumentoContable[]);
     setCuentasPagar((resCxp.data || []) as CuentaPagar[]);
+    setPagos((resPagos.data || []) as PagoCuentaPagar[]);
 
     if (!form.empresaId && resEmpresas.data?.length) {
       setForm((actual) => ({ ...actual, empresaId: String(resEmpresas.data[0].id) }));
@@ -271,6 +313,314 @@ export default function CuentasPagarPage() {
     } catch (error) {
       console.error("CxP guardada, pero fallo auditoria:", error);
       toast.error("Cambio guardado, pero fallo la auditoria.");
+    }
+  }
+
+  async function auditarPagoCxP(
+    accion: string,
+    pago: PagoCuentaPagar,
+    cuenta: CuentaPagar,
+    estadoAnterior?: string | null
+  ) {
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: pago.empresa_id,
+        modulo: "cuentas-pagar",
+        accion,
+        entidad_tipo: "pago_cuenta_por_pagar",
+        entidad_id: pago.id,
+        estado_anterior: estadoAnterior || null,
+        estado_nuevo: pago.estado,
+        descripcion: "Pago de cuenta por pagar actualizado",
+        sensible: true,
+        metadatos: {
+          cuenta_por_pagar_id: pago.cuenta_por_pagar_id,
+          proveedor_id: pago.proveedor_id,
+          fecha_pago: pago.fecha_pago,
+          metodo_pago: pago.metodo_pago,
+          banco: pago.banco,
+          referencia: pago.referencia,
+          moneda: pago.moneda,
+          monto: pago.monto,
+          saldo_cxp_resultante: cuenta.saldo_pendiente,
+          estado_cxp_resultante: cuenta.estado,
+          cheques_preparados: true,
+          transferencias_preparadas: true,
+          depositos_preparados: true,
+          comprobantes_adjuntos_preparados: true,
+          asiento_automatico_creado: false,
+        },
+        origen: "modulo_cuentas_pagar",
+      });
+    } catch (error) {
+      console.error("Pago CxP guardado, pero fallo auditoria:", error);
+      toast.error("Pago guardado, pero fallo la auditoria.");
+    }
+  }
+
+  function calcularEstadoConSaldo(saldo: number) {
+    if (saldo <= 0) return "Pagado";
+    return "Parcial";
+  }
+
+  function pagosDeCuenta(cuentaId: string | number) {
+    return pagos.filter(
+      (pago) =>
+        String(pago.cuenta_por_pagar_id) === String(cuentaId) &&
+        pago.estado !== "Anulado"
+    );
+  }
+
+  function abrirPago(cuenta: CuentaPagar) {
+    if (cuenta.estado === "Anulado" || cuenta.estado === "Pagado") {
+      toast.error("Esta cuenta no acepta nuevos pagos.");
+      return;
+    }
+    setCuentaPagoId(cuenta.id);
+    setFormPago({
+      fechaPago: fechaHoyISO(),
+      metodoPago: "Transferencia",
+      banco: "",
+      referencia: "",
+      monto: String(cuenta.saldo_pendiente || ""),
+      observaciones: "",
+    });
+  }
+
+  async function registrarPago(cuenta: CuentaPagar) {
+    if (!userId) {
+      toast.error("Sesion no valida.");
+      return;
+    }
+
+    let empresaId: number;
+    let monto: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(cuenta.empresa_id);
+      monto = numero(formPago.monto);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      return;
+    }
+
+    if (cuenta.estado === "Anulado" || cuenta.estado === "Pagado") {
+      toast.error("La cuenta por pagar no acepta nuevos pagos.");
+      return;
+    }
+    if (!formPago.fechaPago) {
+      toast.error("La fecha de pago es obligatoria.");
+      return;
+    }
+    if (!METODOS_PAGO.includes(formPago.metodoPago)) {
+      toast.error("Metodo de pago no valido.");
+      return;
+    }
+    if (monto <= 0) {
+      toast.error("El monto del pago debe ser mayor a cero.");
+      return;
+    }
+    if (monto > Number(cuenta.saldo_pendiente || 0)) {
+      toast.error("El pago no puede ser mayor al saldo pendiente.");
+      return;
+    }
+    if (!MONEDAS.includes(cuenta.moneda)) {
+      toast.error("La moneda de la CxP no es valida.");
+      return;
+    }
+
+    if (cuenta.proveedor_id) {
+      const proveedor = proveedores.find((item) => String(item.id) === String(cuenta.proveedor_id));
+      if (!proveedor || Number(proveedor.empresa_id) !== empresaId) {
+        toast.error("El proveedor de la CxP no pertenece a la empresa seleccionada.");
+        return;
+      }
+      if (proveedor.moneda && proveedor.moneda !== cuenta.moneda) {
+        toast.error("El proveedor y la CxP tienen monedas diferentes.");
+        return;
+      }
+    }
+
+    const nuevoSaldo = Math.round((Number(cuenta.saldo_pendiente || 0) - monto) * 100) / 100;
+    const nuevoEstado = calcularEstadoConSaldo(nuevoSaldo);
+
+    setProcesando(true);
+    const toastId = toast.loading("Registrando pago...");
+
+    try {
+      const { data: pagoData, error: pagoError } = await supabase
+        .from("pagos_cuentas_por_pagar")
+        .insert({
+          cuenta_por_pagar_id: cuenta.id,
+          empresa_id: empresaId,
+          proveedor_id: cuenta.proveedor_id || null,
+          fecha_pago: formPago.fechaPago,
+          metodo_pago: formPago.metodoPago,
+          banco: textoONull(formPago.banco),
+          referencia: textoONull(formPago.referencia),
+          moneda: cuenta.moneda,
+          monto,
+          observaciones: textoONull(formPago.observaciones),
+          estado: "Registrado",
+          creado_por: userId,
+          metadatos: {
+            cheques_preparados: true,
+            transferencias_preparadas: true,
+            depositos_preparados: true,
+            comprobantes_adjuntos_preparados: true,
+            asiento_automatico_creado: false,
+          },
+        })
+        .select(COLUMNAS_PAGOS_CXP)
+        .single();
+
+      if (pagoError) throw pagoError;
+
+      const { data: cuentaData, error: cuentaError } = await supabase
+        .from("cuentas_por_pagar")
+        .update({
+          saldo_pendiente: nuevoSaldo,
+          estado: nuevoEstado,
+          actualizado_at: new Date().toISOString(),
+          actualizado_por: userId,
+        })
+        .eq("id", cuenta.id)
+        .eq("empresa_id", empresaId)
+        .select(COLUMNAS_CXP)
+        .single();
+
+      if (cuentaError) throw cuentaError;
+
+      await auditarPagoCxP(
+        "registrar_pago_cuenta_por_pagar",
+        pagoData as PagoCuentaPagar,
+        cuentaData as CuentaPagar,
+        null
+      );
+
+      setCuentaPagoId(null);
+      setFormPago({
+        fechaPago: fechaHoyISO(),
+        metodoPago: "Transferencia",
+        banco: "",
+        referencia: "",
+        monto: "",
+        observaciones: "",
+      });
+      await cargarDatos();
+      toast.success("Pago registrado.", { id: toastId });
+    } catch (error) {
+      console.error("Error registrando pago CxP:", error);
+      toast.error(getErrorMessage(error), { id: toastId });
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function anularPago(pago: PagoCuentaPagar) {
+    if (!userId) {
+      toast.error("Sesion no valida.");
+      return;
+    }
+
+    const cuenta = cuentasPagar.find(
+      (item) => String(item.id) === String(pago.cuenta_por_pagar_id)
+    );
+    if (!cuenta) {
+      toast.error("No se encontro la cuenta por pagar del pago.");
+      return;
+    }
+
+    const motivo = window.prompt("Motivo para anular el pago:");
+    if (!motivo || motivo.trim().length < 5) {
+      toast.error("Debes indicar un motivo valido.");
+      return;
+    }
+
+    let empresaId: number;
+    try {
+      empresaId = validarEmpresaPermitida(pago.empresa_id);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      return;
+    }
+
+    if (pago.estado === "Anulado") {
+      toast.error("El pago ya esta anulado.");
+      return;
+    }
+    if (cuenta.estado === "Anulado") {
+      toast.error("No se puede devolver saldo a una CxP anulada.");
+      return;
+    }
+    if (Number(cuenta.empresa_id) !== empresaId || Number(pago.empresa_id) !== empresaId) {
+      toast.error("El pago y la CxP no pertenecen a la misma empresa.");
+      return;
+    }
+    if (String(cuenta.proveedor_id || "") !== String(pago.proveedor_id || "")) {
+      toast.error("El pago no pertenece al proveedor de la CxP.");
+      return;
+    }
+    if (cuenta.moneda !== pago.moneda) {
+      toast.error("El pago y la CxP tienen monedas diferentes.");
+      return;
+    }
+
+    const saldoDevuelto = Math.round((Number(cuenta.saldo_pendiente || 0) + Number(pago.monto || 0)) * 100) / 100;
+    if (saldoDevuelto > Number(cuenta.total || 0)) {
+      toast.error("La anulacion excederia el total de la CxP.");
+      return;
+    }
+    const nuevoEstado = saldoDevuelto >= Number(cuenta.total || 0) ? "Pendiente" : "Parcial";
+
+    setProcesando(true);
+    const toastId = toast.loading("Anulando pago...");
+
+    try {
+      const { data: pagoData, error: pagoError } = await supabase
+        .from("pagos_cuentas_por_pagar")
+        .update({
+          estado: "Anulado",
+          anulado_por: userId,
+          anulado_at: new Date().toISOString(),
+          motivo_anulacion: motivo.trim(),
+        })
+        .eq("id", pago.id)
+        .eq("empresa_id", empresaId)
+        .select(COLUMNAS_PAGOS_CXP)
+        .single();
+
+      if (pagoError) throw pagoError;
+
+      const { data: cuentaData, error: cuentaError } = await supabase
+        .from("cuentas_por_pagar")
+        .update({
+          saldo_pendiente: saldoDevuelto,
+          estado: nuevoEstado,
+          actualizado_at: new Date().toISOString(),
+          actualizado_por: userId,
+        })
+        .eq("id", cuenta.id)
+        .eq("empresa_id", empresaId)
+        .select(COLUMNAS_CXP)
+        .single();
+
+      if (cuentaError) throw cuentaError;
+
+      await auditarPagoCxP(
+        "anular_pago_cuenta_por_pagar",
+        pagoData as PagoCuentaPagar,
+        cuentaData as CuentaPagar,
+        pago.estado
+      );
+
+      await cargarDatos();
+      toast.success("Pago anulado y saldo devuelto.", { id: toastId });
+    } catch (error) {
+      console.error("Error anulando pago CxP:", error);
+      toast.error(getErrorMessage(error), { id: toastId });
+    } finally {
+      setProcesando(false);
     }
   }
 
@@ -623,6 +973,11 @@ export default function CuentasPagarPage() {
                 {cuentasFiltradas.map((cuenta) => {
                   const proveedor = proveedores.find((item) => String(item.id) === String(cuenta.proveedor_id));
                   const vencida = estaVencida(cuenta);
+                  const pagosCuenta = pagosDeCuenta(cuenta.id);
+                  const pagosCuentaTodos = pagos.filter(
+                    (pago) => String(pago.cuenta_por_pagar_id) === String(cuenta.id)
+                  );
+                  const totalPagado = pagosCuenta.reduce((acc, pago) => acc + Number(pago.monto || 0), 0);
                   return (
                     <div key={cuenta.id} className={`rounded-2xl border p-5 ${vencida ? "border-orange-400/40 bg-orange-400/10" : "border-white/10 bg-white/[0.03]"}`}>
                       <div className="grid lg:grid-cols-[1.4fr_1fr_auto] gap-4 items-start">
@@ -637,7 +992,7 @@ export default function CuentasPagarPage() {
                             Documento: {cuenta.documento_contable_id || "Manual"} | Fecha: {cuenta.fecha_documento} | Vence: {cuenta.fecha_vencimiento}
                           </p>
                           <p className="text-xs text-gray-500 mt-1">
-                            Pagos parciales y vinculo a cheques/transferencias/depositos: preparado para siguiente fase.
+                            Pagado: {money(totalPagado, cuenta.moneda)} | Asientos automáticos: no creados.
                           </p>
                         </div>
                         <div className="text-sm text-gray-300">
@@ -647,12 +1002,72 @@ export default function CuentasPagarPage() {
                           <p>Obs: {cuenta.observaciones || "N/A"}</p>
                         </div>
                         <div className="flex flex-col gap-2 min-w-36">
+                          {cuenta.estado !== "Anulado" && cuenta.estado !== "Pagado" && (
+                            <button onClick={() => abrirPago(cuenta)} className="px-4 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black">Registrar pago</button>
+                          )}
                           <button onClick={() => cargarParaEditar(cuenta)} className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black">Editar</button>
                           {cuenta.estado !== "Anulado" && (
                             <button onClick={() => anularCuenta(cuenta)} className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black">Anular</button>
                           )}
                         </div>
                       </div>
+
+                      {String(cuentaPagoId || "") === String(cuenta.id) && (
+                        <div className="mt-5 rounded-2xl border border-green-500/20 bg-green-500/5 p-4">
+                          <h4 className="mb-4 text-xs font-black uppercase tracking-widest text-green-200">
+                            Registrar pago o abono
+                          </h4>
+                          <div className="grid md:grid-cols-6 gap-3">
+                            <input type="date" value={formPago.fechaPago} onChange={(e) => setFormPago({ ...formPago, fechaPago: e.target.value })} className="input-custom" />
+                            <select value={formPago.metodoPago} onChange={(e) => setFormPago({ ...formPago, metodoPago: e.target.value })} className="input-custom">
+                              {METODOS_PAGO.map((metodo) => <option key={metodo} value={metodo}>{metodo}</option>)}
+                            </select>
+                            <input value={formPago.banco} onChange={(e) => setFormPago({ ...formPago, banco: e.target.value })} placeholder="Banco opcional" className="input-custom" />
+                            <input value={formPago.referencia} onChange={(e) => setFormPago({ ...formPago, referencia: e.target.value })} placeholder="Referencia opcional" className="input-custom" />
+                            <input type="number" min="0" step="0.01" value={formPago.monto} onChange={(e) => setFormPago({ ...formPago, monto: e.target.value })} placeholder="Monto" className="input-custom" />
+                            <input value={formPago.observaciones} onChange={(e) => setFormPago({ ...formPago, observaciones: e.target.value })} placeholder="Observaciones" className="input-custom" />
+                            <button onClick={() => registrarPago(cuenta)} disabled={procesando} className="md:col-span-3 bg-green-500 hover:bg-green-400 disabled:opacity-60 text-black font-black rounded-xl h-[3.5rem] uppercase text-xs flex items-center justify-center gap-2">
+                              {procesando ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                              Aplicar pago
+                            </button>
+                            <button onClick={() => setCuentaPagoId(null)} className="md:col-span-3 bg-white/5 hover:bg-white/10 border border-white/10 text-gray-200 font-black rounded-xl h-[3.5rem] uppercase text-xs">
+                              Cancelar
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {pagosCuentaTodos.length > 0 && (
+                        <div className="mt-5 rounded-2xl border border-white/10 bg-black/20 p-4">
+                          <h4 className="mb-3 text-xs font-black uppercase tracking-widest text-gray-400">
+                            Historial de pagos
+                          </h4>
+                          <div className="space-y-2">
+                            {pagosCuentaTodos.map((pago) => (
+                              <div key={pago.id} className="grid gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300 md:grid-cols-[1fr_1fr_1fr_auto] md:items-center">
+                                <div>
+                                  <p className="font-black text-white">{pago.fecha_pago} · {pago.metodo_pago}</p>
+                                  <p className="text-gray-500">{pago.banco || "Sin banco"} | Ref: {pago.referencia || "N/A"}</p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500">Monto</p>
+                                  <p className="font-black text-green-200">{money(pago.monto, pago.moneda)}</p>
+                                </div>
+                                <div>
+                                  <EstadoPill estado={pago.estado} />
+                                  {pago.motivo_anulacion && <p className="mt-1 text-red-200">{pago.motivo_anulacion}</p>}
+                                </div>
+                                {pago.estado !== "Anulado" && (
+                                  <button onClick={() => anularPago(pago)} disabled={procesando} className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 font-black text-red-200">
+                                    <Ban size={14} />
+                                    Anular pago
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
