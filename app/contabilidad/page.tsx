@@ -6,6 +6,8 @@ import {
   BookOpen,
   Building2,
   Calendar,
+  AlertTriangle,
+  ClipboardCheck,
   FileText,
   Plus,
   RefreshCcw,
@@ -19,15 +21,21 @@ import Sidebar from "../../components/Sidebar";
 import {
   anularAsientoContable,
   calcularBalanceComprobacion,
+  cambiarEstadoDocumentoContable,
+  corregirDocumentoContableRevision,
   crearAsientoContable,
   crearCuentaContable,
+  crearDocumentoContableRevision,
+  documentoContableRequiereAlerta24h,
   listarAsientosContables,
   listarCatalogoCuentas,
+  listarDocumentosContablesRevision,
   listarPeriodosContables,
   obtenerOCrearPeriodoContable,
   type AsientoContable,
   type BalanceComprobacionFila,
   type CatalogoCuenta,
+  type DocumentoContableRevision,
   type MovimientoDetalleInput,
   type NaturalezaCuenta,
   type PeriodoContable,
@@ -61,6 +69,7 @@ interface Empresa {
 type TabContabilidad =
   | "movimientos"
   | "catalogo"
+  | "documentos_revision"
   | "periodos"
   | "asientos"
   | "crear_asiento"
@@ -90,6 +99,11 @@ const TABS: Array<{
     id: "catalogo",
     nombre: "Catalogo de cuentas",
     descripcion: "Cuentas globales y por empresa",
+  },
+  {
+    id: "documentos_revision",
+    nombre: "Documentos pendientes",
+    descripcion: "Facturas y documentos antes de contabilizar",
   },
   {
     id: "periodos",
@@ -175,6 +189,9 @@ export default function ContabilidadPage() {
   const [empresaContableId, setEmpresaContableId] = useState("");
 
   const [catalogoCuentas, setCatalogoCuentas] = useState<CatalogoCuenta[]>([]);
+  const [documentosRevision, setDocumentosRevision] = useState<
+    DocumentoContableRevision[]
+  >([]);
   const [periodosContables, setPeriodosContables] = useState<PeriodoContable[]>([]);
   const [asientosContables, setAsientosContables] = useState<AsientoContable[]>([]);
   const [balanceComprobacion, setBalanceComprobacion] = useState<
@@ -202,6 +219,25 @@ export default function ContabilidadPage() {
     permiteMovimientos: true,
     descripcion: "",
   });
+
+  const [documentoForm, setDocumentoForm] = useState({
+    empresaId: "",
+    proveedorId: "",
+    clienteId: "",
+    tipoDocumento: "Factura proveedor",
+    serie: "",
+    numeroDocumento: "",
+    fechaDocumento: fechaHoyISO(),
+    fechaVencimiento: "",
+    moneda: "GTQ",
+    subtotal: "",
+    iva: "",
+    isr: "",
+    total: "",
+    descripcion: "",
+  });
+
+  const [documentosFiltroEstado, setDocumentosFiltroEstado] = useState("");
 
   const [periodoForm, setPeriodoForm] = useState({
     empresaId: "",
@@ -268,7 +304,11 @@ export default function ContabilidadPage() {
       const perfil = acceso.perfil!;
       const rolNormalizado = (perfil.rol || "").trim().toLowerCase();
 
-      if (!["admin", "supervisor", "jefe", "empleado"].includes(rolNormalizado)) {
+      if (
+        !["admin", "supervisor", "jefe", "contador", "auxiliar", "empleado"].includes(
+          rolNormalizado
+        )
+      ) {
         router.replace("/dashboard");
         return;
       }
@@ -323,6 +363,10 @@ export default function ContabilidadPage() {
       const empresaInicial = String(empresas[0].id);
       setEmpresaContableId((actual) => actual || empresaInicial);
       setCuentaForm((actual) => ({
+        ...actual,
+        empresaId: actual.empresaId || empresaInicial,
+      }));
+      setDocumentoForm((actual) => ({
         ...actual,
         empresaId: actual.empresaId || empresaInicial,
       }));
@@ -654,9 +698,37 @@ export default function ContabilidadPage() {
     }
   }
 
+  async function cargarDocumentosRevision(empresaIdValor = empresaContableId) {
+    try {
+      const empresaId = validarEmpresaPermitida(
+        empresaIdValor,
+        "listar documentos para revision"
+      );
+      setCargandoV2(true);
+      setMensajeV2("");
+      const documentos = await listarDocumentosContablesRevision({
+        empresa_id: empresaId,
+        estado: documentosFiltroEstado || undefined,
+        limite: 200,
+      });
+      setDocumentosRevision(documentos);
+    } catch (error) {
+      console.error("Error cargando documentos para revision:", error);
+      setMensajeV2(getErrorMessage(error));
+      setDocumentosRevision([]);
+    } finally {
+      setCargandoV2(false);
+    }
+  }
+
   async function cargarDatosTab(tab: TabContabilidad, empresaIdValor = empresaContableId) {
     if (tab === "catalogo" || tab === "crear_asiento") {
       await cargarCatalogo(empresaIdValor);
+      return;
+    }
+
+    if (tab === "documentos_revision") {
+      await cargarDocumentosRevision(empresaIdValor);
       return;
     }
 
@@ -686,6 +758,7 @@ export default function ContabilidadPage() {
   async function cambiarEmpresaContable(valor: string) {
     setEmpresaContableId(valor);
     setCuentaForm((actual) => ({ ...actual, empresaId: valor }));
+    setDocumentoForm((actual) => ({ ...actual, empresaId: valor }));
     setPeriodoForm((actual) => ({ ...actual, empresaId: valor }));
     setAsientoForm((actual) => ({ ...actual, empresaId: valor }));
     setBalanceFiltros((actual) => ({ ...actual, empresaId: valor }));
@@ -744,6 +817,174 @@ export default function ContabilidadPage() {
       alert("Cuenta contable creada.");
     } catch (error) {
       console.error("Error creando cuenta contable:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function registrarDocumentoRevision() {
+    let empresaId: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(
+        documentoForm.empresaId,
+        "registrar documentos para revision"
+      );
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    if (
+      !documentoForm.tipoDocumento.trim() ||
+      !documentoForm.numeroDocumento.trim() ||
+      !documentoForm.fechaDocumento ||
+      !documentoForm.total
+    ) {
+      alert("Tipo, numero, fecha y total son obligatorios.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await crearDocumentoContableRevision({
+        empresa_id: empresaId,
+        proveedor_id: documentoForm.proveedorId.trim() || null,
+        cliente_id: documentoForm.clienteId.trim() || null,
+        tipo_documento: documentoForm.tipoDocumento,
+        serie: documentoForm.serie || null,
+        numero_documento: documentoForm.numeroDocumento,
+        fecha_documento: documentoForm.fechaDocumento,
+        fecha_vencimiento: documentoForm.fechaVencimiento || null,
+        moneda: documentoForm.moneda,
+        subtotal: numero(documentoForm.subtotal),
+        iva: numero(documentoForm.iva),
+        isr: numero(documentoForm.isr),
+        total: numero(documentoForm.total),
+        descripcion: documentoForm.descripcion || null,
+        metadatos: {
+          origen: "cola_revision_contable",
+          conexion_futura: [
+            "distribucion_contable",
+            "cuentas_por_pagar",
+            "cuentas_por_cobrar",
+            "impuestos",
+          ],
+        },
+      });
+
+      setDocumentoForm((actual) => ({
+        ...actual,
+        proveedorId: "",
+        clienteId: "",
+        serie: "",
+        numeroDocumento: "",
+        fechaDocumento: fechaHoyISO(),
+        fechaVencimiento: "",
+        subtotal: "",
+        iva: "",
+        isr: "",
+        total: "",
+        descripcion: "",
+      }));
+
+      await cargarDocumentosRevision(String(empresaId));
+      alert("Documento registrado como Pendiente.");
+    } catch (error) {
+      console.error("Error registrando documento para revision:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cambiarEstadoDocumentoRevision(
+    documento: DocumentoContableRevision,
+    estado: "En revision" | "Observado" | "Contabilizado" | "Rechazado" | "Vencido"
+  ) {
+    try {
+      validarEmpresaPermitida(documento.empresa_id, "revisar documentos");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    let observacion: string | null = null;
+    if (estado === "Observado" || estado === "Rechazado") {
+      observacion = window.prompt("Escribe la observacion del contador:") || "";
+      if (observacion.trim().length < 5) {
+        alert("La observacion debe tener al menos 5 caracteres.");
+        return;
+      }
+    }
+
+    const confirmar =
+      estado === "Contabilizado"
+        ? window.confirm(
+            "Se marcara como Contabilizado sin crear asiento automatico. Debe existir adjunto y quedara listo para distribucion contable futura."
+          )
+        : true;
+
+    if (!confirmar) return;
+
+    try {
+      setLoading(true);
+      await cambiarEstadoDocumentoContable({
+        id: documento.id,
+        empresa_id: documento.empresa_id,
+        estado,
+        observacion,
+      });
+      await cargarDocumentosRevision(String(documento.empresa_id));
+      alert(`Documento actualizado a ${estado}.`);
+    } catch (error) {
+      console.error("Error actualizando documento de revision:", error);
+      alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function corregirDocumentoRevision(documento: DocumentoContableRevision) {
+    try {
+      validarEmpresaPermitida(documento.empresa_id, "corregir documentos");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    const observacion = window.prompt("Motivo de la correccion:") || "";
+    if (observacion.trim().length < 5) {
+      alert("El motivo debe tener al menos 5 caracteres.");
+      return;
+    }
+
+    const totalTexto = window.prompt(
+      "Total corregido:",
+      String(documento.total)
+    );
+    if (totalTexto === null) return;
+
+    const descripcion = window.prompt(
+      "Descripcion corregida:",
+      documento.descripcion || ""
+    );
+    if (descripcion === null) return;
+
+    try {
+      setLoading(true);
+      await corregirDocumentoContableRevision({
+        id: documento.id,
+        empresa_id: documento.empresa_id,
+        total: numero(totalTexto),
+        descripcion,
+        observacion,
+      });
+      await cargarDocumentosRevision(String(documento.empresa_id));
+      alert("Documento corregido y auditado.");
+    } catch (error) {
+      console.error("Error corrigiendo documento:", error);
       alert(getErrorMessage(error));
     } finally {
       setLoading(false);
@@ -1019,6 +1260,9 @@ export default function ContabilidadPage() {
   );
 
   const puedeGestionarGlobales = ["admin", "jefe"].includes(rolActual);
+  const puedeRevisarDocumentos = ["admin", "supervisor", "jefe", "contador"].includes(
+    rolActual
+  );
 
   const nombreEmpresaFiltro =
     empresaFiltro === "Todas"
@@ -1040,7 +1284,7 @@ export default function ContabilidadPage() {
             Alcance contable V2
           </p>
           <p className="text-gray-400 text-sm mt-1">
-            Catalogo, periodos, asientos y balance trabajan por empresa.
+            Catalogo, documentos en revision, periodos, asientos y balance trabajan por empresa.
           </p>
         </div>
 
@@ -1450,6 +1694,398 @@ export default function ContabilidadPage() {
                 <EstadoPill estado={cuenta.activo ? "activo" : "inactivo"} />
               </div>
             ))}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  function renderDocumentosRevision() {
+    const documentosConAlerta = documentosRevision.filter(
+      documentoContableRequiereAlerta24h
+    );
+
+    return (
+      <div className="grid gap-8">
+        <section className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-5">
+          <h2 className="text-orange-300 font-black text-sm uppercase flex items-center gap-2">
+            <AlertTriangle size={18} />
+            Revision previa obligatoria
+          </h2>
+          <p className="text-gray-400 text-sm mt-1">
+            Esta cola no crea asientos automaticos. El documento solo puede
+            marcarse como Contabilizado si tiene adjuntos activos y luego queda
+            preparado para distribucion contable balanceada.
+          </p>
+        </section>
+
+        <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+          <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
+            <FileText className="text-cyan-400" /> Registrar documento o factura
+          </h2>
+
+          <div className="grid md:grid-cols-4 gap-5">
+            <Campo label="Empresa">
+              <select
+                value={documentoForm.empresaId}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, empresaId: e.target.value })
+                }
+                className="input-control"
+              >
+                <option value="">Seleccionar empresa...</option>
+                {listaEmpresas.map((empresa) => (
+                  <option key={empresa.id} value={String(empresa.id)}>
+                    {empresa.nombre}
+                  </option>
+                ))}
+              </select>
+            </Campo>
+
+            <Campo label="Proveedor ID opcional">
+              <input
+                value={documentoForm.proveedorId}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, proveedorId: e.target.value })
+                }
+                className="input-control"
+                placeholder="Opcional"
+              />
+            </Campo>
+
+            <Campo label="Cliente ID opcional">
+              <input
+                value={documentoForm.clienteId}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, clienteId: e.target.value })
+                }
+                className="input-control"
+                placeholder="Opcional"
+              />
+            </Campo>
+
+            <Campo label="Tipo documento">
+              <select
+                value={documentoForm.tipoDocumento}
+                onChange={(e) =>
+                  setDocumentoForm({
+                    ...documentoForm,
+                    tipoDocumento: e.target.value,
+                  })
+                }
+                className="input-control"
+              >
+                <option value="Factura proveedor">Factura proveedor</option>
+                <option value="Factura cliente">Factura cliente</option>
+                <option value="Nota credito">Nota credito</option>
+                <option value="Nota debito">Nota debito</option>
+                <option value="Recibo">Recibo</option>
+                <option value="Otro">Otro</option>
+              </select>
+            </Campo>
+
+            <Campo label="Serie">
+              <input
+                value={documentoForm.serie}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, serie: e.target.value })
+                }
+                className="input-control"
+                placeholder="Opcional"
+              />
+            </Campo>
+
+            <Campo label="Numero documento">
+              <input
+                value={documentoForm.numeroDocumento}
+                onChange={(e) =>
+                  setDocumentoForm({
+                    ...documentoForm,
+                    numeroDocumento: e.target.value,
+                  })
+                }
+                className="input-control"
+              />
+            </Campo>
+
+            <Campo label="Fecha documento">
+              <input
+                type="date"
+                value={documentoForm.fechaDocumento}
+                onChange={(e) =>
+                  setDocumentoForm({
+                    ...documentoForm,
+                    fechaDocumento: e.target.value,
+                  })
+                }
+                className="input-control"
+              />
+            </Campo>
+
+            <Campo label="Fecha vencimiento">
+              <input
+                type="date"
+                value={documentoForm.fechaVencimiento}
+                onChange={(e) =>
+                  setDocumentoForm({
+                    ...documentoForm,
+                    fechaVencimiento: e.target.value,
+                  })
+                }
+                className="input-control"
+              />
+            </Campo>
+
+            <Campo label="Moneda">
+              <select
+                value={documentoForm.moneda}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, moneda: e.target.value })
+                }
+                className="input-control"
+              >
+                <option value="GTQ">GTQ</option>
+                <option value="USD">USD</option>
+              </select>
+            </Campo>
+
+            <Campo label="Subtotal">
+              <input
+                type="number"
+                value={documentoForm.subtotal}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, subtotal: e.target.value })
+                }
+                className="input-control font-mono"
+              />
+            </Campo>
+
+            <Campo label="IVA">
+              <input
+                type="number"
+                value={documentoForm.iva}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, iva: e.target.value })
+                }
+                className="input-control font-mono"
+              />
+            </Campo>
+
+            <Campo label="ISR">
+              <input
+                type="number"
+                value={documentoForm.isr}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, isr: e.target.value })
+                }
+                className="input-control font-mono"
+              />
+            </Campo>
+
+            <Campo label="Total">
+              <input
+                type="number"
+                value={documentoForm.total}
+                onChange={(e) =>
+                  setDocumentoForm({ ...documentoForm, total: e.target.value })
+                }
+                className="input-control font-mono"
+              />
+            </Campo>
+
+            <Campo label="Descripcion" className="md:col-span-4">
+              <input
+                value={documentoForm.descripcion}
+                onChange={(e) =>
+                  setDocumentoForm({
+                    ...documentoForm,
+                    descripcion: e.target.value,
+                  })
+                }
+                className="input-control"
+                placeholder="Detalle para revision contable"
+              />
+            </Campo>
+          </div>
+
+          <button
+            onClick={registrarDocumentoRevision}
+            disabled={loading}
+            className="mt-8 bg-white text-black font-black px-8 py-4 rounded-2xl hover:bg-cyan-400 transition disabled:opacity-60"
+          >
+            Registrar como Pendiente
+          </button>
+        </section>
+
+        <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-5">
+            <div>
+              <h2 className="text-xl font-black flex items-center gap-2">
+                <ClipboardCheck className="text-cyan-300" />
+                Cola de revision
+              </h2>
+              <p className="text-gray-500 text-sm mt-1">
+                Alertas 24h: {documentosConAlerta.length}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <select
+                value={documentosFiltroEstado}
+                onChange={(e) => setDocumentosFiltroEstado(e.target.value)}
+                className="h-12 px-4 rounded-2xl bg-[#020617] border border-white/10 outline-none focus:border-cyan-500 text-white"
+              >
+                <option value="">Todos los estados</option>
+                <option value="Pendiente">Pendiente</option>
+                <option value="En revision">En revision</option>
+                <option value="Observado">Observado</option>
+                <option value="Contabilizado">Contabilizado</option>
+                <option value="Rechazado">Rechazado</option>
+                <option value="Vencido">Vencido</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => cargarDocumentosRevision()}
+                className="h-12 px-4 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 font-bold"
+              >
+                <RefreshCcw size={18} />
+              </button>
+            </div>
+          </div>
+
+          <TablaVacia
+            visible={documentosRevision.length === 0}
+            texto="No hay documentos en revision para esta empresa."
+          />
+
+          <div className="grid gap-4">
+            {documentosRevision.map((documento) => {
+              const alerta24h = documentoContableRequiereAlerta24h(documento);
+              const cerrado = ["Contabilizado", "Rechazado"].includes(
+                documento.estado
+              );
+
+              return (
+                <div
+                  key={documento.id}
+                  className={`border rounded-2xl p-5 ${
+                    alerta24h
+                      ? "border-orange-400/40 bg-orange-400/10"
+                      : "border-white/10"
+                  }`}
+                >
+                  <div className="grid lg:grid-cols-[1.4fr_1fr_auto] gap-4">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <h3 className="text-lg font-black">
+                          {documento.tipo_documento} {documento.serie || ""}-
+                          {documento.numero_documento}
+                        </h3>
+                        <EstadoPill estado={documento.estado} />
+                        {alerta24h && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-orange-400/30 bg-orange-400/10 px-3 py-1 text-xs font-black text-orange-200">
+                            <AlertTriangle size={13} />
+                            +24h sin revision
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-400 mt-2">
+                        {documento.descripcion || "Sin descripcion"}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-2">
+                        Empresa: {empresaNombre(documento.empresa_id)} | Fecha:{" "}
+                        {documento.fecha_documento} | Vence:{" "}
+                        {documento.fecha_vencimiento || "N/A"}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Creado por: {documento.creado_por || "N/A"} | Revisado:{" "}
+                        {documento.revisado_at || "pendiente"} | Contabilizado:{" "}
+                        {documento.contabilizado_at || "pendiente"}
+                      </p>
+                      {documento.observacion && (
+                        <p className="text-sm text-orange-200 mt-3">
+                          Observacion: {documento.observacion}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="text-sm text-gray-300">
+                      <p>Subtotal: {money(documento.subtotal, documento.moneda)}</p>
+                      <p>IVA: {money(documento.iva, documento.moneda)}</p>
+                      <p>ISR: {money(documento.isr, documento.moneda)}</p>
+                      <p className="text-xl font-black text-cyan-200 mt-2">
+                        Total: {money(documento.total, documento.moneda)}
+                      </p>
+                    </div>
+
+                    {puedeRevisarDocumentos && !cerrado && (
+                      <div className="flex flex-col gap-2 min-w-44">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            cambiarEstadoDocumentoRevision(documento, "En revision")
+                          }
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black"
+                        >
+                          En revision
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            cambiarEstadoDocumentoRevision(documento, "Observado")
+                          }
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-200 text-xs font-black"
+                        >
+                          Observar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => corregirDocumentoRevision(documento)}
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-200 text-xs font-black"
+                        >
+                          Corregir
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            cambiarEstadoDocumentoRevision(documento, "Contabilizado")
+                          }
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black"
+                        >
+                          Contabilizar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            cambiarEstadoDocumentoRevision(documento, "Rechazado")
+                          }
+                          disabled={loading}
+                          className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black"
+                        >
+                          Rechazar
+                        </button>
+                        {alerta24h && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              cambiarEstadoDocumentoRevision(documento, "Vencido")
+                            }
+                            disabled={loading}
+                            className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-200 text-xs font-black"
+                          >
+                            Marcar vencido
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       </div>
@@ -2019,6 +2655,7 @@ export default function ContabilidadPage() {
 
     if (tabActiva === "movimientos") return renderMovimientosOperativos();
     if (tabActiva === "catalogo") return renderCatalogo();
+    if (tabActiva === "documentos_revision") return renderDocumentosRevision();
     if (tabActiva === "periodos") return renderPeriodos();
     if (tabActiva === "asientos") return renderAsientos();
     if (tabActiva === "crear_asiento") return renderCrearAsiento();

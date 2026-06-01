@@ -12,6 +12,13 @@ export type EstadoAsientoContable =
   | "borrador"
   | "anulado"
   | "requiere_revision";
+export type EstadoDocumentoContable =
+  | "Pendiente"
+  | "En revision"
+  | "Observado"
+  | "Contabilizado"
+  | "Rechazado"
+  | "Vencido";
 
 export interface CatalogoCuenta {
   id: string | number;
@@ -170,6 +177,81 @@ export interface BalanceComprobacionFila {
   saldo: number;
 }
 
+export interface DocumentoContableRevision {
+  id: string | number;
+  creado_at: string | null;
+  actualizado_at: string | null;
+  empresa_id: number;
+  proveedor_id: string | number | null;
+  cliente_id: string | number | null;
+  tipo_documento: string;
+  serie: string | null;
+  numero_documento: string;
+  fecha_documento: string;
+  fecha_vencimiento: string | null;
+  moneda: string;
+  subtotal: number;
+  iva: number;
+  isr: number;
+  total: number;
+  descripcion: string | null;
+  estado: EstadoDocumentoContable | string;
+  creado_por: string | null;
+  revisado_por: string | null;
+  contabilizado_por: string | null;
+  revisado_at: string | null;
+  contabilizado_at: string | null;
+  observacion: string | null;
+  metadatos: ValorJsonAuditoria | null;
+}
+
+export interface CrearDocumentoContableRevisionParams {
+  empresa_id: number;
+  proveedor_id?: string | number | null;
+  cliente_id?: string | number | null;
+  tipo_documento: string;
+  serie?: string | null;
+  numero_documento: string;
+  fecha_documento: string;
+  fecha_vencimiento?: string | null;
+  moneda?: string;
+  subtotal: number;
+  iva?: number;
+  isr?: number;
+  total: number;
+  descripcion?: string | null;
+  metadatos?: ValorJsonAuditoria | null;
+}
+
+export interface ListarDocumentosContablesRevisionParams {
+  empresa_id: number;
+  estado?: string;
+  limite?: number;
+}
+
+export interface CambiarEstadoDocumentoContableParams {
+  id: string | number;
+  empresa_id: number;
+  estado: Exclude<EstadoDocumentoContable, "Pendiente">;
+  observacion?: string | null;
+}
+
+export interface CorregirDocumentoContableRevisionParams {
+  id: string | number;
+  empresa_id: number;
+  serie?: string | null;
+  numero_documento?: string;
+  fecha_documento?: string;
+  fecha_vencimiento?: string | null;
+  moneda?: string;
+  subtotal?: number;
+  iva?: number;
+  isr?: number;
+  total?: number;
+  descripcion?: string | null;
+  observacion: string;
+}
+
 export interface CalcularBalanceComprobacionParams {
   empresa_id: number;
   fecha_desde?: string;
@@ -186,10 +268,20 @@ const COLUMNAS_ASIENTO =
 const COLUMNAS_DETALLE =
   "id,creado_at,asiento_id,cuenta_id,descripcion,debe,haber,moneda,tipo_cambio,monto_base";
 const COLUMNAS_ASIENTO_CON_DETALLE = `${COLUMNAS_ASIENTO},movimientos_contables_detalle(${COLUMNAS_DETALLE})`;
+const COLUMNAS_DOCUMENTO_REVISION =
+  "id,creado_at,actualizado_at,empresa_id,proveedor_id,cliente_id,tipo_documento,serie,numero_documento,fecha_documento,fecha_vencimiento,moneda,subtotal,iva,isr,total,descripcion,estado,creado_por,revisado_por,contabilizado_por,revisado_at,contabilizado_at,observacion,metadatos";
 const LIMITE_PREDETERMINADO = 200;
 const LIMITE_MAXIMO = 1000;
 const TOLERANCIA_BALANCE = 0.005;
 const MONEDAS_PERMITIDAS = ["GTQ", "USD"];
+const ESTADOS_DOCUMENTO_CONTABLE: EstadoDocumentoContable[] = [
+  "Pendiente",
+  "En revision",
+  "Observado",
+  "Contabilizado",
+  "Rechazado",
+  "Vencido",
+];
 
 function errorSupabase(accion: string, error: { message?: string } | null) {
   return new Error(
@@ -307,6 +399,41 @@ function normalizarPeriodo(data: unknown) {
 
 function normalizarAsiento(data: unknown) {
   return data as AsientoContable;
+}
+
+function normalizarDocumentoRevision(data: unknown) {
+  return data as DocumentoContableRevision;
+}
+
+function validarEstadoDocumentoContable(estado: string) {
+  if (!ESTADOS_DOCUMENTO_CONTABLE.includes(estado as EstadoDocumentoContable)) {
+    throw new Error("Estado de documento contable no valido.");
+  }
+
+  return estado as EstadoDocumentoContable;
+}
+
+function validarMontoNoNegativo(valor: number | undefined | null, campo: string) {
+  const monto = numero(valor);
+  if (monto < 0) {
+    throw new Error(`El campo ${campo} no puede ser negativo.`);
+  }
+
+  return monto;
+}
+
+export function documentoContableRequiereAlerta24h(
+  documento: Pick<DocumentoContableRevision, "creado_at" | "revisado_at" | "estado">
+) {
+  if (!documento.creado_at || documento.revisado_at) return false;
+  if (!["Pendiente", "En revision", "Observado", "Vencido"].includes(documento.estado)) {
+    return false;
+  }
+
+  const creadoAt = new Date(documento.creado_at).getTime();
+  if (Number.isNaN(creadoAt)) return false;
+
+  return Date.now() - creadoAt >= 24 * 60 * 60 * 1000;
 }
 
 async function validarCuentasDetalle(
@@ -784,6 +911,358 @@ export async function listarAsientosContables(
   }
 
   return (data || []) as AsientoContable[];
+}
+
+export async function crearDocumentoContableRevision(
+  params: CrearDocumentoContableRevisionParams
+): Promise<DocumentoContableRevision> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+  const tipoDocumento = requerirTexto(params.tipo_documento, "tipo_documento");
+  const numeroDocumento = requerirTexto(params.numero_documento, "numero_documento");
+  const fechaDocumento = validarFecha(params.fecha_documento, "fecha_documento");
+  const fechaVencimiento = params.fecha_vencimiento?.trim()
+    ? validarFecha(params.fecha_vencimiento, "fecha_vencimiento")
+    : null;
+  const moneda = normalizarMoneda(params.moneda);
+  const subtotal = validarMontoNoNegativo(params.subtotal, "subtotal");
+  const iva = validarMontoNoNegativo(params.iva, "iva");
+  const isr = validarMontoNoNegativo(params.isr, "isr");
+  const total = validarMontoNoNegativo(params.total, "total");
+  const userId = await obtenerUsuarioIdActual();
+
+  if (total <= 0) {
+    throw new Error("El total del documento debe ser mayor que cero.");
+  }
+
+  const { data, error } = await supabase
+    .from("documentos_contables_revision")
+    .insert({
+      empresa_id: empresaId,
+      proveedor_id: params.proveedor_id ?? null,
+      cliente_id: params.cliente_id ?? null,
+      tipo_documento: tipoDocumento,
+      serie: texto(params.serie),
+      numero_documento: numeroDocumento,
+      fecha_documento: fechaDocumento,
+      fecha_vencimiento: fechaVencimiento,
+      moneda,
+      subtotal,
+      iva,
+      isr,
+      total,
+      descripcion: texto(params.descripcion),
+      estado: "Pendiente",
+      creado_por: userId,
+      metadatos: {
+        ...(params.metadatos && typeof params.metadatos === "object" && !Array.isArray(params.metadatos)
+          ? params.metadatos
+          : {}),
+        preparado_para_distribucion_contable: false,
+        requiere_adjunto_antes_contabilizar: true,
+      },
+      actualizado_at: new Date().toISOString(),
+    })
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .single();
+
+  if (error) {
+    throw errorSupabase("No se pudo registrar el documento para revision", error);
+  }
+
+  const documento = normalizarDocumentoRevision(data);
+
+  await auditarSinBloquear({
+    empresa_id: documento.empresa_id,
+    modulo: "contabilidad_v2",
+    accion: "registrar_documento_revision",
+    entidad_tipo: "documento_contable_revision",
+    entidad_id: documento.id,
+    estado_nuevo: documento.estado,
+    descripcion: "Documento contable registrado para revision",
+    sensible: true,
+    visible_calendario: true,
+    metadatos: {
+      tipo_documento: documento.tipo_documento,
+      serie: documento.serie,
+      numero_documento: documento.numero_documento,
+      fecha_documento: documento.fecha_documento,
+      fecha_vencimiento: documento.fecha_vencimiento,
+      moneda: documento.moneda,
+      total: documento.total,
+    },
+  });
+
+  return documento;
+}
+
+export async function listarDocumentosContablesRevision(
+  params: ListarDocumentosContablesRevisionParams
+): Promise<DocumentoContableRevision[]> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+
+  let query: any = supabase
+    .from("documentos_contables_revision")
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .eq("empresa_id", empresaId);
+
+  if (params.estado?.trim()) {
+    query = query.eq("estado", validarEstadoDocumentoContable(params.estado));
+  }
+
+  const { data, error } = await query
+    .order("creado_at", { ascending: false })
+    .limit(resolverLimite(params.limite));
+
+  if (error) {
+    throw errorSupabase("No se pudieron listar documentos para revision", error);
+  }
+
+  return (data || []) as DocumentoContableRevision[];
+}
+
+async function contarAdjuntosDocumentoContable(
+  documento: DocumentoContableRevision
+) {
+  const { count, error } = await supabase
+    .from("documentos_tramites")
+    .select("id", { count: "exact", head: true })
+    .eq("empresa_id", documento.empresa_id)
+    .eq("modulo", "contabilidad")
+    .eq("entidad_tipo", "documento_contable_revision")
+    .eq("entidad_id", documento.id)
+    .eq("estado", "activo");
+
+  if (error) {
+    throw errorSupabase("No se pudieron validar adjuntos del documento", error);
+  }
+
+  return count || 0;
+}
+
+export async function cambiarEstadoDocumentoContable(
+  params: CambiarEstadoDocumentoContableParams
+): Promise<DocumentoContableRevision> {
+  if (params.id === "" || params.id === null || params.id === undefined) {
+    throw new Error("Debe indicar el documento contable.");
+  }
+
+  const empresaId = validarEmpresaId(params.empresa_id);
+  const estadoNuevo = validarEstadoDocumentoContable(params.estado);
+  const observacion = texto(params.observacion);
+  const userId = await obtenerUsuarioIdActual();
+
+  const { data: actual, error: actualError } = await supabase
+    .from("documentos_contables_revision")
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .eq("id", params.id)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+
+  if (actualError) {
+    throw errorSupabase("No se pudo cargar el documento para revision", actualError);
+  }
+
+  if (!actual) {
+    throw new Error("No se encontro el documento contable en la empresa indicada.");
+  }
+
+  const documentoActual = normalizarDocumentoRevision(actual);
+
+  if (["Contabilizado", "Rechazado"].includes(documentoActual.estado)) {
+    throw new Error("El documento ya esta cerrado y no puede cambiar de estado.");
+  }
+
+  if (estadoNuevo === "Contabilizado") {
+    const adjuntos = await contarAdjuntosDocumentoContable(documentoActual);
+    if (adjuntos <= 0) {
+      throw new Error("Debe existir al menos un documento adjunto antes de contabilizar.");
+    }
+  }
+
+  if (["Observado", "Rechazado"].includes(estadoNuevo) && !observacion) {
+    throw new Error("Debe indicar una observacion para observar o rechazar.");
+  }
+
+  const ahora = new Date().toISOString();
+  const cambios = {
+    estado: estadoNuevo,
+    observacion,
+    actualizado_at: ahora,
+    ...(estadoNuevo === "En revision" ||
+    estadoNuevo === "Observado" ||
+    estadoNuevo === "Rechazado"
+      ? { revisado_por: userId, revisado_at: ahora }
+      : {}),
+    ...(estadoNuevo === "Contabilizado"
+      ? {
+          contabilizado_por: userId,
+          contabilizado_at: ahora,
+          revisado_por: documentoActual.revisado_por || userId,
+          revisado_at: documentoActual.revisado_at || ahora,
+          metadatos: {
+            ...(documentoActual.metadatos &&
+            typeof documentoActual.metadatos === "object" &&
+            !Array.isArray(documentoActual.metadatos)
+              ? documentoActual.metadatos
+              : {}),
+            preparado_para_distribucion_contable: true,
+            asiento_automatico_creado: false,
+            requiere_distribucion_balanceada: true,
+          },
+        }
+      : {}),
+  };
+
+  const { data, error } = await supabase
+    .from("documentos_contables_revision")
+    .update(cambios)
+    .eq("id", params.id)
+    .eq("empresa_id", empresaId)
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .single();
+
+  if (error) {
+    throw errorSupabase("No se pudo actualizar el estado del documento", error);
+  }
+
+  const documento = normalizarDocumentoRevision(data);
+
+  await auditarSinBloquear({
+    empresa_id: documento.empresa_id,
+    modulo: "contabilidad_v2",
+    accion:
+      estadoNuevo === "Contabilizado"
+        ? "marcar_documento_contabilizado"
+        : "cambiar_estado_documento_revision",
+    entidad_tipo: "documento_contable_revision",
+    entidad_id: documento.id,
+    estado_anterior: documentoActual.estado,
+    estado_nuevo: documento.estado,
+    motivo: observacion,
+    descripcion: "Documento contable actualizado en flujo de revision",
+    sensible: true,
+    visible_calendario: estadoNuevo !== "Contabilizado",
+    metadatos: {
+      numero_documento: documento.numero_documento,
+      moneda: documento.moneda,
+      total: documento.total,
+      asiento_automatico_creado: false,
+    },
+  });
+
+  return documento;
+}
+
+export async function corregirDocumentoContableRevision(
+  params: CorregirDocumentoContableRevisionParams
+): Promise<DocumentoContableRevision> {
+  if (params.id === "" || params.id === null || params.id === undefined) {
+    throw new Error("Debe indicar el documento contable que desea corregir.");
+  }
+
+  const empresaId = validarEmpresaId(params.empresa_id);
+  const observacion = requerirTexto(params.observacion, "observacion");
+  const userId = await obtenerUsuarioIdActual();
+
+  const { data: actual, error: actualError } = await supabase
+    .from("documentos_contables_revision")
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .eq("id", params.id)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+
+  if (actualError) {
+    throw errorSupabase("No se pudo cargar el documento para corregir", actualError);
+  }
+
+  if (!actual) {
+    throw new Error("No se encontro el documento contable en la empresa indicada.");
+  }
+
+  const documentoActual = normalizarDocumentoRevision(actual);
+
+  if (["Contabilizado", "Rechazado"].includes(documentoActual.estado)) {
+    throw new Error("El documento ya esta cerrado y no puede corregirse.");
+  }
+
+  const cambios: Record<string, unknown> = {
+    actualizado_at: new Date().toISOString(),
+    revisado_por: userId,
+    revisado_at: new Date().toISOString(),
+    observacion,
+    estado: "En revision",
+  };
+
+  if (params.serie !== undefined) cambios.serie = texto(params.serie);
+  if (params.numero_documento !== undefined) {
+    cambios.numero_documento = requerirTexto(
+      params.numero_documento,
+      "numero_documento"
+    );
+  }
+  if (params.fecha_documento !== undefined) {
+    cambios.fecha_documento = validarFecha(params.fecha_documento, "fecha_documento");
+  }
+  if (params.fecha_vencimiento !== undefined) {
+    cambios.fecha_vencimiento = params.fecha_vencimiento?.trim()
+      ? validarFecha(params.fecha_vencimiento, "fecha_vencimiento")
+      : null;
+  }
+  if (params.moneda !== undefined) cambios.moneda = normalizarMoneda(params.moneda);
+  if (params.subtotal !== undefined) {
+    cambios.subtotal = validarMontoNoNegativo(params.subtotal, "subtotal");
+  }
+  if (params.iva !== undefined) {
+    cambios.iva = validarMontoNoNegativo(params.iva, "iva");
+  }
+  if (params.isr !== undefined) {
+    cambios.isr = validarMontoNoNegativo(params.isr, "isr");
+  }
+  if (params.total !== undefined) {
+    const total = validarMontoNoNegativo(params.total, "total");
+    if (total <= 0) throw new Error("El total del documento debe ser mayor que cero.");
+    cambios.total = total;
+  }
+  if (params.descripcion !== undefined) {
+    cambios.descripcion = texto(params.descripcion);
+  }
+
+  const { data, error } = await supabase
+    .from("documentos_contables_revision")
+    .update(cambios)
+    .eq("id", params.id)
+    .eq("empresa_id", empresaId)
+    .select(COLUMNAS_DOCUMENTO_REVISION)
+    .single();
+
+  if (error) {
+    throw errorSupabase("No se pudo corregir el documento contable", error);
+  }
+
+  const documento = normalizarDocumentoRevision(data);
+
+  await auditarSinBloquear({
+    empresa_id: documento.empresa_id,
+    modulo: "contabilidad_v2",
+    accion: "corregir_documento_revision",
+    entidad_tipo: "documento_contable_revision",
+    entidad_id: documento.id,
+    estado_anterior: documentoActual.estado,
+    estado_nuevo: documento.estado,
+    motivo: observacion,
+    descripcion: "Documento contable corregido durante revision",
+    sensible: true,
+    visible_calendario: true,
+    metadatos: {
+      numero_documento_anterior: documentoActual.numero_documento,
+      numero_documento_nuevo: documento.numero_documento,
+      total_anterior: documentoActual.total,
+      total_nuevo: documento.total,
+      asiento_automatico_creado: false,
+    },
+  });
+
+  return documento;
 }
 
 export async function anularAsientoContable(
