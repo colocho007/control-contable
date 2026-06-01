@@ -7,6 +7,7 @@ import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
   descartarBorrador,
   guardarBorradorTrabajo,
@@ -1288,6 +1289,31 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
     if (firma.estado === "Firmado") {
       toast.error("Ya confirmaste esta firma");
       return;
+    }
+
+    const firmasYaCompletadas =
+      orden.ordenes_compra_firmas?.filter((f) => f.estado === "Firmado").length || 0;
+    const estaFirmaAprueba = firmasYaCompletadas + 1 >= orden.firmas_requeridas;
+
+    if (estaFirmaAprueba) {
+      if (!orden.empresa_id) {
+        toast.error("No se puede aprobar una orden sin empresa asociada.");
+        return;
+      }
+
+      try {
+        await validarRespaldoDocumentalActivo({
+          empresa_id: orden.empresa_id,
+          modulo: "ordenes",
+          entidad_tipo: "orden_compra",
+          entidad_id: orden.id,
+          operacion: "aprobar/finalizar orden de compra",
+          tipos_documento: ["factura", "comprobante", "documento soporte"],
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Falta respaldo documental activo.");
+        return;
+      }
     }
 
     setProcesandoId(orden.id);

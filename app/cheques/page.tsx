@@ -7,6 +7,7 @@ import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
   descartarBorrador,
   guardarBorradorTrabajo,
@@ -2264,6 +2265,10 @@ if (userId && perfilActual) {
 
 async function marcarPagado(cheque: Cheque) {
   if (!userId) return;
+  if (!cheque.empresa_id) {
+    toast.error("No se puede pagar un cheque sin empresa asociada.");
+    return;
+  }
 
   setProcesandoId(cheque.id);
   const toastId = toast.loading("Marcando como pagado...");
@@ -2275,6 +2280,24 @@ async function marcarPagado(cheque: Cheque) {
 
   try {
     const ahora = new Date().toISOString();
+
+    await validarRespaldoDocumentalActivo({
+      empresa_id: cheque.empresa_id,
+      modulo: "cheques",
+      entidad_tipo: "cheque",
+      entidad_id: cheque.id,
+      operacion: "pagar/finalizar cheque",
+      tipos_documento: [
+        "cheque escaneado",
+        "recibo",
+        "voucher",
+        "transferencia",
+        "depósito",
+        "deposito",
+        "comprobante",
+        "documento soporte",
+      ],
+    });
 
     if (!cheque.movimiento_generado) {
       const { data: movimientoCreado, error: movError } = await supabase

@@ -51,6 +51,7 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
+import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 
 interface Movimiento {
   id: number;
@@ -1158,6 +1159,17 @@ export default function ContabilidadPage() {
 
     try {
       setLoading(true);
+      if (estado === "Contabilizado") {
+        await validarRespaldoDocumentalActivo({
+          empresa_id: documento.empresa_id,
+          modulo: "contabilidad",
+          entidad_tipo: "documento_contable_revision",
+          entidad_id: documento.id,
+          operacion: "contabilizar documento contable",
+          tipos_documento: ["factura", "recibo", "comprobante", "documento soporte"],
+        });
+      }
+
       await cambiarEstadoDocumentoContable({
         id: documento.id,
         empresa_id: documento.empresa_id,

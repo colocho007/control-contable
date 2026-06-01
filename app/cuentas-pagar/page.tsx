@@ -6,6 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import { AlertTriangle, Ban, Loader2, Plus, RefreshCcw, Search, WalletCards } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
@@ -448,6 +449,15 @@ export default function CuentasPagarPage() {
     const toastId = toast.loading("Registrando pago...");
 
     try {
+      await validarRespaldoDocumentalActivo({
+        empresa_id: empresaId,
+        modulo: "cuentas-pagar",
+        entidad_tipo: "cuenta_por_pagar",
+        entidad_id: cuenta.id,
+        operacion: "registrar pago CxP",
+        tipos_documento: ["recibo", "voucher", "transferencia", "depósito", "deposito", "comprobante", "documento soporte"],
+      });
+
       const { data: pagoData, error: pagoError } = await supabase
         .from("pagos_cuentas_por_pagar")
         .insert({

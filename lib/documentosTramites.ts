@@ -79,6 +79,15 @@ export interface BuscarDocumentosTramiteParams {
   limite?: number;
 }
 
+export interface ValidarRespaldoDocumentalParams {
+  empresa_id: number;
+  modulo: string;
+  entidad_tipo: string;
+  entidad_id: string | number;
+  operacion: string;
+  tipos_documento?: string[];
+}
+
 export type ListarDocumentosTramiteParams = BuscarDocumentosTramiteParams;
 
 interface RegistrarDocumentoManualParams
@@ -96,6 +105,17 @@ const LIMITE_MAXIMO = 500;
 const DURACION_URL_SEGUNDOS = 300;
 const COLUMNAS_DOCUMENTO =
   "id,empresa_id,modulo,tipo_documento,entidad_tipo,entidad_id,titulo,descripcion,fecha_documento,fecha_vencimiento,numero_documento,numero_factura,numero_cheque,proveedor_id,proveedor_nombre_snapshot,banco,cuenta_bancaria,monto,moneda,sensible,metadatos,archivo_bucket,archivo_path,archivo_nombre,archivo_mime,archivo_size,estado,creado_at,actualizado_at";
+export const TIPOS_RESPALDO_OPERACION = [
+  "cheque escaneado",
+  "factura",
+  "recibo",
+  "voucher",
+  "transferencia",
+  "depósito",
+  "deposito",
+  "comprobante",
+  "documento soporte",
+];
 
 function requerirTexto(valor: string, campo: string) {
   if (!valor?.trim()) {
@@ -435,6 +455,82 @@ export async function buscarDocumentosTramite(
   params: BuscarDocumentosTramiteParams = {}
 ): Promise<DocumentoTramite[]> {
   return listarDocumentosTramite(params);
+}
+
+export async function validarRespaldoDocumentalActivo(
+  params: ValidarRespaldoDocumentalParams
+): Promise<DocumentoTramite[]> {
+  validarEmpresaId(params.empresa_id);
+  requerirTexto(params.modulo, "modulo");
+  requerirTexto(params.entidad_tipo, "entidad_tipo");
+
+  if (params.entidad_id === "" || params.entidad_id === null || params.entidad_id === undefined) {
+    throw new Error("No se puede validar respaldo documental sin entidad_id.");
+  }
+
+  const documentos = await listarDocumentosTramite({
+    empresa_id: params.empresa_id,
+    modulo: params.modulo,
+    entidad_tipo: params.entidad_tipo,
+    entidad_id: params.entidad_id,
+    limite: 25,
+  });
+
+  const tiposPermitidos = (params.tipos_documento?.length
+    ? params.tipos_documento
+    : TIPOS_RESPALDO_OPERACION
+  ).map((tipo) => tipo.trim().toLowerCase());
+
+  const respaldos = documentos.filter((documento) =>
+    tiposPermitidos.includes((documento.tipo_documento || "").trim().toLowerCase())
+  );
+
+  if (!respaldos.length) {
+    await auditarSinBloquear({
+      empresa_id: params.empresa_id,
+      modulo: params.modulo,
+      accion: "operacion_bloqueada_sin_respaldo_documental",
+      entidad_tipo: params.entidad_tipo,
+      entidad_id: params.entidad_id,
+      estado_nuevo: "bloqueado",
+      descripcion: `Operacion bloqueada por falta de respaldo documental activo: ${params.operacion}`,
+      sensible: true,
+      metadatos: {
+        operacion: params.operacion,
+        tipos_documento_aceptados: tiposPermitidos,
+        requiere_documentos_tramites_activo: true,
+      },
+      origen: "validacion_documentos_tramites",
+    });
+
+    throw new Error(
+      `Falta respaldo documental activo para ${params.operacion}. ` +
+        `Adjunta un documento activo en documentos_tramites para ${params.modulo}/${params.entidad_tipo}/${params.entidad_id}.`
+    );
+  }
+
+  await auditarSinBloquear({
+    empresa_id: params.empresa_id,
+    modulo: params.modulo,
+    accion: "operacion_con_respaldo_documental",
+    entidad_tipo: params.entidad_tipo,
+    entidad_id: params.entidad_id,
+    estado_nuevo: "validado",
+    descripcion: `Operacion validada con respaldo documental activo: ${params.operacion}`,
+    sensible: true,
+    metadatos: {
+      operacion: params.operacion,
+      documentos_activos: respaldos.map((documento) => ({
+        id: documento.id,
+        tipo_documento: documento.tipo_documento,
+        archivo_nombre: documento.archivo_nombre,
+      })),
+      no_usa_url_publica: true,
+    },
+    origen: "validacion_documentos_tramites",
+  });
+
+  return respaldos;
 }
 
 export async function obtenerUrlDocumento(
