@@ -22,6 +22,7 @@ import {
   FolderOpen,
   BarChart3,
   RotateCcw,
+  ServerCog,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -255,6 +256,12 @@ const menusAdmin = [
       icon: ShieldCheck,
       clave: "admin",
     },
+    {
+      name: "Monitoreo Sistema",
+      path: "/monitoreo-sistema",
+      icon: ServerCog,
+      clave: "monitoreo-sistema",
+    },
   ];
 
   // Rutas para usuarios que solo trabajan órdenes
@@ -290,11 +297,11 @@ const menusAdmin = [
     : rolNormalizado === "admin"
     ? [...menusBase, ...menusAdmin, ...menusSoloAdmin]
     : ROLES_ADMIN.includes(rolNormalizado)
-    ? [...menusBase, ...menusAdmin, ...menusSoloAdmin]
+    ? [...menusBase, ...menusAdmin, menusSoloAdmin[0]]
     : menusBase;
 
   const menusFiltrados = menus.filter((menu) =>
-  menu.clave === "admin" ? true : moduloActivo(menu.clave)
+  menu.clave === "admin" || menu.clave === "monitoreo-sistema" ? true : moduloActivo(menu.clave)
 );
 
   return (
