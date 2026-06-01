@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Building2,
   Wallet,
+  WalletCards,
   Users,
   Receipt,
   Truck,
@@ -187,6 +188,12 @@ export default function Sidebar() {
     path: "/contabilidad",
     icon: Receipt,
     clave: "contabilidad",
+  },
+  {
+    name: "Cuentas por Cobrar",
+    path: "/cuentas-cobrar",
+    icon: WalletCards,
+    clave: "cuentas-cobrar",
   },
   {
     name: "Reportes",
