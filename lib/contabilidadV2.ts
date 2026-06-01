@@ -189,6 +189,7 @@ const COLUMNAS_ASIENTO_CON_DETALLE = `${COLUMNAS_ASIENTO},movimientos_contables_
 const LIMITE_PREDETERMINADO = 200;
 const LIMITE_MAXIMO = 1000;
 const TOLERANCIA_BALANCE = 0.005;
+const MONEDAS_PERMITIDAS = ["GTQ", "USD"];
 
 function errorSupabase(accion: string, error: { message?: string } | null) {
   return new Error(
@@ -225,7 +226,11 @@ function validarFecha(valor: string, campo = "fecha") {
 }
 
 function normalizarMoneda(valor?: string | null) {
-  return (valor || "GTQ").trim().toUpperCase() || "GTQ";
+  const moneda = (valor || "GTQ").trim().toUpperCase() || "GTQ";
+  if (!MONEDAS_PERMITIDAS.includes(moneda)) {
+    throw new Error("La moneda contable debe ser GTQ o USD.");
+  }
+  return moneda;
 }
 
 function numero(valor: number | undefined | null) {
@@ -304,7 +309,45 @@ function normalizarAsiento(data: unknown) {
   return data as AsientoContable;
 }
 
-function validarDetalle(detalles: MovimientoDetalleInput[]) {
+async function validarCuentasDetalle(
+  empresaId: number,
+  cuentaIds: Array<string | number>
+) {
+  const idsUnicos = Array.from(new Set(cuentaIds.map((id) => String(id))));
+
+  const { data, error } = await supabase
+    .from("catalogo_cuentas")
+    .select("id,empresa_id,activo,permite_movimientos")
+    .in("id", idsUnicos);
+
+  if (error) {
+    throw errorSupabase("No se pudieron validar las cuentas del asiento", error);
+  }
+
+  const cuentas = new Map(
+    (data || []).map((cuenta) => [String(cuenta.id), cuenta])
+  );
+
+  idsUnicos.forEach((cuentaId) => {
+    const cuenta = cuentas.get(cuentaId);
+
+    if (!cuenta) {
+      throw new Error(`La cuenta ${cuentaId} no existe o no es accesible.`);
+    }
+
+    if (cuenta.activo !== true || cuenta.permite_movimientos !== true) {
+      throw new Error(`La cuenta ${cuentaId} no permite movimientos.`);
+    }
+
+    if (cuenta.empresa_id !== null && Number(cuenta.empresa_id) !== empresaId) {
+      throw new Error(
+        `La cuenta ${cuentaId} no pertenece a la empresa del asiento.`
+      );
+    }
+  });
+}
+
+function validarDetalle(detalles: MovimientoDetalleInput[], monedaBase: string) {
   if (!Array.isArray(detalles) || detalles.length < 2) {
     throw new Error("Un asiento contable debe tener al menos dos lineas de detalle.");
   }
@@ -325,12 +368,20 @@ function validarDetalle(detalles: MovimientoDetalleInput[]) {
       throw new Error(`La linea ${index + 1} debe tener un monto en debe o haber.`);
     }
 
+    const moneda = normalizarMoneda(detalle.moneda);
+
+    if (moneda !== monedaBase) {
+      throw new Error(
+        `La linea ${index + 1} usa ${moneda}, pero la moneda base del asiento es ${monedaBase}.`
+      );
+    }
+
     return {
       cuenta_id: detalle.cuenta_id,
       descripcion: texto(detalle.descripcion),
       debe,
       haber,
-      moneda: normalizarMoneda(detalle.moneda),
+      moneda,
       tipo_cambio:
         detalle.tipo_cambio === null || detalle.tipo_cambio === undefined
           ? null
@@ -551,7 +602,15 @@ export async function crearAsientoContable(
   const empresaId = validarEmpresaId(params.empresa_id);
   const fecha = validarFecha(params.fecha);
   const descripcion = requerirTexto(params.descripcion, "descripcion");
-  const { lineas, totalDebe, totalHaber } = validarDetalle(params.detalles);
+  const monedaBase = normalizarMoneda(params.moneda_base);
+  const { lineas, totalDebe, totalHaber } = validarDetalle(
+    params.detalles,
+    monedaBase
+  );
+  await validarCuentasDetalle(
+    empresaId,
+    lineas.map((linea) => linea.cuenta_id)
+  );
   const periodo = await obtenerOCrearPeriodoContable({ empresa_id: empresaId, fecha });
 
   if (periodo.estado !== "abierto") {
@@ -573,7 +632,7 @@ export async function crearAsientoContable(
         entidad_tipo: texto(params.entidad_tipo),
         entidad_id: params.entidad_id ?? null,
         estado: "registrado",
-        moneda_base: normalizarMoneda(params.moneda_base),
+        moneda_base: monedaBase,
         total_debe: totalDebe,
         total_haber: totalHaber,
         creado_por: userId,

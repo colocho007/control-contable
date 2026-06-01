@@ -787,6 +787,7 @@ export default function ContabilidadPage() {
 
   function erroresAsientoManual() {
     const errores: string[] = [];
+    const monedaBase = asientoForm.monedaBase;
 
     if (!asientoForm.empresaId) errores.push("Debe seleccionar empresa.");
     if (!asientoForm.fecha) errores.push("Debe indicar fecha.");
@@ -802,6 +803,36 @@ export default function ContabilidadPage() {
 
       if (!linea.cuentaId) {
         errores.push(`Linea ${index + 1}: debe seleccionar cuenta.`);
+      }
+
+      const cuenta = catalogoCuentas.find(
+        (item) => String(item.id) === String(linea.cuentaId)
+      );
+
+      if (cuenta) {
+        const cuentaEmpresaId =
+          cuenta.empresa_id === null || cuenta.empresa_id === undefined
+            ? null
+            : Number(cuenta.empresa_id);
+
+        if (
+          cuentaEmpresaId !== null &&
+          cuentaEmpresaId !== Number(asientoForm.empresaId)
+        ) {
+          errores.push(
+            `Linea ${index + 1}: la cuenta no pertenece a la empresa seleccionada.`
+          );
+        }
+
+        if (!cuenta.activo || !cuenta.permite_movimientos) {
+          errores.push(`Linea ${index + 1}: la cuenta no permite movimientos.`);
+        }
+      }
+
+      if (linea.moneda !== monedaBase) {
+        errores.push(
+          `Linea ${index + 1}: la moneda debe coincidir con la moneda base ${monedaBase}.`
+        );
       }
 
       if (debe > 0 && haber > 0) {
@@ -1686,9 +1717,13 @@ export default function ContabilidadPage() {
             <Campo label="Moneda base">
               <select
                 value={asientoForm.monedaBase}
-                onChange={(e) =>
-                  setAsientoForm({ ...asientoForm, monedaBase: e.target.value })
-                }
+                onChange={(e) => {
+                  const monedaBase = e.target.value;
+                  setAsientoForm({ ...asientoForm, monedaBase });
+                  setLineasAsiento((lineas) =>
+                    lineas.map((linea) => ({ ...linea, moneda: monedaBase }))
+                  );
+                }}
                 className="input-control"
               >
                 <option value="GTQ">GTQ</option>
