@@ -9,6 +9,11 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
+  listarFuncionesOperativasEmpresas,
+  tieneFuncionOperativaLocal,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
+import {
   descartarBorrador,
   guardarBorradorTrabajo,
   listarBorradoresActivos,
@@ -232,6 +237,7 @@ const [historialCheques, setHistorialCheques] = useState<
 >([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [usuarios, setUsuarios] = useState<Perfil[]>([]);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -348,6 +354,7 @@ async function iniciar() {
     await Promise.all([
       obtenerEmpresas(idsPermitidos),
       obtenerUsuarios(),
+      obtenerFuncionesOperativas(idsPermitidos),
       obtenerCheques(idsPermitidos, user.id, perfil.rol || ""),
       obtenerFondos(idsPermitidos),
       obtenerChequeras(idsPermitidos),
@@ -472,12 +479,37 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
   async function obtenerUsuarios() {
     const { data, error } = await supabase
       .from("perfiles")
-      .select("id,nombre,rol")
+      .select("id,nombre,rol,activo")
       .order("nombre", { ascending: true });
 
     if (error) throw error;
     setUsuarios(data || []);
   }
+
+async function obtenerFuncionesOperativas(idsPermitidos: number[]) {
+  const funciones = await listarFuncionesOperativasEmpresas(idsPermitidos);
+  setFuncionesOperativas(funciones);
+}
+
+function tieneFuncionCheque(
+  usuarioId: string | null | undefined,
+  empresaId: number | string | null | undefined,
+  funciones: Array<"firmante_cheque" | "autorizador_cheque" | "pagador_cheque" | "revisor_cheque">
+) {
+  return tieneFuncionOperativaLocal(funcionesOperativas, usuarioId, empresaId, funciones);
+}
+
+function usuarioPuedeAutorizarCheque(usuario: Perfil, empresaId?: number | string | null) {
+  if (empresaId && tieneFuncionCheque(usuario.id, empresaId, ["autorizador_cheque", "firmante_cheque"])) {
+    return true;
+  }
+  return ROLES_JEFATURA.includes((usuario.rol || "").trim().toLowerCase());
+}
+
+function usuarioActualPuedePagarCheque(cheque: Cheque) {
+  if (tieneFuncionCheque(userId, cheque.empresa_id, ["pagador_cheque"])) return true;
+  return ROLES_JEFATURA.includes((perfilActual?.rol || "").trim().toLowerCase());
+}
 
   async function obtenerCheques(
     idsPermitidos: number[],
@@ -1782,6 +1814,10 @@ async function crearChequera() {
 
 async function autorizarCheque(cheque: Cheque) {
   if (!userId) return;
+  if (!tieneFuncionCheque(userId, cheque.empresa_id, ["autorizador_cheque", "firmante_cheque"]) && !puedeAprobar) {
+    toast.error("No tienes funcion operativa para autorizar cheques en esta empresa.");
+    return;
+  }
 
   setProcesandoId(cheque.id);
   const toastId = toast.loading("Autorizando cheque...");
@@ -2267,6 +2303,10 @@ async function marcarPagado(cheque: Cheque) {
   if (!userId) return;
   if (!cheque.empresa_id) {
     toast.error("No se puede pagar un cheque sin empresa asociada.");
+    return;
+  }
+  if (!usuarioActualPuedePagarCheque(cheque)) {
+    toast.error("No tienes funcion operativa de pagador de cheques para esta empresa.");
     return;
   }
 
@@ -3059,9 +3099,8 @@ useEffect(() => {
                 <option value="">Responsable autorización...</option>
                 {usuarios
                   .filter((u) =>
-                    ROLES_JEFATURA.includes(
-                      (u.rol || "").trim().toLowerCase()
-                    )
+                    u.activo !== false &&
+                    usuarioPuedeAutorizarCheque(u, Number(form.empresaId || 0))
                   )
                   .map((u) => (
                     <option key={u.id} value={u.id}>

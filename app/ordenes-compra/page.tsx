@@ -9,6 +9,11 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
 import {
+  listarFuncionesOperativasEmpresas,
+  tieneFuncionOperativaLocal,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
+import {
   descartarBorrador,
   guardarBorradorTrabajo,
   marcarBorradorCompletado,
@@ -163,6 +168,7 @@ export default function OrdenesCompraPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [usuarios, setUsuarios] = useState<Perfil[]>([]);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -256,6 +262,7 @@ export default function OrdenesCompraPage() {
 
     const cargasIniciales: Promise<void>[] = [
       obtenerEmpresas(idsPermitidos),
+      obtenerFuncionesOperativas(idsPermitidos),
       obtenerUsuarios(perfil.rol || ""),
       obtenerOrdenes(idsPermitidos, user.id, perfil.rol || ""),
     ];
@@ -753,6 +760,31 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
     setUsuarios(data || []);
   }
 
+async function obtenerFuncionesOperativas(idsPermitidos: number[]) {
+  const funciones = await listarFuncionesOperativasEmpresas(idsPermitidos);
+  setFuncionesOperativas(funciones);
+}
+
+function tieneFuncionOrden(
+  usuarioId: string | null | undefined,
+  empresaId: number | string | null | undefined,
+  funciones: Array<"creador_orden" | "firmante_orden" | "autorizador_compra">
+) {
+  return tieneFuncionOperativaLocal(funcionesOperativas, usuarioId, empresaId, funciones);
+}
+
+function usuarioPuedeFirmarOrden(usuario: Perfil, empresaId?: number | string | null) {
+  if (empresaId && tieneFuncionOrden(usuario.id, empresaId, ["firmante_orden", "autorizador_compra"])) {
+    return true;
+  }
+  return ROLES_FIRMANTES.includes(normalizarRol(usuario.rol));
+}
+
+function usuarioActualPuedeCrearOrden(empresaId: number | string | null | undefined) {
+  if (tieneFuncionOrden(userId, empresaId, ["creador_orden"])) return true;
+  return ROLES_CREADORES.includes(normalizarRol(perfilActual?.rol));
+}
+
  async function obtenerOrdenes(
   idsPermitidos: number[],
   usuarioId: string,
@@ -909,6 +941,11 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
       return;
     }
 
+    if (!usuarioActualPuedeCrearOrden(form.empresaId)) {
+      toast.error("No tienes funcion operativa para crear ordenes en esta empresa.");
+      return;
+    }
+
     if (firmantesSeleccionados.length === 0) {
       toast.error("Selecciona al menos un firmante");
       return;
@@ -919,7 +956,7 @@ async function obtenerEmpresas(idsPermitidos: number[]) {
         (usuario) =>
           usuario.id === firmanteId &&
           usuario.activo !== false &&
-          ROLES_FIRMANTES.includes(normalizarRol(usuario.rol))
+          usuarioPuedeFirmarOrden(usuario, form.empresaId)
       )
     );
 
@@ -1288,6 +1325,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
     if (firma.estado === "Firmado") {
       toast.error("Ya confirmaste esta firma");
+      return;
+    }
+
+    if (
+      !tieneFuncionOrden(userId, orden.empresa_id, ["firmante_orden", "autorizador_compra"]) &&
+      !ROLES_FIRMANTES.includes(normalizarRol(perfilActual?.rol))
+    ) {
+      toast.error("No tienes funcion operativa para firmar o autorizar compras en esta empresa.");
       return;
     }
 
@@ -1660,7 +1705,7 @@ useEffect(() => {
 }, [autorizado, puedeCrear, borradorRevisado]);
 
   const usuariosFirmantes = usuarios.filter(
-    (u) => u.activo !== false && ROLES_FIRMANTES.includes(normalizarRol(u.rol))
+    (u) => u.activo !== false && usuarioPuedeFirmarOrden(u, form.empresaId)
   );
 const ordenesFiltradas = useMemo(() => {
   return ordenes.filter((orden) => {

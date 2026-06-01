@@ -11,6 +11,11 @@ import {
   type RegistrarAuditoriaEventoParams,
 } from "../../lib/auditoria";
 import {
+  FUNCIONES_OPERATIVAS,
+  type FuncionOperativa,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
+import {
   Building2,
   CheckCircle2,
   Loader2,
@@ -84,6 +89,13 @@ interface AsignacionModuloExistente {
   activo?: boolean | null;
 }
 
+interface AsignacionFuncionExistente {
+  id: number;
+  empresa_id: number;
+  funcion: string;
+  activo?: boolean | null;
+}
+
 const ROLES_ADMIN_OPERATIVO = ["admin", "jefe", "supervisor"];
 const ROLES_SISTEMA = [
   "admin",
@@ -98,6 +110,12 @@ const ROLES_SISTEMA = [
   "empleado",
 ];
 const MOTIVO_CAMBIO_PERMISOS = "Actualizacion desde Administrador Operativo";
+const FUNCIONES_POR_MODULO: Record<string, FuncionOperativa[]> = {
+  Cheques: ["firmante_cheque", "autorizador_cheque", "pagador_cheque", "revisor_cheque"],
+  Ordenes: ["creador_orden", "firmante_orden", "autorizador_compra"],
+  Contabilidad: ["auxiliar_contable", "contador_revisor"],
+  Auditoria: ["auditor_solo_lectura"],
+};
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
@@ -148,6 +166,7 @@ export default function AdminPage() {
   const [asignaciones, setAsignaciones] = useState<UsuarioEmpresa[]>([]);
   const [modulos, setModulos] = useState<ModuloSistema[]>([]);
   const [usuarioModulos, setUsuarioModulos] = useState<UsuarioModulo[]>([]);
+  const [usuarioFunciones, setUsuarioFunciones] = useState<UsuarioFuncionOperativa[]>([]);
   const [trabajosActivos, setTrabajosActivos] = useState<TrabajoActivo[]>([]);
 
   const [validandoAcceso, setValidandoAcceso] = useState(true);
@@ -160,6 +179,7 @@ export default function AdminPage() {
   const [activoSeleccionado, setActivoSeleccionado] = useState(true);
   const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState<number[]>([]);
   const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
+  const [funcionesSeleccionadas, setFuncionesSeleccionadas] = useState<Record<number, string[]>>({});
 
   const [nuevoUsuario, setNuevoUsuario] = useState({
     nombre: "",
@@ -242,6 +262,7 @@ export default function AdminPage() {
       setAsignaciones([]);
       setModulos([]);
       setUsuarioModulos([]);
+      setUsuarioFunciones([]);
       setTrabajosActivos([]);
       return;
     }
@@ -252,6 +273,7 @@ export default function AdminPage() {
       resAsignaciones,
       resModulos,
       resUsuarioModulos,
+      resUsuarioFunciones,
       resTrabajos,
     ] = await Promise.all([
       supabase
@@ -279,6 +301,10 @@ export default function AdminPage() {
         .from("usuario_modulos")
         .select("id,usuario_id,modulo_clave,activo"),
       supabase
+        .from("usuario_funciones_operativas")
+        .select("id,usuario_id,empresa_id,funcion,activo")
+        .in("empresa_id", ids),
+      supabase
         .from("borradores_trabajo")
         .select(
           "id,usuario_id,empresa_id,modulo,ruta,titulo,actualizado_at,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
@@ -294,6 +320,12 @@ export default function AdminPage() {
     if (resAsignaciones.error) throw resAsignaciones.error;
     if (resModulos.error) throw resModulos.error;
     if (resUsuarioModulos.error) throw resUsuarioModulos.error;
+    if (resUsuarioFunciones.error) {
+      console.warn("No se pudieron cargar funciones operativas:", resUsuarioFunciones.error);
+      setUsuarioFunciones([]);
+    } else {
+      setUsuarioFunciones((resUsuarioFunciones.data || []) as UsuarioFuncionOperativa[]);
+    }
 
     if (resTrabajos.error) {
       console.warn("No se pudieron cargar usuarios trabajando:", resTrabajos.error);
@@ -320,12 +352,20 @@ export default function AdminPage() {
     const modulosDelUsuario = usuarioModulos
       .filter((m) => m.usuario_id === usuarioId && m.activo !== false)
       .map((m) => m.modulo_clave);
+    const funcionesDelUsuario = usuarioFunciones
+      .filter((f) => f.usuario_id === usuarioId && f.activo !== false)
+      .reduce<Record<number, string[]>>((acc, funcion) => {
+        const empresaId = Number(funcion.empresa_id);
+        acc[empresaId] = [...(acc[empresaId] || []), funcion.funcion];
+        return acc;
+      }, {});
 
     setUsuarioEditando(usuario.id);
     setRolSeleccionado(normalizarRol(usuario.rol) || "empleado");
     setActivoSeleccionado(usuario.activo !== false);
     setEmpresasSeleccionadas(valoresUnicosNumericos(empresasDelUsuario));
     setModulosSeleccionados(valoresUnicosTexto(modulosDelUsuario));
+    setFuncionesSeleccionadas(funcionesDelUsuario);
   }
 
   function toggleEmpresa(empresaId: number) {
@@ -342,6 +382,16 @@ export default function AdminPage() {
         ? prev.filter((clave) => clave !== moduloClave)
         : [...prev, moduloClave]
     );
+  }
+
+  function toggleFuncionOperativa(empresaId: number, funcion: string) {
+    setFuncionesSeleccionadas((prev) => {
+      const actuales = prev[empresaId] || [];
+      const nuevos = actuales.includes(funcion)
+        ? actuales.filter((item) => item !== funcion)
+        : [...actuales, funcion];
+      return { ...prev, [empresaId]: nuevos };
+    });
   }
 
   async function crearUsuarioOperativo() {
@@ -418,6 +468,19 @@ export default function AdminPage() {
       return;
     }
 
+    const funcionesNormalizadas = Object.fromEntries(
+      Object.entries(funcionesSeleccionadas)
+        .map(([empresaId, funciones]) => [
+          Number(empresaId),
+          valoresUnicosTexto(funciones).filter((funcion) =>
+            FUNCIONES_OPERATIVAS.includes(funcion as FuncionOperativa)
+          ),
+        ])
+        .filter(([empresaId, funciones]) =>
+          empresasUnicas.includes(Number(empresaId)) && (funciones as string[]).length > 0
+        )
+    ) as Record<number, string[]>;
+
     setProcesando(true);
     const toastId = toast.loading("Guardando usuario, empresas y modulos...");
     let auditoriaCompleta = true;
@@ -481,6 +544,15 @@ export default function AdminPage() {
           auditoriaCompleta = auditoriaCompleta && ok;
         }
       );
+      await sincronizarFuncionesUsuario(
+        usuarioEditando,
+        empresasUnicas,
+        funcionesNormalizadas,
+        datosAuditoria,
+        (ok) => {
+          auditoriaCompleta = auditoriaCompleta && ok;
+        }
+      );
 
       await cargarDatos();
       setUsuarioEditando("");
@@ -488,6 +560,7 @@ export default function AdminPage() {
       setActivoSeleccionado(true);
       setEmpresasSeleccionadas([]);
       setModulosSeleccionados([]);
+      setFuncionesSeleccionadas({});
 
       if (auditoriaCompleta) {
         toast.success("Administrador Operativo actualizado", { id: toastId });
@@ -692,10 +765,121 @@ export default function AdminPage() {
     }
   }
 
+  async function sincronizarFuncionesUsuario(
+    usuarioId: string,
+    empresasSeleccionadasNormalizadas: number[],
+    funcionesPorEmpresa: Record<number, string[]>,
+    datosAuditoria: Record<string, string>,
+    registrarResultado: (ok: boolean) => void
+  ) {
+    const { data, error } = await supabase
+      .from("usuario_funciones_operativas")
+      .select("id,empresa_id,funcion,activo")
+      .eq("usuario_id", usuarioId)
+      .in("empresa_id", empresasPermitidasIds);
+
+    if (error) throw error;
+
+    const existentes = (data || []) as AsignacionFuncionExistente[];
+    const empresasSeleccionadasSet = new Set(empresasSeleccionadasNormalizadas);
+    const seleccionadas = new Set<string>();
+
+    for (const [empresaIdTexto, funciones] of Object.entries(funcionesPorEmpresa)) {
+      const empresaId = Number(empresaIdTexto);
+      if (!empresasSeleccionadasSet.has(empresaId)) continue;
+      for (const funcion of funciones) {
+        seleccionadas.add(`${empresaId}:${funcion}`);
+      }
+    }
+
+    const existentesPorClave = new Map<string, AsignacionFuncionExistente[]>();
+    for (const item of existentes) {
+      const clave = `${Number(item.empresa_id)}:${item.funcion}`;
+      const grupo = existentesPorClave.get(clave) || [];
+      grupo.push(item);
+      existentesPorClave.set(clave, grupo);
+    }
+
+    const idsCanonicosSeleccionados = new Set<number>();
+    for (const clave of seleccionadas) {
+      const grupo = existentesPorClave.get(clave) || [];
+      const canonico = grupo.find((item) => item.activo === true) || grupo[0];
+      if (canonico) idsCanonicosSeleccionados.add(canonico.id);
+    }
+
+    const activar = existentes.filter(
+      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+    );
+    const desactivar = existentes.filter((item) => {
+      const clave = `${Number(item.empresa_id)}:${item.funcion}`;
+      return (
+        item.activo !== false &&
+        (!seleccionadas.has(clave) || !idsCanonicosSeleccionados.has(item.id))
+      );
+    });
+    const nuevas = Array.from(seleccionadas)
+      .filter((clave) => !existentesPorClave.has(clave))
+      .map((clave) => {
+        const [empresaId, funcion] = clave.split(":");
+        return {
+          usuario_id: usuarioId,
+          empresa_id: Number(empresaId),
+          funcion,
+          activo: true,
+          ...datosAuditoria,
+        };
+      });
+
+    if (activar.length) {
+      const { error: activarError } = await supabase
+        .from("usuario_funciones_operativas")
+        .update({ activo: true, ...datosAuditoria })
+        .in("id", activar.map((item) => item.id));
+      if (activarError) throw activarError;
+    }
+
+    if (desactivar.length) {
+      const { error: desactivarError } = await supabase
+        .from("usuario_funciones_operativas")
+        .update({ activo: false, ...datosAuditoria })
+        .in("id", desactivar.map((item) => item.id));
+      if (desactivarError) throw desactivarError;
+    }
+
+    if (nuevas.length) {
+      const { error: insertarError } = await supabase
+        .from("usuario_funciones_operativas")
+        .insert(nuevas);
+      if (insertarError) throw insertarError;
+    }
+
+    if (activar.length || desactivar.length || nuevas.length) {
+      const ok = await registrarAuditoriaAdmin(
+        {
+          modulo: "admin-operativo",
+          accion: "sincronizar_funciones_operativas_usuario",
+          entidad_tipo: "usuario_funciones_operativas",
+          entidad_id: usuarioId,
+          descripcion: "Funciones operativas de usuario sincronizadas desde Administrador Operativo",
+          sensible: true,
+          metadatos: {
+            activadas: activar.map((item) => `${item.empresa_id}:${item.funcion}`),
+            desactivadas: desactivar.map((item) => `${item.empresa_id}:${item.funcion}`),
+            insertadas: nuevas.map((item) => `${item.empresa_id}:${item.funcion}`),
+          },
+          origen: "admin_operativo",
+        },
+        "funciones operativas de usuario"
+      );
+      registrarResultado(ok);
+    }
+  }
+
   const usuariosActivos = usuarios.filter((usuario) => usuario.activo !== false);
   const usuariosInactivos = usuarios.filter((usuario) => usuario.activo === false);
   const asignacionesActivas = asignaciones.filter((item) => item.activo !== false);
   const modulosAsignadosActivos = usuarioModulos.filter((item) => item.activo !== false);
+  const funcionesActivas = usuarioFunciones.filter((item) => item.activo !== false);
 
   const resumen = useMemo(
     () => ({
@@ -940,6 +1124,55 @@ export default function AdminPage() {
                   })}
                 </div>
 
+                <div className="mb-5">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-2">
+                    Funciones operativas por empresa
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Estas funciones controlan firma, autorizacion, pagos, revision y lectura. No sustituyen rol, empresa ni modulo: los complementan.
+                  </p>
+                </div>
+
+                <div className="space-y-4 mb-6 max-h-[420px] overflow-y-auto pr-2">
+                  {empresas
+                    .filter((empresa) => empresasSeleccionadas.includes(Number(empresa.id)))
+                    .map((empresa) => (
+                      <div key={empresa.id} className="rounded-2xl border border-white/10 bg-[#0f172a]/70 p-4">
+                        <p className="mb-3 text-sm font-black text-white">{empresa.nombre}</p>
+                        <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">
+                          {Object.entries(FUNCIONES_POR_MODULO).map(([grupo, funciones]) => (
+                            <div key={`${empresa.id}-${grupo}`} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+                              <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-gray-500">{grupo}</p>
+                              <div className="space-y-2">
+                                {funciones.map((funcion) => {
+                                  const activa = (funcionesSeleccionadas[Number(empresa.id)] || []).includes(funcion);
+                                  return (
+                                    <button
+                                      key={`${empresa.id}-${funcion}`}
+                                      type="button"
+                                      onClick={() => toggleFuncionOperativa(Number(empresa.id), funcion)}
+                                      disabled={!usuarioEditando || procesando}
+                                      className={`w-full rounded-lg border px-3 py-2 text-left text-[11px] font-black ${
+                                        activa
+                                          ? "border-green-400/50 bg-green-500/10 text-green-200"
+                                          : "border-white/10 bg-white/[0.02] text-gray-400"
+                                      }`}
+                                    >
+                                      {funcion}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  {usuarioEditando && empresasSeleccionadas.length === 0 && (
+                    <p className="text-sm text-gray-500">Selecciona al menos una empresa para asignar funciones operativas.</p>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={guardarPermisosUsuario}
@@ -960,6 +1193,10 @@ export default function AdminPage() {
               <section className="grid lg:grid-cols-2 gap-8 mt-8">
                 <PanelAsignaciones asignaciones={asignacionesActivas} />
                 <PanelModulos usuarios={usuarios} modulos={modulosAsignadosActivos} catalogo={modulos} />
+              </section>
+
+              <section className="mt-8">
+                <PanelFunciones usuarios={usuarios} funciones={funcionesActivas} empresas={empresas} />
               </section>
             </>
           )}
@@ -1163,6 +1400,45 @@ function PanelModulos({
         })}
         {modulos.length === 0 && (
           <p className="text-gray-500 text-sm">No hay modulos asignados.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PanelFunciones({
+  usuarios,
+  funciones,
+  empresas,
+}: {
+  usuarios: Perfil[];
+  funciones: UsuarioFuncionOperativa[];
+  empresas: Empresa[];
+}) {
+  const usuariosPorId = new Map(usuarios.map((usuario) => [usuario.id, usuario]));
+  const empresasPorId = new Map(empresas.map((empresa) => [Number(empresa.id), empresa]));
+
+  return (
+    <div className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6">
+      <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-6">
+        Funciones operativas asignadas
+      </h2>
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[520px] overflow-y-auto pr-2">
+        {funciones.map((funcion) => {
+          const usuario = usuariosPorId.get(funcion.usuario_id);
+          const empresa = empresasPorId.get(Number(funcion.empresa_id));
+          return (
+            <div key={funcion.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+              <p className="font-black text-white">{usuario?.nombre || funcion.usuario_id}</p>
+              <p className="text-xs text-green-300 mt-1">{funcion.funcion}</p>
+              <p className="text-xs text-gray-500 mt-1">
+                {empresa?.nombre || `Empresa ${funcion.empresa_id}`}
+              </p>
+            </div>
+          );
+        })}
+        {funciones.length === 0 && (
+          <p className="text-gray-500 text-sm">No hay funciones operativas activas visibles.</p>
         )}
       </div>
     </div>

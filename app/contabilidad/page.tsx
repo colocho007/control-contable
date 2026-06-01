@@ -52,6 +52,11 @@ import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { validarRespaldoDocumentalActivo } from "../../lib/documentosTramites";
+import {
+  listarFuncionesOperativasUsuario,
+  tieneFuncionOperativaLocal,
+  type UsuarioFuncionOperativa,
+} from "../../lib/funcionesOperativas";
 
 interface Movimiento {
   id: number;
@@ -216,6 +221,7 @@ export default function ContabilidadPage() {
   const [empresaFiltro, setEmpresaFiltro] = useState("Todas");
   const [rolActual, setRolActual] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+  const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
 
   const [tabActiva, setTabActiva] = useState<TabContabilidad>("movimientos");
   const [cargandoV2, setCargandoV2] = useState(false);
@@ -389,6 +395,7 @@ export default function ContabilidadPage() {
         );
 
         setEmpresasPermitidasIds(idsPermitidos);
+        setFuncionesOperativas(await listarFuncionesOperativasUsuario(user.id, idsPermitidos));
 
         await Promise.all([
           obtenerEmpresas(idsPermitidos),
@@ -486,6 +493,27 @@ export default function ContabilidadPage() {
     }
 
     return empresaId;
+  }
+
+  function tieneFuncionContable(
+    empresaId: string | number | null | undefined,
+    funciones: Array<"auxiliar_contable" | "contador_revisor" | "auditor_solo_lectura">
+  ) {
+    return tieneFuncionOperativaLocal(funcionesOperativas, userId, empresaId, funciones);
+  }
+
+  function puedeAuxiliarContable(empresaId: string | number | null | undefined) {
+    return (
+      tieneFuncionContable(empresaId, ["auxiliar_contable", "contador_revisor"]) ||
+      ["admin", "supervisor", "jefe", "contador", "auxiliar"].includes(rolActual)
+    );
+  }
+
+  function puedeRevisorContable(empresaId: string | number | null | undefined) {
+    return (
+      tieneFuncionContable(empresaId, ["contador_revisor"]) ||
+      ["admin", "supervisor", "jefe", "contador"].includes(rolActual)
+    );
   }
 
   function empresaNombre(empresaId: string | number | null | undefined) {
@@ -1065,6 +1093,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeAuxiliarContable(empresaId)) {
+      alert("No tienes funcion operativa contable para registrar documentos en esta empresa.");
+      return;
+    }
+
     if (
       !documentoForm.tipoDocumento.trim() ||
       !documentoForm.numeroDocumento.trim() ||
@@ -1136,6 +1169,11 @@ export default function ContabilidadPage() {
       validarEmpresaPermitida(documento.empresa_id, "revisar documentos");
     } catch (error) {
       alert(getErrorMessage(error));
+      return;
+    }
+
+    if (!puedeRevisorContable(documento.empresa_id)) {
+      alert("No tienes funcion operativa de contador revisor para esta empresa.");
       return;
     }
 
