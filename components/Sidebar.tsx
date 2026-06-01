@@ -207,6 +207,12 @@ export default function Sidebar() {
   clave: "proveedores",
 },
   {
+  name: "Clientes",
+  path: "/clientes",
+  icon: Users,
+  clave: "clientes",
+},
+  {
   name: "Importaciones",
   path: "/importaciones",
   icon: FileSpreadsheet,
