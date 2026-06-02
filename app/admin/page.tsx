@@ -58,7 +58,7 @@ interface UsuarioEmpresa {
 }
 
 interface UsuarioModulo {
-  id: number;
+  id?: number | null;
   usuario_id: string;
   modulo_clave: string;
   activo?: boolean | null;
@@ -83,7 +83,7 @@ interface AsignacionEmpresaExistente {
 }
 
 interface AsignacionModuloExistente {
-  id: number;
+  id?: number | null;
   modulo_clave: string;
   activo?: boolean | null;
 }
@@ -320,7 +320,7 @@ export default function AdminPage() {
         .order("orden", { ascending: true }),
       supabase
         .from("usuario_modulos")
-        .select("id,usuario_id,modulo_clave,activo"),
+        .select("usuario_id,modulo_clave,activo"),
       esAdminGlobal
         ? supabase
             .from("usuario_funciones_operativas")
@@ -781,7 +781,7 @@ export default function AdminPage() {
   ) {
     const { data, error } = await supabase
       .from("usuario_modulos")
-      .select("id,modulo_clave,activo")
+      .select("modulo_clave,activo")
       .eq("usuario_id", usuarioId);
 
     if (error) throw error;
@@ -796,21 +796,11 @@ export default function AdminPage() {
       existentesPorClave.set(modulo.modulo_clave, grupo);
     }
 
-    const idsCanonicosSeleccionados = new Set<number>();
-    for (const moduloClave of seleccionados) {
-      const grupo = existentesPorClave.get(moduloClave) || [];
-      const canonico = grupo.find((item) => item.activo === true) || grupo[0];
-      if (canonico) idsCanonicosSeleccionados.add(canonico.id);
-    }
-
     const activar = existentes.filter(
-      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+      (item) => item.activo !== true && seleccionados.has(item.modulo_clave)
     );
     const desactivar = existentes.filter(
-      (item) =>
-        item.activo !== false &&
-        (!seleccionados.has(item.modulo_clave) ||
-          !idsCanonicosSeleccionados.has(item.id))
+      (item) => item.activo !== false && !seleccionados.has(item.modulo_clave)
     );
     const nuevos = modulosSeleccionadosNormalizados
       .filter((moduloClave) => !existentesPorClave.has(moduloClave))
@@ -822,25 +812,34 @@ export default function AdminPage() {
       }));
 
     if (activar.length) {
-      const { error: activarError } = await supabase
-        .from("usuario_modulos")
-        .update({ activo: true, ...datosAuditoria })
-        .in("id", activar.map((item) => item.id));
-      if (activarError) throw activarError;
+      for (const modulo of activar) {
+        const { error: activarError } = await supabase
+          .from("usuario_modulos")
+          .update({ activo: true, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("modulo_clave", modulo.modulo_clave);
+        if (activarError) throw activarError;
+      }
     }
 
     if (desactivar.length) {
-      const { error: desactivarError } = await supabase
-        .from("usuario_modulos")
-        .update({ activo: false, ...datosAuditoria })
-        .in("id", desactivar.map((item) => item.id));
-      if (desactivarError) throw desactivarError;
+      for (const modulo of desactivar) {
+        const { error: desactivarError } = await supabase
+          .from("usuario_modulos")
+          .update({ activo: false, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("modulo_clave", modulo.modulo_clave);
+        if (desactivarError) throw desactivarError;
+      }
     }
 
     if (nuevos.length) {
       const { error: insertarError } = await supabase
         .from("usuario_modulos")
-        .insert(nuevos);
+        .upsert(nuevos, {
+          onConflict: "usuario_id,modulo_clave",
+          ignoreDuplicates: false,
+        });
       if (insertarError) throw insertarError;
     }
 
@@ -1685,7 +1684,7 @@ function PanelModulos({
           const usuario = usuariosPorId.get(modulo.usuario_id);
           const moduloCatalogo = modulosPorClave.get(modulo.modulo_clave);
           return (
-            <div key={modulo.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
+            <div key={`${modulo.usuario_id}-${modulo.modulo_clave}`} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
               <p className="font-black text-white">
                 {usuario?.nombre || modulo.usuario_id}
               </p>
