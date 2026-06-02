@@ -4,7 +4,6 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "re
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  Building2,
   ClipboardList,
   Download,
   FileText,
@@ -26,6 +25,8 @@ import {
   obtenerReporteMensual,
   type CalendarioPago,
   type ChequeReporte,
+  type CuentaOperativaReporte,
+  type PagoParcialReporte,
   type FondoPorEmpresa,
   type OrdenReporte,
   type ReporteMensual,
@@ -55,6 +56,8 @@ interface FiltrosReportes {
   fechaDesde: string;
   fechaHasta: string;
   moneda: string;
+  estado: string;
+  proveedorClienteId: string;
 }
 
 const LIMITE_REPORTES = 100;
@@ -75,6 +78,8 @@ const FILTROS_INICIALES: FiltrosReportes = {
   fechaDesde: inicioMesISO(),
   fechaHasta: fechaLocalISO(),
   moneda: "",
+  estado: "",
+  proveedorClienteId: "",
 };
 
 function getErrorMessage(error: unknown) {
@@ -132,6 +137,8 @@ function estadoClase(estado: string | null | undefined) {
 function fuenteClase(fuente: CalendarioPago["fuente"]) {
   if (fuente === "cheques") return "border-green-400/30 bg-green-400/10 text-green-200";
   if (fuente === "ordenes") return "border-amber-400/30 bg-amber-400/10 text-amber-200";
+  if (fuente === "cxp") return "border-red-400/30 bg-red-400/10 text-red-200";
+  if (fuente === "cxc") return "border-cyan-400/30 bg-cyan-400/10 text-cyan-200";
   return "border-purple-400/30 bg-purple-400/10 text-purple-200";
 }
 
@@ -265,6 +272,9 @@ export default function ReportesPage() {
         fecha_desde: filtrosAplicados.fechaDesde || undefined,
         fecha_hasta: filtrosAplicados.fechaHasta || undefined,
         moneda: filtrosAplicados.moneda || undefined,
+        estado: filtrosAplicados.estado || undefined,
+        proveedor_id: filtrosAplicados.proveedorClienteId || undefined,
+        cliente_id: filtrosAplicados.proveedorClienteId || undefined,
         limite: LIMITE_REPORTES,
       };
 
@@ -278,6 +288,8 @@ export default function ReportesPage() {
         filtros: filtrosAplicados,
         empresas_consultadas: idsPermitidos,
         total_movimientos: reporteMensual.resumen.total_movimientos,
+        cxp_cuentas: reporteMensual.cuentas_por_pagar.cuentas.length,
+        cxc_cuentas: reporteMensual.cuentas_por_cobrar.cuentas.length,
         balance_formal_cuentas: estadosFormales.balance_comprobacion.length,
         estados_formales_preliminares: estadosFormales.preliminar,
       });
@@ -302,23 +314,21 @@ export default function ReportesPage() {
     await cargarReporte(empresasPermitidasIds, FILTROS_INICIALES);
   }
 
-  const monedaSeleccionada = filtros.moneda || null;
-
   const empresasPorId = useMemo(
     () => new Map(empresas.map((empresa) => [Number(empresa.id), empresa.nombre])),
     [empresas]
   );
 
   const totalesFondos = useMemo(() => {
-    const fondos = reporte?.fondos || [];
-
-    return fondos.reduce(
-      (totales, fondo) => ({
-        disponible: totales.disponible + Number(fondo.saldo_disponible || 0),
-        comprometido: totales.comprometido + Number(fondo.saldo_comprometido || 0),
-      }),
-      { disponible: 0, comprometido: 0 }
-    );
+    const porMoneda = new Map<string, { moneda: string; disponible: number; comprometido: number }>();
+    for (const fondo of reporte?.fondos || []) {
+      const moneda = fondo.moneda || "GTQ";
+      const actual = porMoneda.get(moneda) || { moneda, disponible: 0, comprometido: 0 };
+      actual.disponible += Number(fondo.saldo_disponible || 0);
+      actual.comprometido += Number(fondo.saldo_comprometido || 0);
+      porMoneda.set(moneda, actual);
+    }
+    return Array.from(porMoneda.values()).sort((a, b) => a.moneda.localeCompare(b.moneda));
   }, [reporte]);
 
   function textoEmpresaFiltro() {
@@ -334,6 +344,8 @@ export default function ReportesPage() {
       "Fecha desde": filtros.fechaDesde || "",
       "Fecha hasta": filtros.fechaHasta || "",
       Moneda: filtros.moneda || "Todas",
+      Estado: filtros.estado || "Todos",
+      "Proveedor/cliente ID": filtros.proveedorClienteId || "Todos",
     };
 
     const secciones: SeccionExportacion[] = [
@@ -349,14 +361,7 @@ export default function ReportesPage() {
         })),
       },
       {
-        titulo: "Resumen financiero",
-        resumen: {
-          Ingresos: reporte.resumen.ingresos,
-          Egresos: reporte.resumen.egresos,
-          Neto: reporte.resumen.neto,
-          "Total movimientos": reporte.resumen.total_movimientos,
-          "Movimientos anulados": reporte.resumen.movimientos_anulados,
-        },
+        titulo: "Movimientos operativos por moneda",
         columnas: [
           { clave: "moneda", titulo: "Moneda" },
           { clave: "ingresos", titulo: "Ingresos" },
@@ -490,6 +495,64 @@ export default function ReportesPage() {
           { clave: "estado", titulo: "Estado" },
         ],
         filas: reporte.calendario.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Cuentas por pagar",
+        columnas: [
+          { clave: "tercero", titulo: "Proveedor" },
+          { clave: "numero_documento", titulo: "Documento" },
+          { clave: "fecha_documento", titulo: "Fecha documento" },
+          { clave: "fecha_vencimiento", titulo: "Vence" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "total", titulo: "Total" },
+          { clave: "saldo_pendiente", titulo: "Saldo" },
+          { clave: "estado", titulo: "Estado" },
+          { clave: "vencida", titulo: "Vencida" },
+        ],
+        filas: reporte.cuentas_por_pagar.cuentas.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Pagos parciales CxP",
+        columnas: [
+          { clave: "cuenta_id", titulo: "Cuenta" },
+          { clave: "fecha_pago", titulo: "Fecha pago" },
+          { clave: "metodo_pago", titulo: "Metodo" },
+          { clave: "banco", titulo: "Banco" },
+          { clave: "referencia", titulo: "Referencia" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "monto", titulo: "Monto" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.cuentas_por_pagar.pagos_parciales.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Cuentas por cobrar",
+        columnas: [
+          { clave: "tercero", titulo: "Cliente" },
+          { clave: "numero_documento", titulo: "Documento" },
+          { clave: "fecha_documento", titulo: "Fecha documento" },
+          { clave: "fecha_vencimiento", titulo: "Vence" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "total", titulo: "Total" },
+          { clave: "saldo_pendiente", titulo: "Saldo" },
+          { clave: "estado", titulo: "Estado" },
+          { clave: "vencida", titulo: "Vencida" },
+        ],
+        filas: reporte.cuentas_por_cobrar.cuentas.map((fila) => ({ ...fila })),
+      },
+      {
+        titulo: "Cobros parciales CxC",
+        columnas: [
+          { clave: "cuenta_id", titulo: "Cuenta" },
+          { clave: "fecha_pago", titulo: "Fecha cobro" },
+          { clave: "metodo_pago", titulo: "Metodo" },
+          { clave: "banco", titulo: "Banco" },
+          { clave: "referencia", titulo: "Referencia" },
+          { clave: "moneda", titulo: "Moneda" },
+          { clave: "monto", titulo: "Monto" },
+          { clave: "estado", titulo: "Estado" },
+        ],
+        filas: reporte.cuentas_por_cobrar.pagos_parciales.map((fila) => ({ ...fila })),
       },
     ];
 
@@ -695,7 +758,7 @@ export default function ReportesPage() {
 
           <form
             onSubmit={aplicarFiltros}
-            className="mb-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+            className="mb-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5"
           >
             <label className="space-y-2">
               <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
@@ -748,6 +811,34 @@ export default function ReportesPage() {
               </select>
             </label>
 
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
+                Estado
+              </span>
+              <select
+                value={filtros.estado}
+                onChange={(event) =>
+                  setFiltros({ ...filtros, estado: event.target.value })
+                }
+                className="w-full rounded-xl bg-slate-950 border border-white/10 px-3 py-3 text-sm text-white"
+              >
+                <option value="">Todos</option>
+                <option value="Pendiente">Pendiente</option>
+                <option value="Parcial">Parcial</option>
+                <option value="Pagado">Pagado</option>
+                <option value="Vencido">Vencido</option>
+                <option value="Anulado">Anulado</option>
+                <option value="Registrado">Registrado</option>
+              </select>
+            </label>
+
+            <InputFiltro
+              label="Proveedor/cliente ID"
+              type="text"
+              value={filtros.proveedorClienteId}
+              onChange={(value) => setFiltros({ ...filtros, proveedorClienteId: value })}
+            />
+
             <button
               type="submit"
               disabled={cargandoReportes}
@@ -774,30 +865,6 @@ export default function ReportesPage() {
 
           <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
             <StatCard
-              icon={<TrendingUp size={22} />}
-              title="Ingresos"
-              value={formatoMonto(reporte?.resumen.ingresos || 0, monedaSeleccionada)}
-              detail={monedaSeleccionada || "Monto mixto"}
-            />
-            <StatCard
-              icon={<TrendingDown size={22} />}
-              title="Egresos"
-              value={formatoMonto(reporte?.resumen.egresos || 0, monedaSeleccionada)}
-              detail={monedaSeleccionada || "Monto mixto"}
-            />
-            <StatCard
-              icon={<Wallet size={22} />}
-              title="Neto"
-              value={formatoMonto(reporte?.resumen.neto || 0, monedaSeleccionada)}
-              detail={`${reporte?.resumen.total_movimientos || 0} movimientos activos`}
-            />
-            <StatCard
-              icon={<Building2 size={22} />}
-              title="Fondos disponibles"
-              value={formatoMonto(totalesFondos.disponible, monedaSeleccionada)}
-              detail={`Comprometido: ${formatoMonto(totalesFondos.comprometido, monedaSeleccionada)}`}
-            />
-            <StatCard
               icon={<FileText size={22} />}
               title="Cheques pendientes"
               value={String(reporte?.cheques.pendientes || 0)}
@@ -806,8 +873,8 @@ export default function ReportesPage() {
             <StatCard
               icon={<Wallet size={22} />}
               title="Cheques pagados"
-              value={formatoMonto(reporte?.cheques.monto_pagado || 0, monedaSeleccionada)}
-              detail={`Pendiente: ${formatoMonto(reporte?.cheques.monto_pendiente || 0, monedaSeleccionada)}`}
+              value={String(reporte?.cheques.pagados || 0)}
+              detail={`Autorizados: ${reporte?.cheques.autorizados || 0}`}
             />
             <StatCard
               icon={<ClipboardList size={22} />}
@@ -821,10 +888,31 @@ export default function ReportesPage() {
               value={String(reporte?.resumen.movimientos_anulados || 0)}
               detail="Excluidos de totales"
             />
+            <StatCard
+              icon={<TrendingDown size={22} />}
+              title="CxP vencidas"
+              value={String(reporte?.cuentas_por_pagar.vencidas || 0)}
+              detail={`${reporte?.cuentas_por_pagar.cuentas.length || 0} cuentas filtradas`}
+            />
+            <StatCard
+              icon={<TrendingUp size={22} />}
+              title="CxC vencidas"
+              value={String(reporte?.cuentas_por_cobrar.vencidas || 0)}
+              detail={`${reporte?.cuentas_por_cobrar.cuentas.length || 0} cuentas filtradas`}
+            />
+          </section>
+
+          <section className="mb-6">
+            <Panel
+              titulo="Reportes operativos por moneda"
+              subtitulo="Movimientos, fondos, cheques, ordenes, CxP y CxC sin sumar GTQ con USD"
+            >
+              <ResumenOperativoPorMoneda reporte={reporte} fondos={totalesFondos} />
+            </Panel>
           </section>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-            <Panel titulo="Resumen financiero" subtitulo="Ingresos, egresos y neto por moneda">
+            <Panel titulo="Movimientos operativos" subtitulo="Ingresos, egresos y neto por moneda">
               <TablaResumenMoneda reporte={reporte} />
             </Panel>
 
@@ -878,6 +966,24 @@ export default function ReportesPage() {
 
             <Panel titulo="Ordenes pendientes/aprobadas" subtitulo="Seguimiento de compromisos por fecha necesaria">
               <TablaOrdenes ordenes={reporte?.ordenes.proximas_ordenes || []} />
+            </Panel>
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+            <Panel titulo="Cuentas por pagar" subtitulo="Facturas, vencidos, saldos y pagos parciales">
+              <TablaCuentasOperativas
+                cuentas={reporte?.cuentas_por_pagar.cuentas || []}
+                pagos={reporte?.cuentas_por_pagar.pagos_parciales || []}
+                terceroLabel="Proveedor"
+              />
+            </Panel>
+
+            <Panel titulo="Cuentas por cobrar" subtitulo="Clientes, vencidos, saldos y cobros parciales">
+              <TablaCuentasOperativas
+                cuentas={reporte?.cuentas_por_cobrar.cuentas || []}
+                pagos={reporte?.cuentas_por_cobrar.pagos_parciales || []}
+                terceroLabel="Cliente"
+              />
             </Panel>
           </div>
 
@@ -1146,6 +1252,154 @@ function TablaCalendario({ eventos }: { eventos: CalendarioPago[] }) {
         ))}
       </tbody>
     </Tabla>
+  );
+}
+
+function ResumenOperativoPorMoneda({
+  reporte,
+  fondos,
+}: {
+  reporte: ReporteMensual | null;
+  fondos: Array<{ moneda: string; disponible: number; comprometido: number }>;
+}) {
+  const monedas = Array.from(
+    new Set([
+      ...(reporte?.resumen.por_moneda || []).map((fila) => fila.moneda),
+      ...fondos.map((fila) => fila.moneda),
+      ...(reporte?.cheques.por_moneda || []).map((fila) => fila.moneda),
+      ...(reporte?.ordenes.por_moneda || []).map((fila) => fila.moneda),
+      ...(reporte?.cuentas_por_pagar.por_moneda || []).map((fila) => fila.moneda),
+      ...(reporte?.cuentas_por_cobrar.por_moneda || []).map((fila) => fila.moneda),
+    ])
+  ).sort();
+
+  if (!monedas.length) return <EmptyState texto="No hay datos monetarios para los filtros." />;
+
+  return (
+    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
+      {monedas.map((moneda) => {
+        const movimientos = reporte?.resumen.por_moneda.find((fila) => fila.moneda === moneda);
+        const fondo = fondos.find((fila) => fila.moneda === moneda);
+        const cheques = reporte?.cheques.por_moneda.find((fila) => fila.moneda === moneda);
+        const ordenes = reporte?.ordenes.por_moneda.find((fila) => fila.moneda === moneda);
+        const cxp = reporte?.cuentas_por_pagar.por_moneda.find((fila) => fila.moneda === moneda);
+        const cxc = reporte?.cuentas_por_cobrar.por_moneda.find((fila) => fila.moneda === moneda);
+
+        return (
+          <article key={moneda} className="rounded-2xl border border-white/10 bg-[#0f172a]/70 p-4">
+            <h3 className="text-xl font-black text-cyan-200 mb-3">{moneda}</h3>
+            <div className="grid gap-2 text-sm">
+              <LineaResumen label="Ingresos operativos" valor={formatoMonto(movimientos?.ingresos || 0, moneda)} />
+              <LineaResumen label="Egresos operativos" valor={formatoMonto(movimientos?.egresos || 0, moneda)} />
+              <LineaResumen label="Neto operativo" valor={formatoMonto(movimientos?.neto || 0, moneda)} />
+              <LineaResumen label="Fondos disponibles" valor={formatoMonto(fondo?.disponible || 0, moneda)} />
+              <LineaResumen label="Fondos comprometidos" valor={formatoMonto(fondo?.comprometido || 0, moneda)} />
+              <LineaResumen label="Cheques pendientes" valor={formatoMonto(cheques?.monto_pendiente || 0, moneda)} />
+              <LineaResumen label="Ordenes pendientes" valor={formatoMonto(ordenes?.monto_pendiente || 0, moneda)} />
+              <LineaResumen label="Saldo CxP" valor={formatoMonto(cxp?.monto_pendiente || 0, moneda)} />
+              <LineaResumen label="Saldo CxC" valor={formatoMonto(cxc?.monto_pendiente || 0, moneda)} />
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function LineaResumen({ label, valor }: { label: string; valor: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-white/5 pb-2">
+      <span className="text-gray-400">{label}</span>
+      <span className="font-black text-white text-right">{valor}</span>
+    </div>
+  );
+}
+
+function TablaCuentasOperativas({
+  cuentas,
+  pagos,
+  terceroLabel,
+}: {
+  cuentas: CuentaOperativaReporte[];
+  pagos: PagoParcialReporte[];
+  terceroLabel: string;
+}) {
+  if (!cuentas.length && !pagos.length) {
+    return <EmptyState texto="No hay cuentas ni pagos parciales para los filtros." />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h3 className="text-sm font-black uppercase tracking-widest text-gray-500 mb-3">
+          Cuentas
+        </h3>
+        {!cuentas.length ? (
+          <EmptyState texto="No hay cuentas para los filtros." />
+        ) : (
+          <Tabla>
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+                <th className="pb-3">{terceroLabel}</th>
+                <th className="pb-3">Documento</th>
+                <th className="pb-3">Vence</th>
+                <th className="pb-3">Saldo</th>
+                <th className="pb-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cuentas.slice(0, 12).map((cuenta) => (
+                <tr key={String(cuenta.id)} className="border-t border-white/10">
+                  <td className="py-3">{cuenta.tercero || "-"}</td>
+                  <td className="py-3 text-gray-400">
+                    {cuenta.serie || ""} {cuenta.numero_documento || cuenta.id}
+                  </td>
+                  <td className="py-3">{mostrarFecha(cuenta.fecha_vencimiento)}</td>
+                  <td className="py-3 text-cyan-100">
+                    {formatoMonto(cuenta.saldo_pendiente, cuenta.moneda)}
+                  </td>
+                  <td className="py-3">
+                    <EstadoPill estado={cuenta.vencida ? "Vencido" : cuenta.estado} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Tabla>
+        )}
+      </div>
+
+      <div>
+        <h3 className="text-sm font-black uppercase tracking-widest text-gray-500 mb-3">
+          Pagos parciales
+        </h3>
+        {!pagos.length ? (
+          <EmptyState texto="No hay pagos parciales para los filtros." />
+        ) : (
+          <Tabla>
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+                <th className="pb-3">Fecha</th>
+                <th className="pb-3">Metodo</th>
+                <th className="pb-3">Referencia</th>
+                <th className="pb-3">Monto</th>
+                <th className="pb-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagos.slice(0, 8).map((pago) => (
+                <tr key={String(pago.id)} className="border-t border-white/10">
+                  <td className="py-3">{mostrarFecha(pago.fecha_pago)}</td>
+                  <td className="py-3">{pago.metodo_pago || "-"}</td>
+                  <td className="py-3 text-gray-400">{pago.referencia || pago.banco || "-"}</td>
+                  <td className="py-3 text-green-300">{formatoMonto(pago.monto, pago.moneda)}</td>
+                  <td className="py-3"><EstadoPill estado={pago.estado} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </Tabla>
+        )}
+      </div>
+    </div>
   );
 }
 
