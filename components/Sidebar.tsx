@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -44,6 +44,7 @@ export default function Sidebar() {
   const [loadingRol, setLoadingRol] = useState(true);
   const [modulosActivos, setModulosActivos] = useState<string[]>([]);
   const [modulosUsuario, setModulosUsuario] = useState<string[]>([]);
+  const activeLinkRef = useRef<HTMLAnchorElement | null>(null);
 
   useEffect(() => {
     async function obtenerPerfilYModulos() {
@@ -323,9 +324,16 @@ const menusAdmin = [
   menu.clave === "admin" || menu.clave === "monitoreo-sistema" ? true : moduloActivo(menu.clave)
 );
 
+  useEffect(() => {
+    activeLinkRef.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [pathname, menusFiltrados.length]);
+
   return (
-    <aside className="hidden md:flex w-[280px] h-screen bg-[#020617] border-r border-white/10 p-6 flex-col sticky top-0">
-      <div className="mb-10 px-2">
+    <aside className="hidden md:flex w-[280px] h-screen max-h-screen bg-[#020617] border-r border-white/10 p-6 flex-col sticky top-0 overflow-hidden">
+      <div className="shrink-0 mb-6 px-2">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center font-black text-black">
             C+
@@ -343,13 +351,14 @@ const menusAdmin = [
         )}
       </div>
 
-      <nav className="flex-1 space-y-2">
+      <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-2 overscroll-contain scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
         {menusFiltrados.map((menu) => {
           const Icon = menu.icon;
           const active = pathname.startsWith(menu.path);
 
           return (
             <Link
+              ref={active ? activeLinkRef : null}
               key={menu.path}
               href={menu.path}
               className={`group flex items-center justify-between p-4 rounded-2xl transition-all ${
@@ -385,7 +394,7 @@ const menusAdmin = [
         )}
       </nav>
 
-      <div className="pt-6 border-t border-white/5">
+      <div className="shrink-0 pt-4 mt-4 border-t border-white/5">
         <button
           onClick={cerrarSesion}
           className="w-full flex items-center gap-3 p-4 rounded-2xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-all"
