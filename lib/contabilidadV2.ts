@@ -347,6 +347,53 @@ export interface CalcularBalanceComprobacionParams {
   moneda?: string;
 }
 
+export interface PrevisualizarCierreMensualParams {
+  empresa_id: number;
+  periodo_id: string | number;
+  empresas_permitidas?: number[];
+}
+
+export interface CerrarPeriodoContableParams extends PrevisualizarCierreMensualParams {
+  observaciones?: string | null;
+}
+
+export interface HallazgoCierreMensual {
+  codigo: string;
+  mensaje: string;
+  cantidad: number;
+  detalle?: ValorJsonAuditoria;
+}
+
+export interface ResumenMonedaCierre {
+  moneda: string;
+  debe: number;
+  haber: number;
+  diferencia: number;
+  asientos: number;
+}
+
+export interface PrevisualizacionCierreMensual {
+  periodo: PeriodoContable;
+  puede_cerrar: boolean;
+  bloqueos: HallazgoCierreMensual[];
+  advertencias: HallazgoCierreMensual[];
+  resumen: {
+    empresa_id: number;
+    periodo_id: string | number;
+    anio: number;
+    mes: number;
+    fecha_inicio: string;
+    fecha_fin: string;
+    asientos_registrados: number;
+    asientos_pendientes: number;
+    documentos_pendientes: number;
+    cxp_vencidas: number;
+    cxc_vencidas: number;
+    monedas: ResumenMonedaCierre[];
+    cierre_automatico_asientos: false;
+  };
+}
+
 const COLUMNAS_CUENTA =
   "id,creado_at,actualizado_at,empresa_id,codigo,nombre,tipo,subtipo,naturaleza,cuenta_padre_id,permite_movimientos,descripcion,activo,metadatos";
 const COLUMNAS_PERIODO =
@@ -512,6 +559,16 @@ function normalizarDistribucionDocumento(data: unknown) {
 
 function normalizarImpuestoConfiguracion(data: unknown) {
   return data as ImpuestoConfiguracion;
+}
+
+function validarEmpresaPermitidaOpcional(empresaId: number, empresasPermitidas?: number[]) {
+  const permitidas = (empresasPermitidas || [])
+    .map(Number)
+    .filter((id) => Number.isInteger(id) && id > 0);
+
+  if (permitidas.length && !permitidas.includes(empresaId)) {
+    throw new Error("No tienes permiso para operar sobre la empresa del periodo.");
+  }
 }
 
 function validarEstadoDocumentoContable(estado: string) {
@@ -1956,6 +2013,352 @@ export async function anularAsientoContable(
   });
 
   return asientoAnulado;
+}
+
+async function obtenerPeriodoParaCierre(
+  empresaId: number,
+  periodoId: string | number
+): Promise<PeriodoContable> {
+  if (periodoId === "" || periodoId === null || periodoId === undefined) {
+    throw new Error("Debe indicar el periodo contable.");
+  }
+
+  const { data, error } = await supabase
+    .from("periodos_contables")
+    .select(COLUMNAS_PERIODO)
+    .eq("id", periodoId)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+
+  if (error) {
+    throw errorSupabase("No se pudo cargar el periodo contable", error);
+  }
+
+  if (!data) {
+    throw new Error("No se encontro el periodo contable para la empresa indicada.");
+  }
+
+  return normalizarPeriodo(data);
+}
+
+function pushHallazgo(
+  lista: HallazgoCierreMensual[],
+  codigo: string,
+  mensaje: string,
+  cantidad: number,
+  detalle?: ValorJsonAuditoria
+) {
+  if (cantidad <= 0) return;
+  lista.push({ codigo, mensaje, cantidad, detalle });
+}
+
+function serializarHallazgos(lista: HallazgoCierreMensual[]): ValorJsonAuditoria {
+  return lista.map((hallazgo) => ({
+    codigo: hallazgo.codigo,
+    mensaje: hallazgo.mensaje,
+    cantidad: hallazgo.cantidad,
+    ...(hallazgo.detalle !== undefined ? { detalle: hallazgo.detalle } : {}),
+  }));
+}
+
+function serializarResumenCierre(
+  resumen: PrevisualizacionCierreMensual["resumen"]
+): ValorJsonAuditoria {
+  return {
+    empresa_id: resumen.empresa_id,
+    periodo_id: String(resumen.periodo_id),
+    anio: resumen.anio,
+    mes: resumen.mes,
+    fecha_inicio: resumen.fecha_inicio,
+    fecha_fin: resumen.fecha_fin,
+    asientos_registrados: resumen.asientos_registrados,
+    asientos_pendientes: resumen.asientos_pendientes,
+    documentos_pendientes: resumen.documentos_pendientes,
+    cxp_vencidas: resumen.cxp_vencidas,
+    cxc_vencidas: resumen.cxc_vencidas,
+    monedas: resumen.monedas.map((moneda) => ({
+      moneda: moneda.moneda,
+      debe: moneda.debe,
+      haber: moneda.haber,
+      diferencia: moneda.diferencia,
+      asientos: moneda.asientos,
+    })),
+    cierre_automatico_asientos: resumen.cierre_automatico_asientos,
+  };
+}
+
+export async function previsualizarCierreMensualContable(
+  params: PrevisualizarCierreMensualParams
+): Promise<PrevisualizacionCierreMensual> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+  validarEmpresaPermitidaOpcional(empresaId, params.empresas_permitidas);
+
+  const periodo = await obtenerPeriodoParaCierre(empresaId, params.periodo_id);
+  const bloqueos: HallazgoCierreMensual[] = [];
+  const advertencias: HallazgoCierreMensual[] = [];
+
+  if (periodo.estado === "cerrado") {
+    pushHallazgo(
+      bloqueos,
+      "periodo_cerrado",
+      "El periodo ya esta cerrado.",
+      1,
+      { cerrado_at: periodo.cerrado_at, cerrado_por: periodo.cerrado_por }
+    );
+  }
+
+  if (periodo.estado === "bloqueado") {
+    pushHallazgo(bloqueos, "periodo_bloqueado", "El periodo esta bloqueado.", 1);
+  }
+
+  const { count: documentosPendientes, error: documentosError } = await supabase
+    .from("documentos_contables_revision")
+    .select("id", { count: "exact", head: true })
+    .eq("empresa_id", empresaId)
+    .in("estado", ["Pendiente", "En revision", "Observado", "Vencido"])
+    .gte("fecha_documento", periodo.fecha_inicio)
+    .lte("fecha_documento", periodo.fecha_fin);
+
+  if (documentosError) {
+    throw errorSupabase("No se pudieron validar documentos pendientes", documentosError);
+  }
+
+  pushHallazgo(
+    bloqueos,
+    "documentos_sin_resolver",
+    "Hay documentos contables pendientes, en revision, observados o vencidos dentro del periodo.",
+    documentosPendientes || 0
+  );
+
+  const { data: asientos, error: asientosError } = await supabase
+    .from("asientos_contables")
+    .select(`${COLUMNAS_ASIENTO},movimientos_contables_detalle(id,debe,haber,moneda)`)
+    .eq("empresa_id", empresaId)
+    .eq("periodo_id", periodo.id);
+
+  if (asientosError) {
+    throw errorSupabase("No se pudieron validar asientos del periodo", asientosError);
+  }
+
+  const resumenPorMoneda = new Map<string, ResumenMonedaCierre>();
+  const asientosPendientes = ((asientos || []) as AsientoContable[]).filter((asiento) =>
+    ["borrador", "requiere_revision"].includes(String(asiento.estado || "").toLowerCase())
+  );
+  let asientosDescuadrados = 0;
+  let asientosConMonedaMezclada = 0;
+  let asientosRegistrados = 0;
+
+  ((asientos || []) as AsientoContable[]).forEach((asiento) => {
+    const detalles = asiento.movimientos_contables_detalle || [];
+    const monedasDetalle = new Set(detalles.map((detalle) => normalizarMoneda(detalle.moneda)));
+    const monedaBase = normalizarMoneda(asiento.moneda_base);
+
+    if (String(asiento.estado || "").toLowerCase() === "registrado") {
+      asientosRegistrados += 1;
+    }
+
+    if (monedasDetalle.size > 1 || (monedasDetalle.size === 1 && !monedasDetalle.has(monedaBase))) {
+      asientosConMonedaMezclada += 1;
+    }
+
+    const totalDebeDetalle = numero(detalles.reduce((acc, detalle) => acc + numero(detalle.debe), 0));
+    const totalHaberDetalle = numero(detalles.reduce((acc, detalle) => acc + numero(detalle.haber), 0));
+    const diferenciaDetalle = numero(totalDebeDetalle - totalHaberDetalle);
+    const diferenciaEncabezado = numero(numero(asiento.total_debe) - numero(asiento.total_haber));
+
+    if (Math.abs(diferenciaDetalle) > TOLERANCIA_BALANCE || Math.abs(diferenciaEncabezado) > TOLERANCIA_BALANCE) {
+      asientosDescuadrados += 1;
+    }
+
+    if (String(asiento.estado || "").toLowerCase() !== "registrado") return;
+
+    const actual =
+      resumenPorMoneda.get(monedaBase) ||
+      ({
+        moneda: monedaBase,
+        debe: 0,
+        haber: 0,
+        diferencia: 0,
+        asientos: 0,
+      } satisfies ResumenMonedaCierre);
+
+    actual.debe = numero(actual.debe + numero(asiento.total_debe));
+    actual.haber = numero(actual.haber + numero(asiento.total_haber));
+    actual.diferencia = numero(actual.debe - actual.haber);
+    actual.asientos += 1;
+    resumenPorMoneda.set(monedaBase, actual);
+  });
+
+  pushHallazgo(
+    bloqueos,
+    "asientos_pendientes",
+    "Hay asientos en borrador o requiere_revision dentro del periodo.",
+    asientosPendientes.length
+  );
+  pushHallazgo(
+    bloqueos,
+    "asientos_descuadrados",
+    "Hay asientos descuadrados en encabezado o detalle.",
+    asientosDescuadrados
+  );
+  pushHallazgo(
+    bloqueos,
+    "moneda_mezclada",
+    "Hay asientos con monedas mezcladas o detalle distinto a la moneda base.",
+    asientosConMonedaMezclada
+  );
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const fechaCorte = periodo.fecha_fin < hoy ? periodo.fecha_fin : hoy;
+
+  const { count: cxpVencidas, error: cxpError } = await supabase
+    .from("cuentas_por_pagar")
+    .select("id", { count: "exact", head: true })
+    .eq("empresa_id", empresaId)
+    .not("estado", "in", "(Pagado,Anulado)")
+    .gt("saldo_pendiente", 0)
+    .lte("fecha_vencimiento", fechaCorte);
+
+  if (cxpError) {
+    throw errorSupabase("No se pudieron validar cuentas por pagar vencidas", cxpError);
+  }
+
+  const { count: cxcVencidas, error: cxcError } = await supabase
+    .from("cuentas_por_cobrar")
+    .select("id", { count: "exact", head: true })
+    .eq("empresa_id", empresaId)
+    .not("estado", "in", "(Pagado,Anulado)")
+    .gt("saldo_pendiente", 0)
+    .lte("fecha_vencimiento", fechaCorte);
+
+  if (cxcError) {
+    throw errorSupabase("No se pudieron validar cuentas por cobrar vencidas", cxcError);
+  }
+
+  pushHallazgo(
+    advertencias,
+    "cxp_vencidas",
+    "Hay cuentas por pagar vencidas sin resolver. No bloquean el cierre contable base.",
+    cxpVencidas || 0
+  );
+  pushHallazgo(
+    advertencias,
+    "cxc_vencidas",
+    "Hay cuentas por cobrar vencidas sin resolver. No bloquean el cierre contable base.",
+    cxcVencidas || 0
+  );
+
+  const resumen = {
+    empresa_id: empresaId,
+    periodo_id: periodo.id,
+    anio: periodo.anio,
+    mes: periodo.mes,
+    fecha_inicio: periodo.fecha_inicio,
+    fecha_fin: periodo.fecha_fin,
+    asientos_registrados: asientosRegistrados,
+    asientos_pendientes: asientosPendientes.length,
+    documentos_pendientes: documentosPendientes || 0,
+    cxp_vencidas: cxpVencidas || 0,
+    cxc_vencidas: cxcVencidas || 0,
+    monedas: Array.from(resumenPorMoneda.values()).sort((a, b) =>
+      a.moneda.localeCompare(b.moneda)
+    ),
+    cierre_automatico_asientos: false as const,
+  };
+
+  await auditarSinBloquear({
+    empresa_id: empresaId,
+    modulo: "contabilidad_v2",
+    accion: "previsualizar_cierre_mensual",
+    entidad_tipo: "periodo_contable",
+    entidad_id: periodo.id,
+    estado_nuevo: periodo.estado,
+    descripcion: "Previsualizacion de cierre mensual contable",
+    sensible: true,
+    metadatos: {
+      puede_cerrar: bloqueos.length === 0,
+      bloqueos: bloqueos.length,
+      advertencias: advertencias.length,
+      resumen: serializarResumenCierre(resumen),
+    },
+  });
+
+  return {
+    periodo,
+    puede_cerrar: bloqueos.length === 0,
+    bloqueos,
+    advertencias,
+    resumen,
+  };
+}
+
+export async function cerrarPeriodoContable(
+  params: CerrarPeriodoContableParams
+): Promise<PeriodoContable> {
+  const empresaId = validarEmpresaId(params.empresa_id);
+  validarEmpresaPermitidaOpcional(empresaId, params.empresas_permitidas);
+
+  const previsualizacion = await previsualizarCierreMensualContable(params);
+  if (!previsualizacion.puede_cerrar) {
+    throw new Error("El periodo tiene bloqueos y no puede cerrarse.");
+  }
+
+  const userId = await obtenerUsuarioIdActual();
+  const ahora = new Date().toISOString();
+  const metadatosAnteriores =
+    previsualizacion.periodo.metadatos &&
+    typeof previsualizacion.periodo.metadatos === "object" &&
+    !Array.isArray(previsualizacion.periodo.metadatos)
+      ? (previsualizacion.periodo.metadatos as Record<string, ValorJsonAuditoria>)
+      : {};
+  const resumenCierre = {
+    ...(serializarResumenCierre(previsualizacion.resumen) as Record<string, ValorJsonAuditoria>),
+    advertencias: serializarHallazgos(previsualizacion.advertencias),
+    observaciones: texto(params.observaciones),
+    cerrado_at: ahora,
+    cerrado_por: userId,
+    asiento_automatico_creado: false,
+  };
+
+  const { data, error } = await supabase
+    .from("periodos_contables")
+    .update({
+      estado: "cerrado",
+      cerrado_por: userId,
+      cerrado_at: ahora,
+      actualizado_at: ahora,
+      metadatos: {
+        ...metadatosAnteriores,
+        resumen_cierre: resumenCierre,
+      },
+    })
+    .eq("id", previsualizacion.periodo.id)
+    .eq("empresa_id", empresaId)
+    .neq("estado", "cerrado")
+    .select(COLUMNAS_PERIODO)
+    .single();
+
+  if (error) {
+    throw errorSupabase("No se pudo cerrar el periodo contable", error);
+  }
+
+  const periodoCerrado = normalizarPeriodo(data);
+
+  await auditarSinBloquear({
+    empresa_id: empresaId,
+    modulo: "contabilidad_v2",
+    accion: "cerrar_periodo_contable",
+    entidad_tipo: "periodo_contable",
+    entidad_id: periodoCerrado.id,
+    estado_anterior: previsualizacion.periodo.estado,
+    estado_nuevo: periodoCerrado.estado,
+    motivo: texto(params.observaciones),
+    descripcion: "Periodo contable cerrado",
+    sensible: true,
+    metadatos: resumenCierre,
+  });
+
+  return periodoCerrado;
 }
 
 export async function calcularBalanceComprobacion(

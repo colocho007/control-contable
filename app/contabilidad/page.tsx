@@ -37,6 +37,8 @@ import {
   listarImpuestosConfiguracion,
   listarPeriodosContables,
   obtenerOCrearPeriodoContable,
+  cerrarPeriodoContable,
+  previsualizarCierreMensualContable,
   type AsientoContable,
   type BalanceComprobacionFila,
   type CatalogoCuenta,
@@ -46,6 +48,7 @@ import {
   type MovimientoDetalleInput,
   type NaturalezaCuenta,
   type PeriodoContable,
+  type PrevisualizacionCierreMensual,
 } from "../../lib/contabilidadV2";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
@@ -239,6 +242,8 @@ export default function ContabilidadPage() {
     DistribucionDocumentoContable[]
   >([]);
   const [periodosContables, setPeriodosContables] = useState<PeriodoContable[]>([]);
+  const [previsualizacionCierre, setPrevisualizacionCierre] =
+    useState<PrevisualizacionCierreMensual | null>(null);
   const [asientosContables, setAsientosContables] = useState<AsientoContable[]>([]);
   const [balanceComprobacion, setBalanceComprobacion] = useState<
     BalanceComprobacionFila[]
@@ -762,6 +767,7 @@ export default function ContabilidadPage() {
       setMensajeV2("");
       const periodos = await listarPeriodosContables({ empresa_id: empresaId });
       setPeriodosContables(periodos);
+      setPrevisualizacionCierre(null);
     } catch (error) {
       console.error("Error cargando periodos:", error);
       setMensajeV2(getErrorMessage(error));
@@ -1358,6 +1364,103 @@ export default function ContabilidadPage() {
     } catch (error) {
       console.error("Error creando periodo contable:", error);
       alert(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function previsualizarCierrePeriodo(periodo: PeriodoContable) {
+    let empresaId: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(periodo.empresa_id, "previsualizar cierre mensual");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    if (!puedeRevisorContable(empresaId)) {
+      alert("No tienes funcion de contador revisor para previsualizar cierres de esta empresa.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setMensajeV2("");
+      const resultado = await previsualizarCierreMensualContable({
+        empresa_id: empresaId,
+        periodo_id: periodo.id,
+        empresas_permitidas: empresasPermitidasIds,
+      });
+      setPrevisualizacionCierre(resultado);
+      alert(
+        resultado.puede_cerrar
+          ? "Previsualizacion lista. El periodo no tiene bloqueos duros."
+          : "Previsualizacion lista. Revisa los bloqueos antes de cerrar."
+      );
+    } catch (error) {
+      console.error("Error previsualizando cierre mensual:", error);
+      setMensajeV2(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cerrarPeriodo(periodo: PeriodoContable) {
+    let empresaId: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(periodo.empresa_id, "cerrar periodo");
+    } catch (error) {
+      alert(getErrorMessage(error));
+      return;
+    }
+
+    if (!puedeRevisorContable(empresaId)) {
+      alert("No tienes funcion de contador revisor para cerrar periodos de esta empresa.");
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setMensajeV2("");
+      const previa =
+        previsualizacionCierre &&
+        String(previsualizacionCierre.periodo.id) === String(periodo.id)
+          ? previsualizacionCierre
+          : await previsualizarCierreMensualContable({
+              empresa_id: empresaId,
+              periodo_id: periodo.id,
+              empresas_permitidas: empresasPermitidasIds,
+            });
+
+      setPrevisualizacionCierre(previa);
+
+      if (!previa.puede_cerrar) {
+        alert("El periodo tiene bloqueos. Revisa la previsualizacion antes de cerrar.");
+        return;
+      }
+
+      const observaciones = window.prompt(
+        "Observaciones del cierre mensual contable (opcional):"
+      );
+      const confirmar = window.confirm(
+        `Cerrar periodo ${periodo.mes}/${periodo.anio}? No se crearan asientos automaticos.`
+      );
+
+      if (!confirmar) return;
+
+      await cerrarPeriodoContable({
+        empresa_id: empresaId,
+        periodo_id: periodo.id,
+        empresas_permitidas: empresasPermitidasIds,
+        observaciones,
+      });
+      await Promise.all([cargarPeriodos(String(empresaId)), cargarAsientos(String(empresaId))]);
+      alert("Periodo cerrado correctamente.");
+    } catch (error) {
+      console.error("Error cerrando periodo contable:", error);
+      setMensajeV2(getErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -2978,13 +3081,20 @@ export default function ContabilidadPage() {
         </section>
 
         <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
-          <h2 className="text-xl font-black mb-5">Periodos contables</h2>
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
+            <div>
+              <h2 className="text-xl font-black">Periodos contables</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Previsualiza bloqueos antes de cerrar. El cierre no crea asientos automaticos.
+              </p>
+            </div>
+          </div>
           <TablaVacia visible={periodosContables.length === 0} texto="No hay periodos cargados." />
           <div className="grid gap-3">
             {periodosContables.map((periodo) => (
               <div
                 key={periodo.id}
-                className="border border-white/10 rounded-2xl p-4 grid md:grid-cols-6 gap-3 items-center"
+                className="border border-white/10 rounded-2xl p-4 grid md:grid-cols-7 gap-3 items-center"
               >
                 <p className="font-black text-cyan-200">{empresaNombre(periodo.empresa_id)}</p>
                 <p className="text-sm text-gray-300">
@@ -2993,11 +3103,123 @@ export default function ContabilidadPage() {
                 <p className="text-sm text-gray-400">{periodo.fecha_inicio}</p>
                 <p className="text-sm text-gray-400">{periodo.fecha_fin}</p>
                 <EstadoPill estado={periodo.estado} />
-                <p className="text-xs text-gray-500">Sin cierre/reapertura en V1</p>
+                <p className="text-xs text-gray-500">
+                  {periodo.cerrado_at ? `Cerrado: ${periodo.cerrado_at.slice(0, 10)}` : "Abierto para cierre"}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => previsualizarCierrePeriodo(periodo)}
+                    disabled={loading}
+                    className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black disabled:opacity-50"
+                  >
+                    Previsualizar
+                  </button>
+                  {periodo.estado !== "cerrado" && (
+                    <button
+                      type="button"
+                      onClick={() => cerrarPeriodo(periodo)}
+                      disabled={loading}
+                      className="px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
+                    >
+                      Cerrar
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
         </section>
+
+        {previsualizacionCierre && (
+          <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
+              <div>
+                <h2 className="text-xl font-black">Previsualizacion de cierre mensual</h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  Periodo {previsualizacionCierre.periodo.mes}/{previsualizacionCierre.periodo.anio} | {empresaNombre(previsualizacionCierre.periodo.empresa_id)}
+                </p>
+              </div>
+              <span
+                className={`w-fit rounded-full border px-4 py-2 text-xs font-black uppercase ${
+                  previsualizacionCierre.puede_cerrar
+                    ? "border-green-500/20 bg-green-500/10 text-green-200"
+                    : "border-red-500/20 bg-red-500/10 text-red-200"
+                }`}
+              >
+                {previsualizacionCierre.puede_cerrar ? "Listo para cierre" : "Con bloqueos"}
+              </span>
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3 mb-5">
+              <ResumenCard
+                icon={<BookOpen size={18} />}
+                label="Asientos registrados"
+                value={String(previsualizacionCierre.resumen.asientos_registrados)}
+                color="cyan"
+              />
+              <ResumenCard
+                icon={<AlertTriangle size={18} />}
+                label="Documentos pendientes"
+                value={String(previsualizacionCierre.resumen.documentos_pendientes)}
+                color={previsualizacionCierre.resumen.documentos_pendientes ? "red" : "green"}
+              />
+              <ResumenCard
+                icon={<Wallet size={18} />}
+                label="CxP vencidas"
+                value={String(previsualizacionCierre.resumen.cxp_vencidas)}
+                color={previsualizacionCierre.resumen.cxp_vencidas ? "orange" : "green"}
+              />
+              <ResumenCard
+                icon={<Wallet size={18} />}
+                label="CxC vencidas"
+                value={String(previsualizacionCierre.resumen.cxc_vencidas)}
+                color={previsualizacionCierre.resumen.cxc_vencidas ? "orange" : "green"}
+              />
+            </div>
+
+            <div className="grid lg:grid-cols-2 gap-5">
+              <PanelHallazgosCierre
+                titulo="Bloqueos"
+                textoVacio="No hay bloqueos duros para este cierre."
+                hallazgos={previsualizacionCierre.bloqueos}
+                tipo="bloqueo"
+              />
+              <PanelHallazgosCierre
+                titulo="Advertencias"
+                textoVacio="No hay advertencias operativas."
+                hallazgos={previsualizacionCierre.advertencias}
+                tipo="advertencia"
+              />
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+              <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">
+                Resumen por moneda
+              </h3>
+              {previsualizacionCierre.resumen.monedas.length === 0 ? (
+                <p className="text-sm text-gray-500">No hay asientos registrados para resumir.</p>
+              ) : (
+                <div className="grid gap-3">
+                  {previsualizacionCierre.resumen.monedas.map((moneda) => (
+                    <div
+                      key={moneda.moneda}
+                      className="grid md:grid-cols-5 gap-3 rounded-xl border border-white/10 bg-[#020617]/50 p-3 text-sm"
+                    >
+                      <p className="font-black text-cyan-200">{moneda.moneda}</p>
+                      <p className="text-green-300">Debe: {money(moneda.debe, moneda.moneda)}</p>
+                      <p className="text-red-300">Haber: {money(moneda.haber, moneda.moneda)}</p>
+                      <p className={Math.abs(moneda.diferencia) > 0.005 ? "text-red-300" : "text-gray-400"}>
+                        Dif: {money(moneda.diferencia, moneda.moneda)}
+                      </p>
+                      <p className="text-gray-500">Asientos: {moneda.asientos}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     );
   }
@@ -3641,6 +3863,45 @@ function Campo({
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+function PanelHallazgosCierre({
+  titulo,
+  textoVacio,
+  hallazgos,
+  tipo,
+}: {
+  titulo: string;
+  textoVacio: string;
+  hallazgos: PrevisualizacionCierreMensual["bloqueos"];
+  tipo: "bloqueo" | "advertencia";
+}) {
+  const color =
+    tipo === "bloqueo"
+      ? "border-red-500/20 bg-red-500/10 text-red-100"
+      : "border-orange-500/20 bg-orange-500/10 text-orange-100";
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">
+        {titulo}
+      </h3>
+      {hallazgos.length === 0 ? (
+        <p className="text-sm text-gray-500">{textoVacio}</p>
+      ) : (
+        <div className="grid gap-3">
+          {hallazgos.map((hallazgo) => (
+            <div key={hallazgo.codigo} className={`rounded-xl border p-3 ${color}`}>
+              <p className="text-sm font-black">{hallazgo.mensaje}</p>
+              <p className="text-xs opacity-80 mt-1">
+                {hallazgo.codigo} | Cantidad: {hallazgo.cantidad}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
