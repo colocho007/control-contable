@@ -24,12 +24,15 @@ import {
   BarChart3,
   RotateCcw,
   ServerCog,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
 
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_SOLO_ORDENES = ["iniciador_gestion", "firmante_oc"];
+const SIDEBAR_COLAPSADO_KEY = "controlplus_sidebar_colapsado";
 
 interface ModuloSistema {
   clave: string;
@@ -44,7 +47,27 @@ export default function Sidebar() {
   const [loadingRol, setLoadingRol] = useState(true);
   const [modulosActivos, setModulosActivos] = useState<string[]>([]);
   const [modulosUsuario, setModulosUsuario] = useState<string[]>([]);
+  const [sidebarColapsado, setSidebarColapsado] = useState(false);
+  const [preferenciaCargada, setPreferenciaCargada] = useState(false);
   const activeLinkRef = useRef<HTMLAnchorElement | null>(null);
+
+  useEffect(() => {
+    const preferenciaGuardada = window.localStorage.getItem(
+      SIDEBAR_COLAPSADO_KEY
+    );
+
+    setSidebarColapsado(preferenciaGuardada === "true");
+    setPreferenciaCargada(true);
+  }, []);
+
+  useEffect(() => {
+    if (!preferenciaCargada) return;
+
+    window.localStorage.setItem(
+      SIDEBAR_COLAPSADO_KEY,
+      String(sidebarColapsado)
+    );
+  }, [preferenciaCargada, sidebarColapsado]);
 
   useEffect(() => {
     async function obtenerPerfilYModulos() {
@@ -368,32 +391,77 @@ const menusAdmin = [
   }, [pathname, menusFiltrados.length]);
 
   return (
-    <aside className="hidden md:flex w-[280px] h-screen max-h-screen bg-[#020617] border-r border-white/10 p-6 flex-col sticky top-0 overflow-hidden">
-      <div className="shrink-0 mb-6 px-2">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center font-black text-black">
-            C+
+    <aside
+      className={`hidden md:flex h-screen max-h-screen bg-[#020617] border-r border-white/10 flex-col sticky top-0 overflow-hidden transition-[width,padding] duration-200 ${
+        sidebarColapsado ? "w-[88px] p-3" : "w-[280px] p-6"
+      }`}
+    >
+      <div className={`shrink-0 mb-6 ${sidebarColapsado ? "px-0" : "px-2"}`}>
+        <div
+          className={`flex gap-2 ${
+            sidebarColapsado
+              ? "flex-col items-center"
+              : "items-center justify-between"
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center font-black text-black shrink-0">
+              C+
+            </div>
+
+            {!sidebarColapsado && (
+              <h1 className="text-2xl font-black text-white tracking-tighter truncate">
+                Control+
+              </h1>
+            )}
           </div>
 
-          <h1 className="text-2xl font-black text-white tracking-tighter">
-            Control+
-          </h1>
+          <button
+            type="button"
+            onClick={() => setSidebarColapsado((valorActual) => !valorActual)}
+            className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/[0.04] transition-all"
+            aria-label={
+              sidebarColapsado ? "Expandir menu lateral" : "Contraer menu lateral"
+            }
+            title={
+              sidebarColapsado ? "Expandir menu lateral" : "Contraer menu lateral"
+            }
+          >
+            {sidebarColapsado ? (
+              <PanelLeftOpen size={18} />
+            ) : (
+              <PanelLeftClose size={18} />
+            )}
+          </button>
         </div>
 
-        {rol && (
+        {rol && !sidebarColapsado && (
           <p className="text-[10px] text-gray-500 uppercase font-bold mt-2 ml-1">
             Rol: {rolNormalizado}
           </p>
         )}
       </div>
 
-      <nav className="flex-1 min-h-0 space-y-5 overflow-y-auto pr-2 overscroll-contain scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+      <nav
+        className={`flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent ${
+          sidebarColapsado ? "space-y-3 pr-0" : "space-y-5 pr-2"
+        }`}
+      >
         {gruposSidebar.map((grupo) =>
           grupo.menus.length > 0 ? (
-            <section key={grupo.titulo} className="space-y-2">
-              <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.18em] text-gray-600">
-                {grupo.titulo}
-              </h2>
+            <section
+              key={grupo.titulo}
+              className={
+                sidebarColapsado
+                  ? "space-y-2 border-t border-white/5 pt-3 first:border-t-0 first:pt-0"
+                  : "space-y-2"
+              }
+            >
+              {!sidebarColapsado && (
+                <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.18em] text-gray-600">
+                  {grupo.titulo}
+                </h2>
+              )}
 
               <div className="space-y-2">
                 {grupo.menus.map((menu) => {
@@ -407,19 +475,33 @@ const menusAdmin = [
                       ref={active ? activeLinkRef : null}
                       key={menu.path}
                       href={menu.path}
-                      className={`group flex items-center justify-between p-4 rounded-2xl transition-all ${
+                      title={sidebarColapsado ? menu.name : undefined}
+                      aria-label={menu.name}
+                      className={`group flex items-center rounded-2xl transition-all ${
+                        sidebarColapsado
+                          ? "w-12 h-12 justify-center"
+                          : "justify-between p-4"
+                      } ${
                         active
                           ? "bg-cyan-500/10 text-cyan-400"
                           : "text-gray-400 hover:bg-white/[0.03] hover:text-white"
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <Icon size={20} />
+                      <div
+                        className={`flex items-center ${
+                          sidebarColapsado ? "justify-center" : "gap-3"
+                        }`}
+                      >
+                        <Icon size={20} className="shrink-0" />
 
-                        <span className="font-semibold text-sm">{menu.name}</span>
+                        {!sidebarColapsado && (
+                          <span className="font-semibold text-sm">
+                            {menu.name}
+                          </span>
+                        )}
                       </div>
 
-                      {active && (
+                      {active && !sidebarColapsado && (
                         <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]" />
                       )}
                     </Link>
@@ -431,13 +513,17 @@ const menusAdmin = [
         )}
 
         {loadingRol && (
-          <div className="flex items-center gap-3 p-4 text-gray-600">
+          <div
+            className={`flex items-center text-gray-600 ${
+              sidebarColapsado ? "justify-center p-3 [&>span]:hidden" : "gap-3 p-4"
+            }`}
+          >
             <Loader2 size={16} className="animate-spin" />
             <span className="text-xs italic">Cargando módulos...</span>
           </div>
         )}
 
-        {!loadingRol && menusFiltrados.length === 0 && (
+        {!loadingRol && menusFiltrados.length === 0 && !sidebarColapsado && (
           <div className="p-4 text-gray-600 text-xs italic">
             No hay módulos activos disponibles.
           </div>
@@ -447,9 +533,13 @@ const menusAdmin = [
       <div className="shrink-0 pt-4 mt-4 border-t border-white/5">
         <button
           onClick={cerrarSesion}
-          className="w-full flex items-center gap-3 p-4 rounded-2xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-all"
+          className={`w-full flex items-center rounded-2xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-all ${
+            sidebarColapsado ? "h-12 justify-center [&>span]:hidden" : "gap-3 p-4"
+          }`}
+          aria-label="Cerrar sesion"
+          title={sidebarColapsado ? "Cerrar sesion" : undefined}
         >
-          <LogOut size={20} />
+          <LogOut size={20} className="shrink-0" />
 
           <span className="font-bold text-sm">Cerrar sesión</span>
         </button>
