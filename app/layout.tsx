@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import InactivitySessionGuard from "../components/InactivitySessionGuard";
+import ThemeProvider from "../components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,10 +14,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es">
+    <html lang="es" className="dark" suppressHydrationWarning>
       <body>
-        {children}
-        <InactivitySessionGuard />
+        <ThemeProvider>
+          {children}
+          <InactivitySessionGuard />
+        </ThemeProvider>
       </body>
     </html>
   );

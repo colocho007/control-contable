@@ -1,7 +1,185 @@
 @import "tailwindcss";
 
+:root,
+.dark,
+[data-theme="dark"] {
+  --background: #030712;
+  --foreground: #f8fafc;
+  --card: rgba(255, 255, 255, 0.05);
+  --card-strong: rgba(15, 23, 42, 0.82);
+  --card-border: rgba(255, 255, 255, 0.1);
+  --muted: #94a3b8;
+  --muted-strong: #64748b;
+  --primary: #06b6d4;
+  --primary-foreground: #031116;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --input: rgba(15, 23, 42, 0.95);
+  --sidebar: #020617;
+  --sidebar-foreground: #f8fafc;
+  --ring: rgba(6, 182, 212, 0.45);
+}
+
+.light,
+[data-theme="light"] {
+  --background: #f6f8fb;
+  --foreground: #0f172a;
+  --card: rgba(255, 255, 255, 0.9);
+  --card-strong: rgba(255, 255, 255, 0.96);
+  --card-border: rgba(15, 23, 42, 0.12);
+  --muted: #475569;
+  --muted-strong: #64748b;
+  --primary: #0891b2;
+  --primary-foreground: #ffffff;
+  --danger: #dc2626;
+  --success: #15803d;
+  --warning: #b45309;
+  --input: #ffffff;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0f172a;
+  --ring: rgba(8, 145, 178, 0.35);
+}
+
 html,
 body {
-  background: #030712;
-  color: white;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+html.light,
+html[data-theme="light"],
+html.light body,
+html[data-theme="light"] body {
+  background: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
+html.light main,
+html[data-theme="light"] main {
+  background: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
+html.light [class*="bg-[#020617]"],
+html.light [class*="bg-[#030712]"],
+html.light [class*="bg-slate-900"],
+html[data-theme="light"] [class*="bg-[#020617]"],
+html[data-theme="light"] [class*="bg-[#030712]"],
+html[data-theme="light"] [class*="bg-slate-900"] {
+  background-color: var(--background) !important;
+}
+
+html.light [class*="bg-[#0f172a]"],
+html.light [class*="bg-slate-950"],
+html.light [class*="bg-black/"],
+html.light [class*="bg-white/"],
+html[data-theme="light"] [class*="bg-[#0f172a]"],
+html[data-theme="light"] [class*="bg-slate-950"],
+html[data-theme="light"] [class*="bg-black/"],
+html[data-theme="light"] [class*="bg-white/"] {
+  background-color: var(--card) !important;
+}
+
+html.light [class*="border-white/"],
+html.light [class*="border-slate-"],
+html.light [class*="border-gray-"],
+html[data-theme="light"] [class*="border-white/"],
+html[data-theme="light"] [class*="border-slate-"],
+html[data-theme="light"] [class*="border-gray-"] {
+  border-color: var(--card-border) !important;
+}
+
+html.light .text-white,
+html.light .text-slate-100,
+html.light .text-slate-200,
+html.light .text-slate-300,
+html.light .text-gray-100,
+html.light .text-gray-200,
+html.light .text-gray-300,
+html[data-theme="light"] .text-white,
+html[data-theme="light"] .text-slate-100,
+html[data-theme="light"] .text-slate-200,
+html[data-theme="light"] .text-slate-300,
+html[data-theme="light"] .text-gray-100,
+html[data-theme="light"] .text-gray-200,
+html[data-theme="light"] .text-gray-300 {
+  color: var(--foreground);
+}
+
+html.light .text-gray-400,
+html.light .text-slate-400,
+html[data-theme="light"] .text-gray-400,
+html[data-theme="light"] .text-slate-400 {
+  color: var(--muted);
+}
+
+html.light .text-gray-500,
+html.light .text-gray-600,
+html.light .text-slate-500,
+html.light .text-slate-600,
+html[data-theme="light"] .text-gray-500,
+html[data-theme="light"] .text-gray-600,
+html[data-theme="light"] .text-slate-500,
+html[data-theme="light"] .text-slate-600 {
+  color: var(--muted-strong);
+}
+
+html.light input,
+html.light select,
+html.light textarea,
+html.light .input-custom,
+html.light [class*="bg-slate-950"] input,
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea,
+html[data-theme="light"] .input-custom,
+html[data-theme="light"] [class*="bg-slate-950"] input {
+  background: var(--input) !important;
+  border-color: var(--card-border) !important;
+  color: var(--foreground) !important;
+}
+
+html.light input::placeholder,
+html.light textarea::placeholder,
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: var(--muted-strong);
+}
+
+html.light option,
+html.light .input-custom option,
+html[data-theme="light"] option,
+html[data-theme="light"] .input-custom option {
+  background: var(--input);
+  color: var(--foreground);
+}
+
+html.light table,
+html.light thead,
+html.light tbody,
+html[data-theme="light"] table,
+html[data-theme="light"] thead,
+html[data-theme="light"] tbody {
+  color: var(--foreground);
+}
+
+html.light table thead,
+html.light [class~="scrollbar-thumb-white/10"],
+html[data-theme="light"] table thead,
+html[data-theme="light"] [class~="scrollbar-thumb-white/10"] {
+  scrollbar-color: rgba(15, 23, 42, 0.18) transparent;
+}
+
+html.light [class*="shadow-black"],
+html[data-theme="light"] [class*="shadow-black"] {
+  --tw-shadow-color: rgba(15, 23, 42, 0.1) !important;
 }

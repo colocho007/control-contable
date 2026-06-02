@@ -26,6 +26,8 @@ import {
   ServerCog,
   PanelLeftClose,
   PanelLeftOpen,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
@@ -33,6 +35,8 @@ import { validarUsuarioActivo } from "../lib/validarUsuarioActivo";
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_SOLO_ORDENES = ["iniciador_gestion", "firmante_oc"];
 const SIDEBAR_COLAPSADO_KEY = "controlplus_sidebar_colapsado";
+const THEME_KEY = "controlplus_theme";
+type Theme = "dark" | "light";
 
 interface ModuloSistema {
   clave: string;
@@ -49,14 +53,26 @@ export default function Sidebar() {
   const [modulosUsuario, setModulosUsuario] = useState<string[]>([]);
   const [sidebarColapsado, setSidebarColapsado] = useState(false);
   const [preferenciaCargada, setPreferenciaCargada] = useState(false);
+  const [theme, setTheme] = useState<Theme>("dark");
   const activeLinkRef = useRef<HTMLAnchorElement | null>(null);
+
+  function aplicarTema(siguienteTema: Theme) {
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(siguienteTema);
+    document.documentElement.dataset.theme = siguienteTema;
+    document.documentElement.style.colorScheme = siguienteTema;
+  }
 
   useEffect(() => {
     const preferenciaGuardada = window.localStorage.getItem(
       SIDEBAR_COLAPSADO_KEY
     );
+    const temaGuardado = window.localStorage.getItem(THEME_KEY);
+    const temaInicial = temaGuardado === "light" ? "light" : "dark";
 
     setSidebarColapsado(preferenciaGuardada === "true");
+    setTheme(temaInicial);
+    aplicarTema(temaInicial);
     setPreferenciaCargada(true);
   }, []);
 
@@ -68,6 +84,13 @@ export default function Sidebar() {
       String(sidebarColapsado)
     );
   }, [preferenciaCargada, sidebarColapsado]);
+
+  function cambiarTema() {
+    const siguienteTema = theme === "dark" ? "light" : "dark";
+    setTheme(siguienteTema);
+    aplicarTema(siguienteTema);
+    window.localStorage.setItem(THEME_KEY, siguienteTema);
+  }
 
   useEffect(() => {
     async function obtenerPerfilYModulos() {
@@ -392,7 +415,7 @@ const menusAdmin = [
 
   return (
     <aside
-      className={`hidden md:flex h-screen max-h-screen bg-[#020617] border-r border-white/10 flex-col sticky top-0 overflow-hidden transition-[width,padding] duration-200 ${
+      className={`hidden md:flex h-screen max-h-screen bg-[var(--sidebar)] text-[var(--sidebar-foreground)] border-r border-[var(--card-border)] flex-col sticky top-0 overflow-hidden transition-[width,padding] duration-200 ${
         sidebarColapsado ? "w-[88px] p-3" : "w-[280px] p-6"
       }`}
     >
@@ -410,7 +433,7 @@ const menusAdmin = [
             </div>
 
             {!sidebarColapsado && (
-              <h1 className="text-2xl font-black text-white tracking-tighter truncate">
+              <h1 className="text-2xl font-black text-[var(--sidebar-foreground)] tracking-tighter truncate">
                 Control+
               </h1>
             )}
@@ -419,7 +442,7 @@ const menusAdmin = [
           <button
             type="button"
             onClick={() => setSidebarColapsado((valorActual) => !valorActual)}
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/[0.04] transition-all"
+            className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--muted-strong)] hover:text-[var(--sidebar-foreground)] hover:bg-[var(--card)] transition-all"
             aria-label={
               sidebarColapsado ? "Expandir menu lateral" : "Contraer menu lateral"
             }
@@ -436,7 +459,7 @@ const menusAdmin = [
         </div>
 
         {rol && !sidebarColapsado && (
-          <p className="text-[10px] text-gray-500 uppercase font-bold mt-2 ml-1">
+          <p className="text-[10px] text-[var(--muted-strong)] uppercase font-bold mt-2 ml-1">
             Rol: {rolNormalizado}
           </p>
         )}
@@ -453,12 +476,12 @@ const menusAdmin = [
               key={grupo.titulo}
               className={
                 sidebarColapsado
-                  ? "space-y-2 border-t border-white/5 pt-3 first:border-t-0 first:pt-0"
+                  ? "space-y-2 border-t border-[var(--card-border)] pt-3 first:border-t-0 first:pt-0"
                   : "space-y-2"
               }
             >
               {!sidebarColapsado && (
-                <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.18em] text-gray-600">
+                <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--muted-strong)]">
                   {grupo.titulo}
                 </h2>
               )}
@@ -484,7 +507,7 @@ const menusAdmin = [
                       } ${
                         active
                           ? "bg-cyan-500/10 text-cyan-400"
-                          : "text-gray-400 hover:bg-white/[0.03] hover:text-white"
+                          : "text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--sidebar-foreground)]"
                       }`}
                     >
                       <div
@@ -514,7 +537,7 @@ const menusAdmin = [
 
         {loadingRol && (
           <div
-            className={`flex items-center text-gray-600 ${
+            className={`flex items-center text-[var(--muted-strong)] ${
               sidebarColapsado ? "justify-center p-3 [&>span]:hidden" : "gap-3 p-4"
             }`}
           >
@@ -524,16 +547,44 @@ const menusAdmin = [
         )}
 
         {!loadingRol && menusFiltrados.length === 0 && !sidebarColapsado && (
-          <div className="p-4 text-gray-600 text-xs italic">
+          <div className="p-4 text-[var(--muted-strong)] text-xs italic">
             No hay módulos activos disponibles.
           </div>
         )}
       </nav>
 
-      <div className="shrink-0 pt-4 mt-4 border-t border-white/5">
+      <div className="shrink-0 pt-4 mt-4 border-t border-[var(--card-border)] space-y-2">
+        <button
+          type="button"
+          onClick={cambiarTema}
+          className={`w-full flex items-center rounded-2xl text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--sidebar-foreground)] transition-all ${
+            sidebarColapsado ? "h-12 justify-center [&>span]:hidden" : "gap-3 p-4"
+          }`}
+          aria-label={
+            theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"
+          }
+          title={
+            sidebarColapsado
+              ? theme === "dark"
+                ? "Tema claro"
+                : "Tema oscuro"
+              : undefined
+          }
+        >
+          {theme === "dark" ? (
+            <Sun size={20} className="shrink-0" />
+          ) : (
+            <Moon size={20} className="shrink-0" />
+          )}
+
+          <span className="font-bold text-sm">
+            {theme === "dark" ? "Tema claro" : "Tema oscuro"}
+          </span>
+        </button>
+
         <button
           onClick={cerrarSesion}
-          className={`w-full flex items-center rounded-2xl text-gray-500 hover:bg-red-500/10 hover:text-red-400 transition-all ${
+          className={`w-full flex items-center rounded-2xl text-[var(--muted-strong)] hover:bg-red-500/10 hover:text-red-400 transition-all ${
             sidebarColapsado ? "h-12 justify-center [&>span]:hidden" : "gap-3 p-4"
           }`}
           aria-label="Cerrar sesion"
