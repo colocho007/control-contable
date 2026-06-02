@@ -35,6 +35,7 @@ import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
 }
 
 interface FormularioReinicio {
@@ -288,7 +289,7 @@ export default function ReinicioControladoPage() {
   async function cargarEmpresas(idsPermitidos: number[]) {
     const { data, error } = await supabase
       .from("empresas")
-      .select("id,nombre")
+      .select("id,nombre,estado")
       .in("id", idsPermitidos)
       .order("nombre", { ascending: true });
 
@@ -579,7 +580,7 @@ export default function ReinicioControladoPage() {
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5 text-sm">
               <AvisoItem>No borra documentos.</AvisoItem>
               <AvisoItem>No borra auditoria.</AvisoItem>
-              <AvisoItem>No borra usuarios, permisos ni empresas.</AvisoItem>
+              <AvisoItem>No borra usuarios ni permisos; solo archiva empresas de prueba.</AvisoItem>
               <AvisoItem>Los cheques pagados no se revierten automaticamente.</AvisoItem>
               <AvisoItem>Requiere previsualizacion y confirmacion exacta.</AvisoItem>
             </div>
@@ -630,6 +631,7 @@ export default function ReinicioControladoPage() {
                   {empresas.map((empresa) => (
                     <option key={empresa.id} value={empresa.id}>
                       {empresa.nombre}
+                      {empresa.estado ? ` - ${empresa.estado}` : ""}
                     </option>
                   ))}
                 </select>
@@ -1109,7 +1111,17 @@ function ResumenPrevisualizacion({
         </div>
       </div>
 
-      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <TarjetaResumen
+          titulo="Empresa de prueba"
+          valor={resumen.empresa.es_prueba ? "Si" : "No"}
+          detalle={
+            resumen.empresa.motivos_prueba.length
+              ? resumen.empresa.motivos_prueba.join(", ")
+              : "Bloqueada para ejecucion"
+          }
+          icono={<ShieldAlert size={20} />}
+        />
         <TarjetaResumen
           titulo="Movimientos anulables"
           valor={resumen.movimientos.anulables}
@@ -1228,6 +1240,30 @@ function ResumenPrevisualizacion({
           label="Dependencias activas"
           valor={`Tareas ${resumen.dependencias_operativas.tareas_activas ?? "-"} / Ordenes ${
             resumen.dependencias_operativas.ordenes_activas ?? "-"
+          }`}
+        />
+        <MiniDato
+          label="CxP / CxC"
+          valor={`${resumen.dependencias_operativas.cuentas_por_pagar ?? "-"} / ${
+            resumen.dependencias_operativas.cuentas_por_cobrar ?? "-"
+          }`}
+        />
+        <MiniDato
+          label="Pagos CxP / CxC"
+          valor={`${resumen.dependencias_operativas.pagos_cuentas_por_pagar ?? "-"} / ${
+            resumen.dependencias_operativas.pagos_cuentas_por_cobrar ?? "-"
+          }`}
+        />
+        <MiniDato
+          label="Clientes / proveedores"
+          valor={`${resumen.dependencias_operativas.clientes ?? "-"} / ${
+            resumen.dependencias_operativas.proveedores ?? "-"
+          }`}
+        />
+        <MiniDato
+          label="Documentos / auditoria"
+          valor={`${resumen.dependencias_operativas.documentos_tramites ?? "-"} / ${
+            resumen.dependencias_operativas.auditoria_eventos ?? "-"
           }`}
         />
       </div>

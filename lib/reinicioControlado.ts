@@ -74,6 +74,13 @@ export interface RiesgoReinicioControlado {
 
 export interface ResumenReinicioControlado {
   empresa_id: number;
+  empresa: {
+    id: number;
+    nombre: string | null;
+    estado: string | null;
+    es_prueba: boolean;
+    motivos_prueba: string[];
+  };
   tipo_reinicio: TipoReinicioControlado;
   fecha_desde: string | null;
   fecha_hasta: string | null;
@@ -132,6 +139,15 @@ export interface ResumenReinicioControlado {
   dependencias_operativas: {
     tareas_activas: number | null;
     ordenes_activas: number | null;
+    documentos_contables: number | null;
+    cuentas_por_pagar: number | null;
+    cuentas_por_cobrar: number | null;
+    pagos_cuentas_por_pagar: number | null;
+    pagos_cuentas_por_cobrar: number | null;
+    clientes: number | null;
+    proveedores: number | null;
+    documentos_tramites: number | null;
+    auditoria_eventos: number | null;
   };
   acciones_planeadas: string[];
   riesgos: RiesgoReinicioControlado[];
@@ -220,6 +236,12 @@ interface CalendarioReinicioRow {
   fecha_inicio: string | null;
 }
 
+interface EmpresaReinicioRow {
+  id: number;
+  nombre: string | null;
+  estado: string | null;
+}
+
 const TIPOS_REINICIO: TipoReinicioControlado[] = [
   "movimientos",
   "cheques",
@@ -239,6 +261,7 @@ const COLUMNAS_FONDOS_REINICIO =
 const COLUMNAS_CHEQUERAS_REINICIO = "id,empresa_id,estado";
 const COLUMNAS_CHEQUES_FISICOS_REINICIO = "id,empresa_id,estado";
 const COLUMNAS_CALENDARIO_REINICIO = "id,empresa_id,estado,fecha_inicio";
+const COLUMNAS_EMPRESA_REINICIO = "id,nombre,estado";
 const LIMITE_PREDETERMINADO = 100;
 const LIMITE_MAXIMO = 500;
 const MOTIVO_REINICIO = "Reinicio controlado";
@@ -297,6 +320,24 @@ function claveEstado(valor?: string | null) {
 
 function normalizarEstado(valor?: string | null) {
   return (valor || "").trim().toLowerCase();
+}
+
+function detectarEmpresaPrueba(empresa: EmpresaReinicioRow | null) {
+  const nombre = (empresa?.nombre || "").toLowerCase();
+  const estado = normalizarEstado(empresa?.estado);
+  const motivos: string[] = [];
+
+  if (nombre.includes("control plus")) motivos.push("nombre_control_plus");
+  if (nombre.includes("prueba")) motivos.push("nombre_prueba");
+  if (nombre.includes("demo")) motivos.push("nombre_demo");
+  if (nombre.includes("testing")) motivos.push("nombre_testing");
+  if (estado === "inactiva" || estado === "inactivo") motivos.push("estado_inactivo");
+  if (estado === "archivada" || estado === "archivado") motivos.push("estado_archivado");
+
+  return {
+    es_prueba: motivos.length > 0,
+    motivos,
+  };
 }
 
 function esChequePagado(estado?: string | null) {
@@ -416,6 +457,7 @@ function aplicarRangoFechas<T extends { gte: Function; lte: Function }>(
 function resumenGeneralParaAuditoria(resumen: ResumenReinicioControlado) {
   return {
     empresa_id: resumen.empresa_id,
+    empresa: resumen.empresa,
     tipo_reinicio: resumen.tipo_reinicio,
     fecha_desde: resumen.fecha_desde,
     fecha_hasta: resumen.fecha_hasta,
@@ -498,6 +540,12 @@ function validarBloqueosEjecucion(
   opciones: ReturnType<typeof resolverOpciones>,
   resumen: ResumenReinicioControlado
 ) {
+  if (!resumen.empresa.es_prueba) {
+    throw new Error(
+      "Reinicio bloqueado: la empresa no fue detectada como prueba, demo, Control Plus, inactiva o archivada."
+    );
+  }
+
   if (opciones.incluir_movimientos && resumen.cheques.pagados > 0) {
     throw new Error(
       "Existen cheques pagados en el alcance. No se anularan movimientos porque podrian estar vinculados a pagos ya ejecutados."
@@ -659,6 +707,24 @@ async function consultarCalendario(
   return (data || []) as CalendarioReinicioRow[];
 }
 
+async function consultarEmpresaReinicio(empresaId: number) {
+  const { data, error } = await supabase
+    .from("empresas")
+    .select(COLUMNAS_EMPRESA_REINICIO)
+    .eq("id", empresaId)
+    .maybeSingle();
+
+  if (error) {
+    throw errorSupabase("No se pudo consultar la empresa del reinicio", error);
+  }
+
+  if (!data) {
+    throw new Error("No se encontro la empresa indicada para el reinicio.");
+  }
+
+  return data as EmpresaReinicioRow;
+}
+
 async function contarDependenciasOperativas(
   empresaId: number,
   fechaDesde: string | null,
@@ -667,7 +733,35 @@ async function contarDependenciasOperativas(
   const resultado = {
     tareas_activas: null as number | null,
     ordenes_activas: null as number | null,
+    documentos_contables: null as number | null,
+    cuentas_por_pagar: null as number | null,
+    cuentas_por_cobrar: null as number | null,
+    pagos_cuentas_por_pagar: null as number | null,
+    pagos_cuentas_por_cobrar: null as number | null,
+    clientes: null as number | null,
+    proveedores: null as number | null,
+    documentos_tramites: null as number | null,
+    auditoria_eventos: null as number | null,
   };
+
+  async function contarTabla(tabla: string, columnaEmpresa = "empresa_id") {
+    try {
+      const { count, error } = await supabase
+        .from(tabla)
+        .select("id", { count: "exact", head: true })
+        .eq(columnaEmpresa, empresaId);
+
+      if (error) {
+        console.warn(`No se pudo contar ${tabla} para reinicio:`, error);
+        return null;
+      }
+
+      return count ?? 0;
+    } catch (error) {
+      console.warn(`No se pudo contar ${tabla} para reinicio:`, error);
+      return null;
+    }
+  }
 
   try {
     let tareasQuery: any = supabase
@@ -703,6 +797,38 @@ async function contarDependenciasOperativas(
     console.warn("No se pudieron contar ordenes vinculadas al reinicio:", error);
   }
 
+  const [
+    documentosContables,
+    cuentasPorPagar,
+    cuentasPorCobrar,
+    pagosCxp,
+    pagosCxc,
+    clientes,
+    proveedores,
+    documentos,
+    auditoria,
+  ] = await Promise.all([
+    contarTabla("documentos_contables_revision"),
+    contarTabla("cuentas_por_pagar"),
+    contarTabla("cuentas_por_cobrar"),
+    contarTabla("pagos_cuentas_por_pagar"),
+    contarTabla("pagos_cuentas_por_cobrar"),
+    contarTabla("clientes"),
+    contarTabla("proveedores"),
+    contarTabla("documentos_tramites"),
+    contarTabla("auditoria_eventos"),
+  ]);
+
+  resultado.documentos_contables = documentosContables;
+  resultado.cuentas_por_pagar = cuentasPorPagar;
+  resultado.cuentas_por_cobrar = cuentasPorCobrar;
+  resultado.pagos_cuentas_por_pagar = pagosCxp;
+  resultado.pagos_cuentas_por_cobrar = pagosCxc;
+  resultado.clientes = clientes;
+  resultado.proveedores = proveedores;
+  resultado.documentos_tramites = documentos;
+  resultado.auditoria_eventos = auditoria;
+
   return resultado;
 }
 
@@ -710,6 +836,20 @@ function agregarRiesgos(
   resumen: ResumenReinicioControlado,
   opciones: ReturnType<typeof resolverOpciones>
 ) {
+  if (!resumen.empresa.es_prueba) {
+    resumen.riesgos.push({
+      severidad: "critico",
+      codigo: "empresa_no_detectada_como_prueba",
+      mensaje:
+        "La empresa no coincide con Control Plus/prueba/demo/testing ni esta inactiva o archivada. No debe ejecutarse reinicio controlado sobre una empresa real.",
+      metadatos: {
+        empresa_id: resumen.empresa.id,
+        nombre: resumen.empresa.nombre,
+        estado: resumen.empresa.estado,
+      },
+    });
+  }
+
   if (resumen.cheques.pagados > 0) {
     resumen.riesgos.push({
       severidad: "critico",
@@ -775,16 +915,24 @@ function agregarRiesgos(
 
   if (
     resumen.dependencias_operativas.tareas_activas ||
-    resumen.dependencias_operativas.ordenes_activas
+    resumen.dependencias_operativas.ordenes_activas ||
+    resumen.dependencias_operativas.documentos_contables ||
+    resumen.dependencias_operativas.cuentas_por_pagar ||
+    resumen.dependencias_operativas.cuentas_por_cobrar ||
+    resumen.dependencias_operativas.pagos_cuentas_por_pagar ||
+    resumen.dependencias_operativas.pagos_cuentas_por_cobrar ||
+    resumen.dependencias_operativas.clientes ||
+    resumen.dependencias_operativas.proveedores ||
+    resumen.dependencias_operativas.documentos_tramites ||
+    resumen.dependencias_operativas.auditoria_eventos
   ) {
     resumen.riesgos.push({
       severidad: "bajo",
-      codigo: "dependencias_operativas_no_modificadas",
+      codigo: "dependencias_operativas_detectadas",
       mensaje:
-        "Tareas y ordenes se contabilizan como contexto, pero este helper no las modifica en la version base.",
+        "Se detectaron dependencias operativas y documentales. Documentos, auditoria y pagos no se borran ni se revierten automaticamente.",
       metadatos: {
-        tareas_activas: resumen.dependencias_operativas.tareas_activas,
-        ordenes_activas: resumen.dependencias_operativas.ordenes_activas,
+        ...resumen.dependencias_operativas,
       },
     });
   }
@@ -792,13 +940,23 @@ function agregarRiesgos(
 
 function crearResumenBase(
   empresaId: number,
+  empresa: EmpresaReinicioRow,
   params: PrevisualizarReinicioParams,
   fechaDesde: string | null,
   fechaHasta: string | null,
   opciones: ReturnType<typeof resolverOpciones>
 ): ResumenReinicioControlado {
+  const deteccion = detectarEmpresaPrueba(empresa);
+
   return {
     empresa_id: empresaId,
+    empresa: {
+      id: empresaId,
+      nombre: empresa.nombre,
+      estado: empresa.estado,
+      es_prueba: deteccion.es_prueba,
+      motivos_prueba: deteccion.motivos,
+    },
     tipo_reinicio: params.tipo_reinicio,
     fecha_desde: fechaDesde,
     fecha_hasta: fechaHasta,
@@ -856,6 +1014,15 @@ function crearResumenBase(
     dependencias_operativas: {
       tareas_activas: null,
       ordenes_activas: null,
+      documentos_contables: null,
+      cuentas_por_pagar: null,
+      cuentas_por_cobrar: null,
+      pagos_cuentas_por_pagar: null,
+      pagos_cuentas_por_cobrar: null,
+      clientes: null,
+      proveedores: null,
+      documentos_tramites: null,
+      auditoria_eventos: null,
     },
     acciones_planeadas: [],
     riesgos: [],
@@ -881,8 +1048,10 @@ export async function previsualizarReinicioControlado(
     opciones.incluir_cheques_pagados ||
     opciones.incluir_fondos_chequeras;
   const hayFiltroFecha = Boolean(fechaDesde || fechaHasta);
+  const empresa = await consultarEmpresaReinicio(empresaId);
   const resumen = crearResumenBase(
     empresaId,
+    empresa,
     params,
     fechaDesde,
     fechaHasta,
@@ -926,7 +1095,19 @@ export async function previsualizarReinicioControlado(
       : Promise.resolve(null),
     params.tipo_reinicio === "operativo_completo"
       ? contarDependenciasOperativas(empresaId, fechaDesde, fechaHasta)
-      : Promise.resolve({ tareas_activas: null, ordenes_activas: null }),
+      : Promise.resolve({
+          tareas_activas: null,
+          ordenes_activas: null,
+          documentos_contables: null,
+          cuentas_por_pagar: null,
+          cuentas_por_cobrar: null,
+          pagos_cuentas_por_pagar: null,
+          pagos_cuentas_por_cobrar: null,
+          clientes: null,
+          proveedores: null,
+          documentos_tramites: null,
+          auditoria_eventos: null,
+        }),
   ]);
 
   resumen.movimientos.sin_empresa_id_detectados = sinEmpresaId;
@@ -1059,6 +1240,12 @@ export async function previsualizarReinicioControlado(
   if (opciones.incluir_calendario) {
     resumen.acciones_planeadas.push(
       "Cancelar eventos de calendario pendientes o en proceso dentro del alcance."
+    );
+  }
+
+  if (params.tipo_reinicio === "operativo_completo") {
+    resumen.acciones_planeadas.push(
+      "Archivar empresa detectada como prueba, cancelar tareas, anular CxP/CxC no pagadas e inactivar clientes/proveedores sin borrar documentos, pagos ni auditoria."
     );
   }
 
@@ -1542,6 +1729,117 @@ async function cancelarCalendario(
   return (data || []).length;
 }
 
+async function cancelarTareasPrueba(empresaId: number) {
+  const { data, error } = await supabase
+    .from("tareas")
+    .update({
+      estado: "Completado",
+      motivo_cancelacion: MOTIVO_REINICIO,
+      actualizado_at: new Date().toISOString(),
+    })
+    .eq("empresa_id", empresaId)
+    .neq("estado", "Completado")
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudieron cancelar tareas de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
+async function anularCuentasPorPagarPrueba(empresaId: number, userId: string) {
+  const { data, error } = await supabase
+    .from("cuentas_por_pagar")
+    .update({
+      estado: "Anulado",
+      saldo_pendiente: 0,
+      actualizado_at: new Date().toISOString(),
+      actualizado_por: userId,
+      observaciones: MOTIVO_REINICIO,
+    })
+    .eq("empresa_id", empresaId)
+    .not("estado", "in", '("Pagado","Anulado")')
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudieron anular CxP de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
+async function anularCuentasPorCobrarPrueba(empresaId: number, userId: string) {
+  const { data, error } = await supabase
+    .from("cuentas_por_cobrar")
+    .update({
+      estado: "Anulado",
+      saldo_pendiente: 0,
+      actualizado_at: new Date().toISOString(),
+      actualizado_por: userId,
+      observaciones: MOTIVO_REINICIO,
+    })
+    .eq("empresa_id", empresaId)
+    .not("estado", "in", '("Pagado","Anulado")')
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudieron anular CxC de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
+async function inactivarClientesPrueba(empresaId: number) {
+  const { data, error } = await supabase
+    .from("clientes")
+    .update({
+      estado: "Inactivo",
+      actualizado_at: new Date().toISOString(),
+    })
+    .eq("empresa_id", empresaId)
+    .neq("estado", "Inactivo")
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudieron inactivar clientes de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
+async function inactivarProveedoresPrueba(empresaId: number) {
+  const { data, error } = await supabase
+    .from("proveedores")
+    .update({
+      estado: "Inactivo",
+      actualizado_at: new Date().toISOString(),
+    })
+    .eq("empresa_id", empresaId)
+    .neq("estado", "Inactivo")
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudieron inactivar proveedores de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
+async function archivarEmpresaPrueba(empresaId: number) {
+  const { data, error } = await supabase
+    .from("empresas")
+    .update({ estado: "Archivada" })
+    .eq("id", empresaId)
+    .select("id");
+
+  if (error) {
+    throw errorSupabase("No se pudo archivar la empresa de prueba", error);
+  }
+
+  return (data || []).length;
+}
+
 export async function ejecutarReinicioControlado(
   params: EjecutarReinicioParams
 ): Promise<ResultadoReinicioControlado> {
@@ -1697,6 +1995,40 @@ export async function ejecutarReinicioControlado(
           previsualizacionParams.fecha_desde || null,
           previsualizacionParams.fecha_hasta || null
         )
+      )
+    );
+  }
+
+  if (previsualizacionParams.tipo_reinicio === "operativo_completo") {
+    etapaActual = "archivar_dependencias_operativas_prueba";
+    operaciones.push(
+      await ejecutarOperacion("tareas", "cancelar_tareas_prueba", () =>
+        cancelarTareasPrueba(previsualizacionParams.empresa_id)
+      )
+    );
+    operaciones.push(
+      await ejecutarOperacion("cuentas_por_pagar", "anular_cxp_prueba_no_pagada", () =>
+        anularCuentasPorPagarPrueba(previsualizacionParams.empresa_id, userId)
+      )
+    );
+    operaciones.push(
+      await ejecutarOperacion("cuentas_por_cobrar", "anular_cxc_prueba_no_pagada", () =>
+        anularCuentasPorCobrarPrueba(previsualizacionParams.empresa_id, userId)
+      )
+    );
+    operaciones.push(
+      await ejecutarOperacion("clientes", "inactivar_clientes_prueba", () =>
+        inactivarClientesPrueba(previsualizacionParams.empresa_id)
+      )
+    );
+    operaciones.push(
+      await ejecutarOperacion("proveedores", "inactivar_proveedores_prueba", () =>
+        inactivarProveedoresPrueba(previsualizacionParams.empresa_id)
+      )
+    );
+    operaciones.push(
+      await ejecutarOperacion("empresas", "archivar_empresa_prueba", () =>
+        archivarEmpresaPrueba(previsualizacionParams.empresa_id)
       )
     );
   }
