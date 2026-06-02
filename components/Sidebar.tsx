@@ -324,6 +324,42 @@ const menusAdmin = [
   menu.clave === "admin" || menu.clave === "monitoreo-sistema" ? true : moduloActivo(menu.clave)
 );
 
+  const gruposSidebar = [
+    {
+      titulo: "Operacion",
+      rutas: ["/dashboard", "/calendario", "/tareas", "/cheques", "/ordenes-compra"],
+    },
+    {
+      titulo: "Contabilidad y Finanzas",
+      rutas: [
+        "/contabilidad",
+        "/cuentas-cobrar",
+        "/cuentas-pagar",
+        "/reportes",
+        "/finanzas",
+      ],
+    },
+    {
+      titulo: "Administracion",
+      rutas: ["/clientes", "/proveedores", "/empresas", "/importaciones", "/documentos"],
+    },
+    {
+      titulo: "Seguridad y Control",
+      rutas: [
+        "/usuarios",
+        "/historial",
+        "/admin",
+        "/monitoreo-sistema",
+        "/reinicio-controlado",
+      ],
+    },
+  ].map((grupo) => ({
+    ...grupo,
+    menus: grupo.rutas
+      .map((ruta) => menusFiltrados.find((menu) => menu.path === ruta))
+      .filter((menu) => Boolean(menu)),
+  }));
+
   useEffect(() => {
     activeLinkRef.current?.scrollIntoView({
       block: "nearest",
@@ -351,34 +387,48 @@ const menusAdmin = [
         )}
       </div>
 
-      <nav className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-2 overscroll-contain scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-        {menusFiltrados.map((menu) => {
-          const Icon = menu.icon;
-          const active = pathname.startsWith(menu.path);
+      <nav className="flex-1 min-h-0 space-y-5 overflow-y-auto pr-2 overscroll-contain scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+        {gruposSidebar.map((grupo) =>
+          grupo.menus.length > 0 ? (
+            <section key={grupo.titulo} className="space-y-2">
+              <h2 className="px-4 text-[10px] font-black uppercase tracking-[0.18em] text-gray-600">
+                {grupo.titulo}
+              </h2>
 
-          return (
-            <Link
-              ref={active ? activeLinkRef : null}
-              key={menu.path}
-              href={menu.path}
-              className={`group flex items-center justify-between p-4 rounded-2xl transition-all ${
-                active
-                  ? "bg-cyan-500/10 text-cyan-400"
-                  : "text-gray-400 hover:bg-white/[0.03] hover:text-white"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Icon size={20} />
+              <div className="space-y-2">
+                {grupo.menus.map((menu) => {
+                  if (!menu) return null;
 
-                <span className="font-semibold text-sm">{menu.name}</span>
+                  const Icon = menu.icon;
+                  const active = pathname.startsWith(menu.path);
+
+                  return (
+                    <Link
+                      ref={active ? activeLinkRef : null}
+                      key={menu.path}
+                      href={menu.path}
+                      className={`group flex items-center justify-between p-4 rounded-2xl transition-all ${
+                        active
+                          ? "bg-cyan-500/10 text-cyan-400"
+                          : "text-gray-400 hover:bg-white/[0.03] hover:text-white"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <Icon size={20} />
+
+                        <span className="font-semibold text-sm">{menu.name}</span>
+                      </div>
+
+                      {active && (
+                        <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]" />
+                      )}
+                    </Link>
+                  );
+                })}
               </div>
-
-              {active && (
-                <div className="w-1.5 h-1.5 rounded-full bg-cyan-500 shadow-[0_0_10px_#06b6d4]" />
-              )}
-            </Link>
-          );
-        })}
+            </section>
+          ) : null
+        )}
 
         {loadingRol && (
           <div className="flex items-center gap-3 p-4 text-gray-600">
