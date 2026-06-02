@@ -3,31 +3,26 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const protectedRoutes = [
   "/dashboard",
-  "/tareas",
+  "/admin",
+  "/usuarios",
+  "/monitoreo-sistema",
+  "/empresas",
+  "/clientes",
+  "/proveedores",
   "/cheques",
   "/ordenes-compra",
+  "/contabilidad",
+  "/cuentas-cobrar",
+  "/cuentas-pagar",
+  "/documentos",
+  "/historial",
+  "/reportes",
+  "/importaciones",
+  "/calendario",
+  "/reinicio-controlado",
+  "/tareas",
   "/finanzas",
   "/empleados",
-  "/contabilidad",
-  "/empresas",
-];
-
-const adminRoutes = [
-  "/finanzas",
-  "/contabilidad",
-  "/empleados",
-  "/empresas",
-];
-
-const rolesPermitidos = [
-  "admin",
-  "supervisor",
-  "jefe",
-];
-
-const rolesPermitidosContabilidad = [
-  ...rolesPermitidos,
-  "empleado",
 ];
 
 export async function proxy(req: NextRequest) {
@@ -56,7 +51,6 @@ export async function proxy(req: NextRequest) {
     error,
   } = await supabase.auth.getUser();
 
-  // 🚀 MEJORA 1: Función para redirigir SIN perder las cookies de sesión
   const redirectSafe = (path: string) => {
     const redirectResponse = NextResponse.redirect(new URL(path, req.url));
     res.cookies.getAll().forEach((cookie) => {
@@ -65,9 +59,12 @@ export async function proxy(req: NextRequest) {
     return redirectResponse;
   };
 
-  // 🚀 MEJORA 2: Atrapar a los que entran a la raíz (tudominio.com/)
   if (req.nextUrl.pathname === "/") {
     return redirectSafe(user ? "/dashboard" : "/login");
+  }
+
+  if (req.nextUrl.pathname === "/login" && user && !error) {
+    return redirectSafe("/dashboard");
   }
 
   const isProtected = protectedRoutes.some((route) =>
@@ -78,46 +75,33 @@ export async function proxy(req: NextRequest) {
     return redirectSafe("/login");
   }
 
-  if (req.nextUrl.pathname === "/login" && user) {
-    return redirectSafe("/dashboard");
-  }
-
-  if (user) {
-    const isAdminRoute = adminRoutes.some((route) =>
-      req.nextUrl.pathname.startsWith(route)
-    );
-
-    if (isAdminRoute) {
-      const { data: perfil } = await supabase
-        .from("perfiles")
-        .select("rol")
-        .eq("id", user.id)
-        .single();
-
-      const rolesPermitidosRuta = req.nextUrl.pathname.startsWith("/contabilidad")
-        ? rolesPermitidosContabilidad
-        : rolesPermitidos;
-
-      if (!perfil?.rol || !rolesPermitidosRuta.includes(perfil.rol)) {
-        return redirectSafe("/dashboard"); // Usamos la redirección segura aquí también
-      }
-    }
-  }
-
   return res;
 }
 
 export const config = {
- matcher: [
-  "/",
-  "/dashboard/:path*",
-  "/tareas/:path*",
-  "/cheques/:path*",
-  "/ordenes-compra/:path*",
-  "/finanzas/:path*",
-  "/empleados/:path*",
-  "/contabilidad/:path*",
-  "/empresas/:path*",
-  "/login",
-],
+  matcher: [
+    "/",
+    "/dashboard/:path*",
+    "/admin/:path*",
+    "/usuarios/:path*",
+    "/monitoreo-sistema/:path*",
+    "/empresas/:path*",
+    "/clientes/:path*",
+    "/proveedores/:path*",
+    "/cheques/:path*",
+    "/ordenes-compra/:path*",
+    "/contabilidad/:path*",
+    "/cuentas-cobrar/:path*",
+    "/cuentas-pagar/:path*",
+    "/documentos/:path*",
+    "/historial/:path*",
+    "/reportes/:path*",
+    "/importaciones/:path*",
+    "/calendario/:path*",
+    "/reinicio-controlado/:path*",
+    "/tareas/:path*",
+    "/finanzas/:path*",
+    "/empleados/:path*",
+    "/login",
+  ],
 };
