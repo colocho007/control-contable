@@ -77,7 +77,7 @@ interface TrabajoActivo {
 }
 
 interface AsignacionEmpresaExistente {
-  id: number;
+  id?: number | null;
   empresa_id: number;
   activo?: boolean | null;
 }
@@ -89,7 +89,7 @@ interface AsignacionModuloExistente {
 }
 
 interface AsignacionFuncionExistente {
-  id: number;
+  id?: number | null;
   empresa_id: number;
   funcion: string;
   activo?: boolean | null;
@@ -686,7 +686,7 @@ export default function AdminPage() {
   ) {
     const { data, error } = await supabase
       .from("usuario_empresas")
-      .select("id,empresa_id,activo")
+      .select("empresa_id,activo")
       .eq("usuario_id", usuarioId)
       .in("empresa_id", empresasPermitidasIds);
 
@@ -703,21 +703,11 @@ export default function AdminPage() {
       existentesPorEmpresa.set(empresaId, grupo);
     }
 
-    const idsCanonicosSeleccionados = new Set<number>();
-    for (const empresaId of seleccionadas) {
-      const grupo = existentesPorEmpresa.get(empresaId) || [];
-      const canonica = grupo.find((item) => item.activo === true) || grupo[0];
-      if (canonica) idsCanonicosSeleccionados.add(canonica.id);
-    }
-
     const activar = existentes.filter(
-      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+      (item) => item.activo !== true && seleccionadas.has(Number(item.empresa_id))
     );
     const desactivar = existentes.filter(
-      (item) =>
-        item.activo !== false &&
-        (!seleccionadas.has(Number(item.empresa_id)) ||
-          !idsCanonicosSeleccionados.has(item.id))
+      (item) => item.activo !== false && !seleccionadas.has(Number(item.empresa_id))
     );
     const nuevas = empresasSeleccionadasNormalizadas
       .filter((empresaId) => !existentesPorEmpresa.has(Number(empresaId)))
@@ -729,25 +719,34 @@ export default function AdminPage() {
       }));
 
     if (activar.length) {
-      const { error: activarError } = await supabase
-        .from("usuario_empresas")
-        .update({ activo: true, ...datosAuditoria })
-        .in("id", activar.map((item) => item.id));
-      if (activarError) throw activarError;
+      for (const empresa of activar) {
+        const { error: activarError } = await supabase
+          .from("usuario_empresas")
+          .update({ activo: true, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("empresa_id", Number(empresa.empresa_id));
+        if (activarError) throw activarError;
+      }
     }
 
     if (desactivar.length) {
-      const { error: desactivarError } = await supabase
-        .from("usuario_empresas")
-        .update({ activo: false, ...datosAuditoria })
-        .in("id", desactivar.map((item) => item.id));
-      if (desactivarError) throw desactivarError;
+      for (const empresa of desactivar) {
+        const { error: desactivarError } = await supabase
+          .from("usuario_empresas")
+          .update({ activo: false, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("empresa_id", Number(empresa.empresa_id));
+        if (desactivarError) throw desactivarError;
+      }
     }
 
     if (nuevas.length) {
       const { error: insertarError } = await supabase
         .from("usuario_empresas")
-        .insert(nuevas);
+        .upsert(nuevas, {
+          onConflict: "usuario_id,empresa_id",
+          ignoreDuplicates: false,
+        });
       if (insertarError) throw insertarError;
     }
 
@@ -874,7 +873,7 @@ export default function AdminPage() {
   ) {
     const { data, error } = await supabase
       .from("usuario_funciones_operativas")
-      .select("id,empresa_id,funcion,activo")
+      .select("empresa_id,funcion,activo")
       .eq("usuario_id", usuarioId)
       .in("empresa_id", empresasPermitidasIds);
 
@@ -900,22 +899,14 @@ export default function AdminPage() {
       existentesPorClave.set(clave, grupo);
     }
 
-    const idsCanonicosSeleccionados = new Set<number>();
-    for (const clave of seleccionadas) {
-      const grupo = existentesPorClave.get(clave) || [];
-      const canonico = grupo.find((item) => item.activo === true) || grupo[0];
-      if (canonico) idsCanonicosSeleccionados.add(canonico.id);
-    }
-
     const activar = existentes.filter(
-      (item) => item.activo !== true && idsCanonicosSeleccionados.has(item.id)
+      (item) =>
+        item.activo !== true &&
+        seleccionadas.has(`${Number(item.empresa_id)}:${item.funcion}`)
     );
     const desactivar = existentes.filter((item) => {
       const clave = `${Number(item.empresa_id)}:${item.funcion}`;
-      return (
-        item.activo !== false &&
-        (!seleccionadas.has(clave) || !idsCanonicosSeleccionados.has(item.id))
-      );
+      return item.activo !== false && !seleccionadas.has(clave);
     });
     const nuevas = Array.from(seleccionadas)
       .filter((clave) => !existentesPorClave.has(clave))
@@ -931,25 +922,36 @@ export default function AdminPage() {
       });
 
     if (activar.length) {
-      const { error: activarError } = await supabase
-        .from("usuario_funciones_operativas")
-        .update({ activo: true, ...datosAuditoria })
-        .in("id", activar.map((item) => item.id));
-      if (activarError) throw activarError;
+      for (const funcion of activar) {
+        const { error: activarError } = await supabase
+          .from("usuario_funciones_operativas")
+          .update({ activo: true, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("empresa_id", Number(funcion.empresa_id))
+          .eq("funcion", funcion.funcion);
+        if (activarError) throw activarError;
+      }
     }
 
     if (desactivar.length) {
-      const { error: desactivarError } = await supabase
-        .from("usuario_funciones_operativas")
-        .update({ activo: false, ...datosAuditoria })
-        .in("id", desactivar.map((item) => item.id));
-      if (desactivarError) throw desactivarError;
+      for (const funcion of desactivar) {
+        const { error: desactivarError } = await supabase
+          .from("usuario_funciones_operativas")
+          .update({ activo: false, ...datosAuditoria })
+          .eq("usuario_id", usuarioId)
+          .eq("empresa_id", Number(funcion.empresa_id))
+          .eq("funcion", funcion.funcion);
+        if (desactivarError) throw desactivarError;
+      }
     }
 
     if (nuevas.length) {
       const { error: insertarError } = await supabase
         .from("usuario_funciones_operativas")
-        .insert(nuevas);
+        .upsert(nuevas, {
+          onConflict: "usuario_id,empresa_id,funcion",
+          ignoreDuplicates: false,
+        });
       if (insertarError) throw insertarError;
     }
 
