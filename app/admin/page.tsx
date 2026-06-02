@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
@@ -193,6 +193,7 @@ export default function AdminPage() {
   const [empresasSeleccionadas, setEmpresasSeleccionadas] = useState<number[]>([]);
   const [modulosSeleccionados, setModulosSeleccionados] = useState<string[]>([]);
   const [funcionesSeleccionadas, setFuncionesSeleccionadas] = useState<Record<number, string[]>>({});
+  const editorUsuarioRef = useRef<HTMLElement | null>(null);
 
   const [nuevoUsuario, setNuevoUsuario] = useState({
     nombre: "",
@@ -432,7 +433,7 @@ export default function AdminPage() {
     setModulos(((resModulos.data || []) as ModuloSistema[]).filter((m) => m.clave !== "admin"));
   }
 
-  function cargarUsuarioParaEditar(usuarioId: string) {
+  function cargarUsuarioParaEditar(usuarioId: string, desplazarAlEditor = false) {
     if (!usuarioId) {
       setUsuarioEditando("");
       setRolSeleccionado("");
@@ -467,6 +468,15 @@ export default function AdminPage() {
     setEmpresasSeleccionadas(valoresUnicosNumericos(empresasDelUsuario));
     setModulosSeleccionados(valoresUnicosTexto(modulosDelUsuario));
     setFuncionesSeleccionadas(funcionesDelUsuario);
+
+    if (desplazarAlEditor) {
+      window.setTimeout(() => {
+        editorUsuarioRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 50);
+    }
   }
 
   function toggleEmpresa(empresaId: number) {
@@ -1072,7 +1082,7 @@ export default function AdminPage() {
                   catalogoModulos={modulos}
                   trabajos={trabajosActivos}
                   usuarioSeleccionado={usuarioEditando}
-                  onSeleccionar={cargarUsuarioParaEditar}
+                  onSeleccionar={(usuarioId) => cargarUsuarioParaEditar(usuarioId, true)}
                 />
               </section>
 
@@ -1134,7 +1144,7 @@ export default function AdminPage() {
                 </button>
               </section>
 
-              <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-cyan-500">
+              <section ref={editorUsuarioRef} className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-10 border-l-4 border-l-cyan-500 scroll-mt-6">
                 <div className="mb-6">
                   <h2 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
                     <ShieldCheck size={16} className="text-cyan-400" />

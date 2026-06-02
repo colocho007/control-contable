@@ -557,15 +557,24 @@ export default function MonitoreoSistemaPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={() => cargarDatos()}
-              disabled={cargando}
-              className="h-12 px-5 rounded-xl bg-white/5 border border-white/10 hover:border-amber-400/50 text-sm font-bold text-gray-300 flex items-center justify-center gap-2 disabled:opacity-50"
-            >
-              <RefreshCcw size={16} className={cargando ? "animate-spin" : ""} />
-              Actualizar
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <a
+                href="/admin"
+                className="h-12 px-5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 hover:border-cyan-400/50 text-sm font-bold text-cyan-200 flex items-center justify-center gap-2"
+              >
+                <ShieldCheck size={16} />
+                Editar usuarios en Admin
+              </a>
+              <button
+                type="button"
+                onClick={() => cargarDatos()}
+                disabled={cargando}
+                className="h-12 px-5 rounded-xl bg-white/5 border border-white/10 hover:border-amber-400/50 text-sm font-bold text-gray-300 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCcw size={16} className={cargando ? "animate-spin" : ""} />
+                Actualizar monitoreo
+              </button>
+            </div>
           </header>
 
           {cargando ? (

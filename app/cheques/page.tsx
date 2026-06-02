@@ -315,6 +315,18 @@ const [formChequera, setFormChequera] = useState({
   numeroInicial: "",
   numeroFinal: "",
 });
+const [seccionesChequesAbiertas, setSeccionesChequesAbiertas] = useState({
+  cheque: true,
+  fondo: false,
+  chequera: false,
+});
+
+function alternarSeccionCheques(seccion: "cheque" | "fondo" | "chequera") {
+  setSeccionesChequesAbiertas((actual) => ({
+    ...actual,
+    [seccion]: !actual[seccion],
+  }));
+}
 
   useEffect(() => {
     iniciar();
@@ -3009,12 +3021,21 @@ useEffect(() => {
               Crear cheque y enviar a autorización
             </h2>
 
+            <button
+              type="button"
+              onClick={() => alternarSeccionCheques("cheque")}
+              className="mb-4 inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-4 py-2 text-[11px] font-black uppercase text-cyan-200"
+            >
+              {seccionesChequesAbiertas.cheque ? "Ocultar formulario" : "Abrir formulario"}
+            </button>
+
             {procesandoBorrador && (
               <p className="mb-4 text-xs text-cyan-300">
                 Guardando borrador...
               </p>
             )}
 
+            {seccionesChequesAbiertas.cheque && (
             <div className="grid md:grid-cols-4 gap-4">
               <select
                 value={form.empresa}
@@ -3271,14 +3292,25 @@ useEffect(() => {
                 Enviar cheque a autorización
               </button>
             </div>
+            )}
           </section>
           )}
 
           <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-green-500">
-  <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase">
-    Registrar fondo / cuenta bancaria
-  </h2>
+  <div className="mb-6 flex items-center justify-between gap-4">
+    <h2 className="text-sm font-bold text-gray-400 tracking-widest uppercase">
+      Registrar fondo / cuenta bancaria
+    </h2>
+    <button
+      type="button"
+      onClick={() => alternarSeccionCheques("fondo")}
+      className="rounded-full border border-green-500/20 bg-green-500/10 px-4 py-2 text-[11px] font-black uppercase text-green-200"
+    >
+      {seccionesChequesAbiertas.fondo ? "Ocultar formulario" : "Abrir formulario"}
+    </button>
+  </div>
 
+  {seccionesChequesAbiertas.fondo && (
   <div className="grid md:grid-cols-6 gap-4">
     <select
       value={formFondo.empresa}
@@ -3352,13 +3384,24 @@ useEffect(() => {
       Crear fondo
     </button>
   </div>
+  )}
 </section>
 
 <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-yellow-500">
-  <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase">
-    Registrar chequera
-  </h2>
+  <div className="mb-6 flex items-center justify-between gap-4">
+    <h2 className="text-sm font-bold text-gray-400 tracking-widest uppercase">
+      Registrar chequera
+    </h2>
+    <button
+      type="button"
+      onClick={() => alternarSeccionCheques("chequera")}
+      className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-4 py-2 text-[11px] font-black uppercase text-yellow-200"
+    >
+      {seccionesChequesAbiertas.chequera ? "Ocultar formulario" : "Abrir formulario"}
+    </button>
+  </div>
 
+  {seccionesChequesAbiertas.chequera && (
   <div className="grid md:grid-cols-6 gap-4">
     <select
       value={formChequera.fondoEmpresaId}
@@ -3446,6 +3489,7 @@ useEffect(() => {
       Crear chequera y generar números
     </button>
   </div>
+  )}
 </section>
 
 <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8">
