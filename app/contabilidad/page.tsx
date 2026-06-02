@@ -507,18 +507,56 @@ export default function ContabilidadPage() {
     return tieneFuncionOperativaLocal(funcionesOperativas, userId, empresaId, funciones);
   }
 
+  function esAuditorSoloLecturaContable(
+    empresaId: string | number | null | undefined
+  ) {
+    return tieneFuncionContable(empresaId, ["auditor_solo_lectura"]);
+  }
+
+  function esAdminGlobalTemporal() {
+    return rolActual === "admin";
+  }
+
+  function tieneFallbackRolContable(rolesPermitidos: string[]) {
+    // Transicion Control+: este fallback mantiene usuarios actuales mientras el admin
+    // termina de asignar funciones operativas reales por usuario y empresa.
+    return rolesPermitidos.includes(rolActual);
+  }
+
   function puedeAuxiliarContable(empresaId: string | number | null | undefined) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+
     return (
       tieneFuncionContable(empresaId, ["auxiliar_contable", "contador_revisor"]) ||
-      ["admin", "supervisor", "jefe", "contador", "auxiliar"].includes(rolActual)
+      tieneFallbackRolContable(["admin", "supervisor", "jefe", "contador", "auxiliar"])
     );
   }
 
   function puedeRevisorContable(empresaId: string | number | null | undefined) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+
     return (
       tieneFuncionContable(empresaId, ["contador_revisor"]) ||
-      ["admin", "supervisor", "jefe", "contador"].includes(rolActual)
+      tieneFallbackRolContable(["admin", "supervisor", "jefe", "contador"])
     );
+  }
+
+  function puedeCrearAsientoManual(empresaId: string | number | null | undefined) {
+    return puedeAuxiliarContable(empresaId);
+  }
+
+  function puedeAnularAsientoContableLocal(
+    empresaId: string | number | null | undefined
+  ) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+    return tieneFuncionContable(empresaId, ["contador_revisor"]) || esAdminGlobalTemporal();
+  }
+
+  function puedeCerrarPeriodoContableLocal(
+    empresaId: string | number | null | undefined
+  ) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+    return tieneFuncionContable(empresaId, ["contador_revisor"]) || esAdminGlobalTemporal();
   }
 
   function empresaNombre(empresaId: string | number | null | undefined) {
@@ -1238,6 +1276,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeRevisorContable(documento.empresa_id)) {
+      alert("No tienes funcion operativa contador_revisor para corregir documentos en esta empresa.");
+      return;
+    }
+
     const observacion = window.prompt("Motivo de la correccion:") || "";
     if (observacion.trim().length < 5) {
       alert("El motivo debe tener al menos 5 caracteres.");
@@ -1312,6 +1355,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeAuxiliarContable(documento.empresa_id)) {
+      alert("No tienes funcion operativa contable para guardar distribuciones en esta empresa.");
+      return;
+    }
+
     const motivo = window.prompt(
       "Motivo o referencia de la distribucion:",
       "Distribucion contable del documento"
@@ -1353,6 +1401,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeCerrarPeriodoContableLocal(empresaId)) {
+      alert("No tienes funcion operativa contador_revisor para preparar periodos contables en esta empresa.");
+      return;
+    }
+
     try {
       setLoading(true);
       const periodo = await obtenerOCrearPeriodoContable({
@@ -1379,7 +1432,7 @@ export default function ContabilidadPage() {
       return;
     }
 
-    if (!puedeRevisorContable(empresaId)) {
+    if (!puedeCerrarPeriodoContableLocal(empresaId)) {
       alert("No tienes funcion de contador revisor para previsualizar cierres de esta empresa.");
       return;
     }
@@ -1416,7 +1469,7 @@ export default function ContabilidadPage() {
       return;
     }
 
-    if (!puedeRevisorContable(empresaId)) {
+    if (!puedeCerrarPeriodoContableLocal(empresaId)) {
       alert("No tienes funcion de contador revisor para cerrar periodos de esta empresa.");
       return;
     }
@@ -1553,6 +1606,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeCrearAsientoManual(empresaId)) {
+      alert("No tienes funcion operativa contable para crear asientos manuales en esta empresa.");
+      return;
+    }
+
     const errores = erroresAsientoManual();
     if (errores.length) {
       alert(errores.join("\n"));
@@ -1596,10 +1654,17 @@ export default function ContabilidadPage() {
   }
 
   async function anularAsiento(asiento: AsientoContable) {
+    let empresaId: number;
+
     try {
-      validarEmpresaPermitida(asiento.empresa_id, "anular asientos");
+      empresaId = validarEmpresaPermitida(asiento.empresa_id, "anular asientos");
     } catch (error) {
       alert(getErrorMessage(error));
+      return;
+    }
+
+    if (!puedeAnularAsientoContableLocal(empresaId)) {
+      alert("Solo contador_revisor o admin global temporal puede anular asientos contables.");
       return;
     }
 
@@ -1704,14 +1769,10 @@ export default function ContabilidadPage() {
     lineasAsiento.reduce((acc, linea) => acc + numero(linea.haber), 0)
   );
 
-  const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(
-    rolActual
-  );
+  // Fallback temporal V1: movimientos operativos no son asientos formales V2.
+  const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(rolActual);
 
   const puedeGestionarGlobales = ["admin", "jefe"].includes(rolActual);
-  const puedeRevisarDocumentos = ["admin", "supervisor", "jefe", "contador"].includes(
-    rolActual
-  );
 
   const nombreEmpresaFiltro =
     empresaFiltro === "Todas"
@@ -2779,7 +2840,7 @@ export default function ContabilidadPage() {
                       </p>
                     </div>
 
-                    {puedeRevisarDocumentos && !cerrado && (
+                    {puedeRevisorContable(documento.empresa_id) && !cerrado && (
                       <div className="flex flex-col gap-2 min-w-44">
                         <button
                           type="button"
