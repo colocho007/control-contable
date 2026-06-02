@@ -83,6 +83,11 @@ interface PagoCuentaPagar {
   motivo_anulacion: string | null;
 }
 
+interface ResultadoPagoCxP {
+  pago: PagoCuentaPagar;
+  cuenta: CuentaPagar;
+}
+
 const ESTADOS_CXP = ["Pendiente", "Parcial", "Pagado", "Vencido", "Anulado"];
 const MONEDAS = ["GTQ", "USD"];
 const METODOS_PAGO = ["Efectivo", "Transferencia", "Depósito", "Cheque", "Otro"];
@@ -487,9 +492,6 @@ export default function CuentasPagarPage() {
       }
     }
 
-    const nuevoSaldo = Math.round((Number(cuenta.saldo_pendiente || 0) - monto) * 100) / 100;
-    const nuevoEstado = calcularEstadoConSaldo(nuevoSaldo);
-
     setProcesando(true);
     const toastId = toast.loading("Registrando pago...");
 
@@ -503,53 +505,29 @@ export default function CuentasPagarPage() {
         tipos_documento: ["recibo", "voucher", "transferencia", "depósito", "deposito", "comprobante", "documento soporte"],
       });
 
-      const { data: pagoData, error: pagoError } = await supabase
-        .from("pagos_cuentas_por_pagar")
-        .insert({
-          cuenta_por_pagar_id: cuenta.id,
-          empresa_id: empresaId,
-          proveedor_id: cuenta.proveedor_id || null,
-          fecha_pago: formPago.fechaPago,
-          metodo_pago: formPago.metodoPago,
-          banco: textoONull(formPago.banco),
-          referencia: textoONull(formPago.referencia),
-          moneda: cuenta.moneda,
-          monto,
-          observaciones: textoONull(formPago.observaciones),
-          estado: "Registrado",
-          creado_por: userId,
-          metadatos: {
-            cheques_preparados: true,
-            transferencias_preparadas: true,
-            depositos_preparados: true,
-            comprobantes_adjuntos_preparados: true,
-            asiento_automatico_creado: false,
-          },
-        })
-        .select(COLUMNAS_PAGOS_CXP)
-        .single();
+      const { data: resultadoRpc, error: rpcError } = await supabase.rpc(
+        "registrar_pago_cxp",
+        {
+          p_cuenta_id: String(cuenta.id),
+          p_empresa_id: empresaId,
+          p_fecha_pago: formPago.fechaPago,
+          p_metodo_pago: formPago.metodoPago,
+          p_banco: textoONull(formPago.banco),
+          p_referencia: textoONull(formPago.referencia),
+          p_moneda: cuenta.moneda,
+          p_monto: monto,
+          p_observaciones: textoONull(formPago.observaciones),
+          p_creado_por: userId,
+        }
+      );
 
-      if (pagoError) throw pagoError;
-
-      const { data: cuentaData, error: cuentaError } = await supabase
-        .from("cuentas_por_pagar")
-        .update({
-          saldo_pendiente: nuevoSaldo,
-          estado: nuevoEstado,
-          actualizado_at: new Date().toISOString(),
-          actualizado_por: userId,
-        })
-        .eq("id", cuenta.id)
-        .eq("empresa_id", empresaId)
-        .select(COLUMNAS_CXP)
-        .single();
-
-      if (cuentaError) throw cuentaError;
+      if (rpcError) throw rpcError;
+      const resultado = resultadoRpc as ResultadoPagoCxP;
 
       await auditarPagoCxP(
         "registrar_pago_cuenta_por_pagar",
-        pagoData as PagoCuentaPagar,
-        cuentaData as CuentaPagar,
+        resultado.pago,
+        resultado.cuenta,
         null
       );
 
@@ -626,51 +604,27 @@ export default function CuentasPagarPage() {
       return;
     }
 
-    const saldoDevuelto = Math.round((Number(cuenta.saldo_pendiente || 0) + Number(pago.monto || 0)) * 100) / 100;
-    if (saldoDevuelto > Number(cuenta.total || 0)) {
-      toast.error("La anulacion excederia el total de la CxP.");
-      return;
-    }
-    const nuevoEstado = saldoDevuelto >= Number(cuenta.total || 0) ? "Pendiente" : "Parcial";
-
     setProcesando(true);
     const toastId = toast.loading("Anulando pago...");
 
     try {
-      const { data: pagoData, error: pagoError } = await supabase
-        .from("pagos_cuentas_por_pagar")
-        .update({
-          estado: "Anulado",
-          anulado_por: userId,
-          anulado_at: new Date().toISOString(),
-          motivo_anulacion: motivo.trim(),
-        })
-        .eq("id", pago.id)
-        .eq("empresa_id", empresaId)
-        .select(COLUMNAS_PAGOS_CXP)
-        .single();
+      const { data: resultadoRpc, error: rpcError } = await supabase.rpc(
+        "anular_pago_cxp",
+        {
+          p_pago_id: String(pago.id),
+          p_empresa_id: empresaId,
+          p_anulado_por: userId,
+          p_motivo_anulacion: motivo.trim(),
+        }
+      );
 
-      if (pagoError) throw pagoError;
-
-      const { data: cuentaData, error: cuentaError } = await supabase
-        .from("cuentas_por_pagar")
-        .update({
-          saldo_pendiente: saldoDevuelto,
-          estado: nuevoEstado,
-          actualizado_at: new Date().toISOString(),
-          actualizado_por: userId,
-        })
-        .eq("id", cuenta.id)
-        .eq("empresa_id", empresaId)
-        .select(COLUMNAS_CXP)
-        .single();
-
-      if (cuentaError) throw cuentaError;
+      if (rpcError) throw rpcError;
+      const resultado = resultadoRpc as ResultadoPagoCxP;
 
       await auditarPagoCxP(
         "anular_pago_cuenta_por_pagar",
-        pagoData as PagoCuentaPagar,
-        cuentaData as CuentaPagar,
+        resultado.pago,
+        resultado.cuenta,
         pago.estado
       );
 
