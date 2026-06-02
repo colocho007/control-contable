@@ -38,6 +38,9 @@ import { toast, Toaster } from "react-hot-toast";
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
+  razon_social?: string | null;
+  nombre_comercial?: string | null;
 }
 
 interface Perfil {
@@ -181,6 +184,33 @@ const TIPOS_DOCUMENTO_CHEQUES = [
 const TITULO_BORRADOR_CHEQUE = "Borrador de cheque";
 const COLUMNAS_BORRADOR_CHEQUE =
   "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
+
+function normalizarTexto(valor?: string | null) {
+  return (valor || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function esEstadoOperativo(valor?: string | null) {
+  const estado = normalizarTexto(valor || "Activa");
+  return !["inactiva", "inactivo", "archivada", "archivado", "anulada", "anulado"].includes(estado);
+}
+
+function esEmpresaDePrueba(empresa: Empresa) {
+  const texto = normalizarTexto(
+    [empresa.nombre, empresa.razon_social, empresa.nombre_comercial]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  return texto.includes("control plus") || texto.includes("prueba") || texto.includes("demo");
+}
+
+function esEmpresaOperativa(empresa: Empresa) {
+  return esEstadoOperativo(empresa.estado) && !esEmpresaDePrueba(empresa);
+}
 
 function crearReferenciaTemporalCheque() {
   if (
@@ -350,18 +380,20 @@ async function iniciar() {
       perfil.rol || ""
     );
 
-    setEmpresasPermitidasIds(idsPermitidos);
+    const empresasOperativas = await obtenerEmpresas(idsPermitidos);
+    const idsOperativos = empresasOperativas.map((empresa) => Number(empresa.id));
+
+    setEmpresasPermitidasIds(idsOperativos);
 
     await Promise.all([
-      obtenerEmpresas(idsPermitidos),
       obtenerUsuarios(),
-      obtenerFuncionesOperativas(idsPermitidos),
-      obtenerCheques(idsPermitidos, user.id, perfil.rol || ""),
-      obtenerFondos(idsPermitidos),
-      obtenerChequeras(idsPermitidos),
-      obtenerChequesFisicos(idsPermitidos),
-      obtenerResumenChequeras(idsPermitidos),
-      obtenerHistorialCheques(idsPermitidos, user.id, perfil.rol || ""),
+      obtenerFuncionesOperativas(idsOperativos),
+      obtenerCheques(idsOperativos, user.id, perfil.rol || ""),
+      obtenerFondos(idsOperativos),
+      obtenerChequeras(idsOperativos),
+      obtenerChequesFisicos(idsOperativos),
+      obtenerResumenChequeras(idsOperativos),
+      obtenerHistorialCheques(idsOperativos, user.id, perfil.rol || ""),
       recuperarBorradorCheque(),
     ]);
 
@@ -463,18 +495,20 @@ function prepararNuevoBorradorCheque() {
 async function obtenerEmpresas(idsPermitidos: number[]) {
   if (!idsPermitidos.length) {
     setEmpresas([]);
-    return;
+    return [];
   }
 
   const { data, error } = await supabase
     .from("empresas")
-    .select("id,nombre")
+    .select("id,nombre,estado,razon_social,nombre_comercial")
     .in("id", idsPermitidos)
     .order("nombre", { ascending: true });
 
   if (error) throw error;
 
-  setEmpresas(data || []);
+  const empresasOperativas = ((data || []) as Empresa[]).filter(esEmpresaOperativa);
+  setEmpresas(empresasOperativas);
+  return empresasOperativas;
 }
 
   async function obtenerUsuarios() {
@@ -566,7 +600,7 @@ function esAuditorSoloLecturaCheque(empresaId?: number | string | null) {
 
   if (error) throw error;
 
-  setFondos(data || []);
+  setFondos(((data || []) as FondoEmpresa[]).filter((fondo) => esEstadoOperativo(fondo.estado)));
 }
 
 async function obtenerChequeras(idsPermitidos: number[]) {
@@ -584,7 +618,7 @@ async function obtenerChequeras(idsPermitidos: number[]) {
 
   if (error) throw error;
 
-  setChequeras(data || []);
+  setChequeras(((data || []) as Chequera[]).filter((chequera) => esEstadoOperativo(chequera.estado)));
 }
 
 async function obtenerChequesFisicos(idsPermitidos: number[]) {
@@ -619,7 +653,11 @@ async function obtenerResumenChequeras(idsPermitidos: number[]) {
 
   if (error) throw error;
 
-  setResumenChequeras(data || []);
+  setResumenChequeras(
+    ((data || []) as ResumenChequera[]).filter((chequera) =>
+      esEstadoOperativo(chequera.estado)
+    )
+  );
 }
 
 async function obtenerHistorialCheques(
@@ -721,9 +759,10 @@ async function refrescarModuloCheques() {
   if (!form.empresaId) return false;
 
   return (
+    empresasPermitidasIds.includes(Number(f.empresa_id)) &&
     Number(f.empresa_id) === Number(form.empresaId) &&
     f.moneda === form.moneda &&
-    f.estado !== "Inactiva"
+    esEstadoOperativo(f.estado)
   );
 });
 
@@ -731,9 +770,11 @@ const chequerasDisponibles = chequeras.filter((c) => {
   if (!form.fondoEmpresaId) return false;
 
   return (
+    empresasPermitidasIds.includes(Number(c.empresa_id)) &&
+    Number(c.empresa_id) === Number(form.empresaId) &&
     Number(c.fondo_empresa_id) === Number(form.fondoEmpresaId) &&
     c.moneda === form.moneda &&
-    c.estado === "Activa"
+    esEstadoOperativo(c.estado)
   );
 });
 
@@ -741,6 +782,8 @@ const chequesFisicosDisponibles = chequesFisicos.filter((cf) => {
   if (!form.chequeraId) return false;
 
   return (
+    empresasPermitidasIds.includes(Number(cf.empresa_id)) &&
+    Number(cf.empresa_id) === Number(form.empresaId) &&
     Number(cf.chequera_id) === Number(form.chequeraId) &&
     cf.moneda === form.moneda &&
     cf.estado === "Disponible"
@@ -819,7 +862,8 @@ function continuarConBorradorCheque() {
         empresaIdBorrador !== null &&
         Number(fondo.empresa_id) === empresaIdBorrador &&
         fondo.moneda === formularioRecuperado.moneda &&
-        fondo.estado !== "Inactiva"
+        empresasPermitidasIds.includes(Number(fondo.empresa_id)) &&
+        esEstadoOperativo(fondo.estado)
     );
 
     if (!fondoValido) {
@@ -847,7 +891,8 @@ function continuarConBorradorCheque() {
         empresaIdBorrador !== null &&
         Number(chequera.empresa_id) === empresaIdBorrador &&
         chequera.moneda === formularioRecuperado.moneda &&
-        chequera.estado === "Activa"
+        empresasPermitidasIds.includes(Number(chequera.empresa_id)) &&
+        esEstadoOperativo(chequera.estado)
     );
 
     if (!chequeraValida) {
@@ -867,6 +912,7 @@ function continuarConBorradorCheque() {
           formularioRecuperado.fondoEmpresaId &&
         empresaIdBorrador !== null &&
         Number(chequeFisico.empresa_id) === empresaIdBorrador &&
+        empresasPermitidasIds.includes(Number(chequeFisico.empresa_id)) &&
         chequeFisico.moneda === formularioRecuperado.moneda &&
         chequeFisico.estado === "Disponible"
     );
@@ -1272,6 +1318,19 @@ async function crearChequera() {
     return;
   }
 
+  const fondoSeleccionado = fondos.find(
+    (fondo) =>
+      String(fondo.id) === formChequera.fondoEmpresaId &&
+      Number(fondo.empresa_id) === Number(formChequera.empresaId) &&
+      empresasPermitidasIds.includes(Number(fondo.empresa_id)) &&
+      esEstadoOperativo(fondo.estado)
+  );
+
+  if (!fondoSeleccionado) {
+    toast.error("La cuenta o fondo seleccionado ya no esta disponible para crear chequera.");
+    return;
+  }
+
   const cantidadTotal = numeroFinal - numeroInicial + 1;
   const toastId = toast.loading("Creando chequera...");
 
@@ -1413,7 +1472,8 @@ async function crearChequera() {
     (fondo) =>
       String(fondo.id) === form.fondoEmpresaId &&
       Number(fondo.empresa_id) === Number(form.empresaId) &&
-      fondo.estado !== "Inactiva"
+      empresasPermitidasIds.includes(Number(fondo.empresa_id)) &&
+      esEstadoOperativo(fondo.estado)
   );
 
   if (!fondoSeleccionado) {
@@ -1458,8 +1518,9 @@ async function crearChequera() {
         String(chequera.id) === form.chequeraId &&
         String(chequera.fondo_empresa_id) === form.fondoEmpresaId &&
         Number(chequera.empresa_id) === Number(form.empresaId) &&
+        empresasPermitidasIds.includes(Number(chequera.empresa_id)) &&
         chequera.moneda === form.moneda &&
-        chequera.estado === "Activa"
+        esEstadoOperativo(chequera.estado)
     );
 
     if (!chequeraSeleccionada) {
@@ -1472,7 +1533,8 @@ async function crearChequera() {
         String(cf.id) === form.chequeFisicoId &&
         String(cf.chequera_id) === form.chequeraId &&
         String(cf.fondo_empresa_id) === form.fondoEmpresaId &&
-        Number(cf.empresa_id) === Number(form.empresaId)
+        Number(cf.empresa_id) === Number(form.empresaId) &&
+        empresasPermitidasIds.includes(Number(cf.empresa_id))
     );
 
     if (!chequeFisico || chequeFisico.estado !== "Disponible") {
@@ -2649,6 +2711,51 @@ if (userId && perfilActual) {
     });
   }, [cheques, filtroEstado, filtroEmpresa, empresasPermitidasIds]);
 
+  const resumenChequerasVisibles = useMemo(() => {
+    return resumenChequeras.filter((chequera) => {
+      const perteneceAEmpresaOperativa = empresasPermitidasIds.includes(
+        Number(chequera.empresa_id)
+      );
+      const matchEmpresa =
+        filtroEmpresa === "Todas"
+          ? true
+          : Number(chequera.empresa_id) === Number(filtroEmpresa);
+
+      return (
+        perteneceAEmpresaOperativa &&
+        matchEmpresa &&
+        esEstadoOperativo(chequera.estado)
+      );
+    });
+  }, [resumenChequeras, filtroEmpresa, empresasPermitidasIds]);
+
+  const fondosVisibles = useMemo(() => {
+    return fondos.filter((fondo) => {
+      const perteneceAEmpresaOperativa = empresasPermitidasIds.includes(
+        Number(fondo.empresa_id)
+      );
+      const matchEmpresa =
+        filtroEmpresa === "Todas"
+          ? true
+          : Number(fondo.empresa_id) === Number(filtroEmpresa);
+
+      return (
+        perteneceAEmpresaOperativa &&
+        matchEmpresa &&
+        esEstadoOperativo(fondo.estado)
+      );
+    });
+  }, [fondos, filtroEmpresa, empresasPermitidasIds]);
+
+  useEffect(() => {
+    if (
+      filtroEmpresa !== "Todas" &&
+      !empresas.some((empresa) => Number(empresa.id) === Number(filtroEmpresa))
+    ) {
+      setFiltroEmpresa("Todas");
+    }
+  }, [empresas, filtroEmpresa]);
+
 const stats = useMemo(() => {
   const pendientes = chequesFiltrados.filter(
     (c) => c.estado === "Pendiente de autorización"
@@ -2920,6 +3027,12 @@ useEffect(() => {
                     ...form,
                     empresa: e.target.value,
                     empresaId: empresa ? String(empresa.id) : "",
+                    fondoEmpresaId: "",
+                    chequeraId: "",
+                    chequeFisicoId: "",
+                    numeroCheque: "",
+                    banco: "",
+                    cuentaBancaria: "",
                   });
                 }}
                 className="input-custom"
@@ -3250,7 +3363,7 @@ useEffect(() => {
     <select
       value={formChequera.fondoEmpresaId}
       onChange={(e) => {
-        const fondo = fondos.find((f) => String(f.id) === e.target.value);
+        const fondo = fondosVisibles.find((f) => String(f.id) === e.target.value);
 
         setFormChequera({
           ...formChequera,
@@ -3265,7 +3378,7 @@ useEffect(() => {
       className="input-custom"
     >
       <option value="">Cuenta / fondo...</option>
-      {fondos.map((fondo) => (
+      {fondosVisibles.map((fondo) => (
         <option key={fondo.id} value={String(fondo.id)}>
           {fondo.empresa} — {fondo.banco || "Banco"} —{" "}
           {fondo.cuenta_bancaria || "Sin cuenta"} — {fondo.moneda}
@@ -3340,13 +3453,13 @@ useEffect(() => {
     Resumen de chequeras
   </h2>
 
-  {resumenChequeras.length === 0 ? (
+  {resumenChequerasVisibles.length === 0 ? (
     <p className="text-gray-500 text-sm">
       No hay chequeras registradas.
     </p>
   ) : (
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {resumenChequeras.map((ch) => (
+      {resumenChequerasVisibles.map((ch) => (
         <div
           key={ch.chequera_id}
           className="rounded-2xl border border-white/10 bg-black/20 p-5"
@@ -3396,13 +3509,13 @@ useEffect(() => {
     Fondos por cuenta bancaria
   </h2>
 
-  {fondos.length === 0 ? (
+  {fondosVisibles.length === 0 ? (
     <p className="text-gray-500 text-sm">
       No hay fondos o cuentas bancarias registradas.
     </p>
   ) : (
     <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {fondos.map((fondo) => (
+      {fondosVisibles.map((fondo) => (
         <div
           key={fondo.id}
           className="rounded-2xl border border-white/10 bg-black/20 p-5"
