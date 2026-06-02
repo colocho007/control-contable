@@ -6,6 +6,10 @@ import { motion } from "framer-motion";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import {
+  esEmpresaOperativaVisible,
+  obtenerEmpresasOperativasDesdeIds,
+} from "../../lib/empresasOperativas";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { toast, Toaster } from "react-hot-toast";
 
@@ -82,6 +86,7 @@ interface Cheque {
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
 }
 
 type Semaforo = "verde" | "amarillo" | "rojo";
@@ -244,16 +249,18 @@ export default function DashboardPage() {
     setValidandoAcceso(false);
 
     try {
-      const empresas = await obtenerEmpresasPermitidas(user.id, p.rol);
+      const idsPermitidos = await obtenerEmpresasPermitidas(user.id, p.rol);
+      const empresasOperativas = await obtenerEmpresasOperativasDesdeIds(idsPermitidos);
+      const empresas = empresasOperativas.ids;
 
       setEmpresasPermitidas(empresas);
+      setEmpresas(empresasOperativas.empresas);
 
       await Promise.all([
         obtenerTareas(empresas),
         obtenerFinanzas(empresas),
         obtenerOrdenes(empresas),
         obtenerCheques(empresas),
-        obtenerNombresEmpresas(empresas),
       ]);
     } catch (error) {
       console.error("Error cargando datos del dashboard:", error);
@@ -359,7 +366,7 @@ export default function DashboardPage() {
 
     const { data, error } = await supabase
       .from("empresas")
-      .select("id,nombre")
+      .select("id,nombre,estado")
       .in("id", empresasParam)
       .order("nombre", { ascending: true });
 
@@ -369,7 +376,7 @@ export default function DashboardPage() {
       return;
     }
 
-    setEmpresas(data || []);
+    setEmpresas(((data || []) as Empresa[]).filter(esEmpresaOperativaVisible));
   }
 
   const movimientosActivos = useMemo(

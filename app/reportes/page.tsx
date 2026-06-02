@@ -20,6 +20,10 @@ import {
   type SeccionExportacion,
 } from "../../lib/exportaciones";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import {
+  esEmpresaOperativaVisible,
+  obtenerEmpresasOperativasDesdeIds,
+} from "../../lib/empresasOperativas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import {
   obtenerReporteMensual,
@@ -49,6 +53,7 @@ import {
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
 }
 
 interface FiltrosReportes {
@@ -183,26 +188,29 @@ export default function ReportesPage() {
           acceso.user!.id,
           acceso.perfil?.rol || ""
         );
-        const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsPermitidos);
+        const empresasOperativas = await obtenerEmpresasOperativasDesdeIds(idsPermitidos);
+        const idsOperativos = empresasOperativas.ids;
+        const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsOperativos);
 
         if (!activo) return;
 
-        setEmpresasPermitidasIds(idsPermitidos);
+        setEmpresasPermitidasIds(idsOperativos);
         setFuncionesOperativas(funciones);
         setAutorizado(true);
         setValidandoAcceso(false);
 
-        if (!idsPermitidos.length) {
+        if (!idsOperativos.length) {
           setEmpresas([]);
           setReporte(null);
           setEstadosFinancieros(null);
-          setAviso("No tienes empresas asignadas para consultar reportes.");
+          setAviso("No tienes empresas operativas asignadas para consultar reportes.");
           return;
         }
 
+        setEmpresas(empresasOperativas.empresas);
         await Promise.all([
-          cargarEmpresas(idsPermitidos),
-          cargarReporte(idsPermitidos, FILTROS_INICIALES),
+          cargarEmpresas(idsOperativos),
+          cargarReporte(idsOperativos, FILTROS_INICIALES),
         ]);
       } catch (error) {
         console.error("Error validando acceso a reportes:", error);
@@ -224,7 +232,7 @@ export default function ReportesPage() {
   async function cargarEmpresas(idsPermitidos: number[]) {
     const { data, error } = await supabase
       .from("empresas")
-      .select("id,nombre")
+      .select("id,nombre,estado")
       .in("id", idsPermitidos)
       .order("nombre", { ascending: true });
 
@@ -234,7 +242,7 @@ export default function ReportesPage() {
       return;
     }
 
-    setEmpresas((data || []) as Empresa[]);
+    setEmpresas(((data || []) as Empresa[]).filter(esEmpresaOperativaVisible));
   }
 
   async function cargarReporte(
@@ -248,7 +256,7 @@ export default function ReportesPage() {
       if (!idsPermitidos.length) {
         setReporte(null);
         setEstadosFinancieros(null);
-        setAviso("No tienes empresas asignadas para consultar reportes.");
+        setAviso("No tienes empresas operativas asignadas para consultar reportes.");
         return;
       }
 

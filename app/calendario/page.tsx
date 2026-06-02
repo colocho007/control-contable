@@ -32,12 +32,17 @@ import {
   type ObtenerEventosOperativosParams,
 } from "../../lib/calendarioOperativo";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
+import {
+  esEmpresaOperativaVisible,
+  obtenerEmpresasOperativasDesdeIds,
+} from "../../lib/empresasOperativas";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
 }
 
 interface Perfil {
@@ -258,29 +263,32 @@ export default function CalendarioPage() {
           acceso.user!.id,
           acceso.perfil?.rol || ""
         );
+        const empresasOperativas = await obtenerEmpresasOperativasDesdeIds(idsPermitidos);
+        const idsOperativos = empresasOperativas.ids;
 
         if (!activo) return;
 
-        setEmpresasPermitidasIds(idsPermitidos);
+        setEmpresasPermitidasIds(idsOperativos);
         setAutorizado(true);
         setValidandoAcceso(false);
 
-        if (!idsPermitidos.length) {
+        if (!idsOperativos.length) {
           setEventos([]);
           setEmpresas([]);
-          setAviso("No tienes empresas asignadas para consultar el calendario.");
+          setAviso("No tienes empresas operativas asignadas para consultar el calendario.");
           return;
         }
 
+        setEmpresas(empresasOperativas.empresas);
         setFormulario((actual) => ({
           ...actual,
-          empresaId: idsPermitidos.length === 1 ? String(idsPermitidos[0]) : actual.empresaId,
+          empresaId: idsOperativos.length === 1 ? String(idsOperativos[0]) : actual.empresaId,
         }));
 
         await Promise.all([
-          cargarEmpresas(idsPermitidos),
+          cargarEmpresas(idsOperativos),
           cargarResponsables(),
-          cargarEventos(idsPermitidos, FILTROS_INICIALES),
+          cargarEventos(idsOperativos, FILTROS_INICIALES),
         ]);
       } catch (error) {
         console.error("Error validando acceso a calendario:", error);
@@ -302,7 +310,7 @@ export default function CalendarioPage() {
   async function cargarEmpresas(idsPermitidos: number[]) {
     const { data, error } = await supabase
       .from("empresas")
-      .select("id,nombre")
+      .select("id,nombre,estado")
       .in("id", idsPermitidos)
       .order("nombre", { ascending: true });
 
@@ -312,7 +320,7 @@ export default function CalendarioPage() {
       return;
     }
 
-    setEmpresas((data || []) as Empresa[]);
+    setEmpresas(((data || []) as Empresa[]).filter(esEmpresaOperativaVisible));
   }
 
   async function cargarResponsables() {
@@ -341,7 +349,7 @@ export default function CalendarioPage() {
     try {
       if (!idsPermitidos.length) {
         setEventos([]);
-        setAviso("No tienes empresas asignadas para consultar el calendario.");
+        setAviso("No tienes empresas operativas asignadas para consultar el calendario.");
         return;
       }
 
