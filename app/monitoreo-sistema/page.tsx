@@ -323,15 +323,34 @@ export default function MonitoreoSistemaPage() {
           .limit(50),
       ]);
 
-      if (resUsuarios.error) throw resUsuarios.error;
-      if (resModulos.error) throw resModulos.error;
-      if (resUsuarioModulos.error) throw resUsuarioModulos.error;
-      if (resEventos.error) throw resEventos.error;
+      if (resUsuarios.error) {
+        console.error("Error cargando perfiles en Monitoreo del Sistema:", resUsuarios.error);
+        throw resUsuarios.error;
+      }
+
+      if (resModulos.error) {
+        console.error("Error cargando modulos_sistema en Monitoreo del Sistema:", resModulos.error);
+        throw resModulos.error;
+      }
+
+      if (resEventos.error) {
+        console.error("Error cargando auditoria_eventos en Monitoreo del Sistema:", resEventos.error);
+        throw resEventos.error;
+      }
 
       setUsuarios((resUsuarios.data || []) as Perfil[]);
       setModulos((resModulos.data || []) as ModuloSistema[]);
-      setUsuarioModulos((resUsuarioModulos.data || []) as UsuarioModulo[]);
       setEventos((resEventos.data || []) as AuditoriaEvento[]);
+
+      if (resUsuarioModulos.error) {
+        console.warn(
+          "No se pudieron cargar usuario_modulos en Monitoreo del Sistema:",
+          resUsuarioModulos.error
+        );
+        setUsuarioModulos([]);
+      } else {
+        setUsuarioModulos((resUsuarioModulos.data || []) as UsuarioModulo[]);
+      }
 
       if (resTrabajos.error) {
         console.warn("No se pudieron cargar operaciones activas:", resTrabajos.error);

@@ -240,7 +240,7 @@ export default function AdminPage() {
       setAutorizado(true);
       setValidandoAcceso(false);
       setCargandoAdmin(true);
-      await cargarDatos(idsPermitidos);
+      await cargarDatos(idsPermitidos, rolActual === "admin");
     } catch (error) {
       console.error(error);
       toast.error("Error cargando Administrador Operativo");
@@ -266,19 +266,11 @@ export default function AdminPage() {
     }
   }
 
-  async function cargarDatos(idsPermitidos = empresasPermitidasIds) {
+  async function cargarDatos(
+    idsPermitidos = empresasPermitidasIds,
+    esAdminGlobal = normalizarRol(perfilActual?.rol) === "admin"
+  ) {
     const ids = valoresUnicosNumericos(idsPermitidos);
-
-    if (!ids.length) {
-      setUsuarios([]);
-      setEmpresas([]);
-      setAsignaciones([]);
-      setModulos([]);
-      setUsuarioModulos([]);
-      setUsuarioFunciones([]);
-      setTrabajosActivos([]);
-      return;
-    }
 
     const [
       resUsuarios,
@@ -293,18 +285,34 @@ export default function AdminPage() {
         .from("perfiles")
         .select("id,nombre,correo,rol,activo")
         .order("nombre", { ascending: true }),
-      supabase
-        .from("empresas")
-        .select("id,nombre")
-        .in("id", ids)
-        .order("nombre", { ascending: true }),
-      supabase
-        .from("usuario_empresas")
-        .select(
-          "id,usuario_id,empresa_id,activo,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
-        )
-        .in("empresa_id", ids)
-        .order("id", { ascending: false }),
+      esAdminGlobal
+        ? supabase
+            .from("empresas")
+            .select("id,nombre")
+            .order("nombre", { ascending: true })
+        : ids.length
+        ? supabase
+            .from("empresas")
+            .select("id,nombre")
+            .in("id", ids)
+            .order("nombre", { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+      esAdminGlobal
+        ? supabase
+            .from("usuario_empresas")
+            .select(
+              "id,usuario_id,empresa_id,activo,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+            )
+            .order("id", { ascending: false })
+        : ids.length
+        ? supabase
+            .from("usuario_empresas")
+            .select(
+              "id,usuario_id,empresa_id,activo,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+            )
+            .in("empresa_id", ids)
+            .order("id", { ascending: false })
+        : Promise.resolve({ data: [], error: null }),
       supabase
         .from("modulos_sistema")
         .select("id,clave,nombre,activo,orden")
@@ -313,45 +321,115 @@ export default function AdminPage() {
       supabase
         .from("usuario_modulos")
         .select("id,usuario_id,modulo_clave,activo"),
-      supabase
-        .from("usuario_funciones_operativas")
-        .select("id,usuario_id,empresa_id,funcion,activo")
-        .in("empresa_id", ids),
-      supabase
-        .from("borradores_trabajo")
-        .select(
-          "id,usuario_id,empresa_id,modulo,ruta,titulo,actualizado_at,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
-        )
-        .in("empresa_id", ids)
-        .eq("estado", "activo")
-        .order("actualizado_at", { ascending: false })
-        .limit(50),
+      esAdminGlobal
+        ? supabase
+            .from("usuario_funciones_operativas")
+            .select("id,usuario_id,empresa_id,funcion,activo")
+        : ids.length
+        ? supabase
+            .from("usuario_funciones_operativas")
+            .select("id,usuario_id,empresa_id,funcion,activo")
+            .in("empresa_id", ids)
+        : Promise.resolve({ data: [], error: null }),
+      esAdminGlobal
+        ? supabase
+            .from("borradores_trabajo")
+            .select(
+              "id,usuario_id,empresa_id,modulo,ruta,titulo,actualizado_at,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+            )
+            .eq("estado", "activo")
+            .order("actualizado_at", { ascending: false })
+            .limit(50)
+        : ids.length
+        ? supabase
+            .from("borradores_trabajo")
+            .select(
+              "id,usuario_id,empresa_id,modulo,ruta,titulo,actualizado_at,perfiles:usuario_id(nombre,rol),empresas:empresa_id(nombre)"
+            )
+            .in("empresa_id", ids)
+            .eq("estado", "activo")
+            .order("actualizado_at", { ascending: false })
+            .limit(50)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
-    if (resUsuarios.error) throw resUsuarios.error;
-    if (resEmpresas.error) throw resEmpresas.error;
-    if (resAsignaciones.error) throw resAsignaciones.error;
-    if (resModulos.error) throw resModulos.error;
-    if (resUsuarioModulos.error) throw resUsuarioModulos.error;
+    if (resUsuarios.error) {
+      console.error("Error cargando perfiles en Administrador Operativo:", resUsuarios.error);
+      throw resUsuarios.error;
+    }
+
+    if (resModulos.error) {
+      console.error("Error cargando modulos_sistema en Administrador Operativo:", resModulos.error);
+      throw resModulos.error;
+    }
+
+    let asignacionesCargadas: UsuarioEmpresa[] = [];
+    if (resAsignaciones.error) {
+      console.warn("No se pudieron cargar usuario_empresas en Administrador Operativo:", resAsignaciones.error);
+      setAsignaciones([]);
+    } else {
+      asignacionesCargadas = (resAsignaciones.data || []) as UsuarioEmpresa[];
+      setAsignaciones(asignacionesCargadas);
+    }
+
+    if (resEmpresas.error) {
+      console.error("Error cargando empresas en Administrador Operativo:", resEmpresas.error);
+      const empresasDesdeAsignaciones = Array.from(
+        new Map(
+          asignacionesCargadas
+            .filter((asignacion) => asignacion.empresas?.nombre)
+            .map((asignacion) => [
+              Number(asignacion.empresa_id),
+              {
+                id: Number(asignacion.empresa_id),
+                nombre: asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`,
+              },
+            ])
+        ).values()
+      );
+      setEmpresas(empresasDesdeAsignaciones);
+    } else {
+      const empresasDirectas = (resEmpresas.data || []) as Empresa[];
+      const empresasDesdeAsignaciones = Array.from(
+        new Map(
+          asignacionesCargadas
+            .filter((asignacion) => asignacion.empresas?.nombre)
+            .map((asignacion) => [
+              Number(asignacion.empresa_id),
+              {
+                id: Number(asignacion.empresa_id),
+                nombre: asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`,
+              },
+            ])
+        ).values()
+      );
+
+      setEmpresas(empresasDirectas.length ? empresasDirectas : empresasDesdeAsignaciones);
+    }
+
+    if (resUsuarioModulos.error) {
+      console.warn("No se pudieron cargar usuario_modulos en Administrador Operativo:", resUsuarioModulos.error);
+      setUsuarioModulos([]);
+    } else {
+      setUsuarioModulos((resUsuarioModulos.data || []) as UsuarioModulo[]);
+    }
+
     if (resUsuarioFunciones.error) {
-      console.warn("No se pudieron cargar funciones operativas:", resUsuarioFunciones.error);
+      console.warn("No se pudieron cargar usuario_funciones_operativas en Administrador Operativo:", resUsuarioFunciones.error);
       setUsuarioFunciones([]);
     } else {
       setUsuarioFunciones((resUsuarioFunciones.data || []) as UsuarioFuncionOperativa[]);
     }
 
     if (resTrabajos.error) {
-      console.warn("No se pudieron cargar usuarios trabajando:", resTrabajos.error);
+      console.warn("No se pudieron cargar borradores_trabajo en Administrador Operativo:", resTrabajos.error);
       setTrabajosActivos([]);
     } else {
       setTrabajosActivos((resTrabajos.data || []) as TrabajoActivo[]);
     }
 
     setUsuarios((resUsuarios.data || []) as Perfil[]);
-    setEmpresas((resEmpresas.data || []) as Empresa[]);
-    setAsignaciones((resAsignaciones.data || []) as UsuarioEmpresa[]);
     setModulos(((resModulos.data || []) as ModuloSistema[]).filter((m) => m.clave !== "admin"));
-    setUsuarioModulos((resUsuarioModulos.data || []) as UsuarioModulo[]);
   }
 
   function cargarUsuarioParaEditar(usuarioId: string) {
