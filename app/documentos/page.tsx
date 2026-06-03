@@ -33,6 +33,7 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import { registrarRateLimitOperativo } from "../../lib/rateLimitOperativo";
 import {
   esAuditorSoloLecturaLocal,
   listarFuncionesOperativasUsuario,
@@ -58,6 +59,10 @@ interface FiltrosDocumentos {
 
 const LIMITE_DOCUMENTOS = 200;
 const LIMITE_FILAS_EXPORTACION_DOCUMENTOS = 1000;
+const RATE_LIMIT_APERTURAS_DOCUMENTOS_USUARIO = 30;
+const RATE_LIMIT_APERTURAS_DOCUMENTOS_USUARIO_SEGUNDOS = 10 * 60;
+const RATE_LIMIT_APERTURAS_DOCUMENTOS_EMPRESA = 10;
+const RATE_LIMIT_APERTURAS_DOCUMENTOS_EMPRESA_SEGUNDOS = 10 * 60;
 const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 const FILTROS_INICIALES: FiltrosDocumentos = {
   empresaId: "",
@@ -342,6 +347,22 @@ export default function DocumentosPage() {
     setProcesandoId(documento.id);
 
     try {
+      const rateLimit = await validarRateLimitAperturaDocumento(documento);
+      if (!rateLimit.permitido) {
+        void auditarLectura("bloquear_apertura_documento", {
+          documento_id: documento.id,
+          modulo_origen: documento.modulo,
+          entidad_tipo: documento.entidad_tipo,
+          entidad_id: documento.entidad_id,
+          tipo_documento: documento.tipo_documento,
+          motivo: "rate_limit_excedido",
+          retry_after_segundos: rateLimit.retry_after_segundos,
+          rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+        }, documento.empresa_id);
+        window.alert(rateLimit.mensaje);
+        return;
+      }
+
       const url = await obtenerUrlDocumento(documento);
       await auditarLectura("abrir_documento", {
         documento_id: documento.id,
@@ -383,6 +404,56 @@ export default function DocumentosPage() {
     } finally {
       setProcesandoId(null);
     }
+  }
+
+  async function validarRateLimitAperturaDocumento(documento: DocumentoTramite) {
+    if (!usuarioActualId) {
+      return { permitido: true, mensaje: "", retry_after_segundos: 0, rpc_disponible: false };
+    }
+
+    const empresaId = Number(documento.empresa_id);
+    const base = await registrarRateLimitOperativo({
+      usuarioId: usuarioActualId,
+      modulo: "documentos",
+      accion: "abrir_documento",
+      limite: RATE_LIMIT_APERTURAS_DOCUMENTOS_USUARIO,
+      ventanaSegundos: RATE_LIMIT_APERTURAS_DOCUMENTOS_USUARIO_SEGUNDOS,
+      alcance: "usuario",
+      empresaId: null,
+      claveSufijo: "apertura",
+      metadatos: {
+        documento_id: documento.id,
+        empresa_id: Number.isFinite(empresaId) ? empresaId : null,
+        modulo_origen: documento.modulo,
+        tipo_documento: documento.tipo_documento,
+        storage_path_guardado: false,
+      },
+    });
+
+    if (!base.permitido) {
+      return base;
+    }
+
+    if (!Number.isInteger(empresaId) || !empresasPermitidasIds.includes(empresaId)) {
+      return base;
+    }
+
+    return registrarRateLimitOperativo({
+      usuarioId: usuarioActualId,
+      modulo: "documentos",
+      accion: "abrir_documento",
+      limite: RATE_LIMIT_APERTURAS_DOCUMENTOS_EMPRESA,
+      ventanaSegundos: RATE_LIMIT_APERTURAS_DOCUMENTOS_EMPRESA_SEGUNDOS,
+      alcance: "usuario_empresa",
+      empresaId,
+      claveSufijo: "apertura_empresa",
+      metadatos: {
+        documento_id: documento.id,
+        modulo_origen: documento.modulo,
+        tipo_documento: documento.tipo_documento,
+        storage_path_guardado: false,
+      },
+    });
   }
 
   async function inactivarDocumento(documento: DocumentoTramite) {

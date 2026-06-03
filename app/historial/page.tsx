@@ -25,6 +25,7 @@ import {
   type FilaExportacion,
 } from "../../lib/exportaciones";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import { registrarRateLimitOperativo } from "../../lib/rateLimitOperativo";
 import {
   esAuditorSoloLecturaLocal,
   listarFuncionesOperativasUsuario,
@@ -80,6 +81,8 @@ interface FiltrosHistorial {
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
 const LIMITE_EVENTOS = 200;
 const LIMITE_FILAS_EXPORTACION_HISTORIAL = 1000;
+const RATE_LIMIT_EXPORTACIONES_HISTORIAL = 10;
+const RATE_LIMIT_EXPORTACIONES_HISTORIAL_SEGUNDOS = 15 * 60;
 const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 const COLUMNAS_AUDITORIA =
   "id,creado_at,usuario_id,usuario_nombre_snapshot,empresa_id,modulo,accion,entidad_tipo,entidad_id,estado_anterior,estado_nuevo,motivo,descripcion,metadatos,sensible,visible_usuario,visible_calendario,origen";
@@ -419,7 +422,7 @@ export default function HistorialPage() {
     }));
   }
 
-  function exportarCsv() {
+  async function exportarCsv() {
     const filas = filasExportacion();
     if (!filas.length) {
       window.alert("No hay eventos de historial para exportar.");
@@ -427,6 +430,21 @@ export default function HistorialPage() {
     }
 
     if (!validarExportacionHistorial("csv", filas.length)) {
+      return;
+    }
+
+    const rateLimit = await validarRateLimitExportacionHistorial("csv", filas.length);
+    if (!rateLimit.permitido) {
+      liberarExportacionHistorial();
+      window.alert(rateLimit.mensaje);
+      void auditarConsultaHistorial("bloquear_exportacion_historial", {
+        formato: "csv",
+        motivo: "rate_limit_excedido",
+        cantidad: filas.length,
+        retry_after_segundos: rateLimit.retry_after_segundos,
+        rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+        filtros,
+      });
       return;
     }
 
@@ -443,7 +461,7 @@ export default function HistorialPage() {
     }
   }
 
-  function imprimirPdf() {
+  async function imprimirPdf() {
     const filas = filasExportacion();
     if (!filas.length) {
       window.alert("No hay eventos de historial para imprimir.");
@@ -451,6 +469,24 @@ export default function HistorialPage() {
     }
 
     if (!validarExportacionHistorial("pdf_vista_imprimible", filas.length)) {
+      return;
+    }
+
+    const rateLimit = await validarRateLimitExportacionHistorial(
+      "pdf_vista_imprimible",
+      filas.length
+    );
+    if (!rateLimit.permitido) {
+      liberarExportacionHistorial();
+      window.alert(rateLimit.mensaje);
+      void auditarConsultaHistorial("bloquear_exportacion_historial", {
+        formato: "pdf_vista_imprimible",
+        motivo: "rate_limit_excedido",
+        cantidad: filas.length,
+        retry_after_segundos: rateLimit.retry_after_segundos,
+        rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+        filtros,
+      });
       return;
     }
 
@@ -550,6 +586,37 @@ export default function HistorialPage() {
     window.setTimeout(() => {
       exportacionEnProcesoRef.current = false;
     }, 800);
+  }
+
+  async function validarRateLimitExportacionHistorial(formato: string, cantidad: number) {
+    if (!usuarioActualId) {
+      return { permitido: true, mensaje: "", retry_after_segundos: 0, rpc_disponible: false };
+    }
+
+    const empresaId =
+      filtros.empresaId && filtros.empresaId !== "general" ? Number(filtros.empresaId) : null;
+    const empresaPermitida =
+      empresaId !== null && Number.isInteger(empresaId) && empresasPermitidasIds.includes(empresaId)
+        ? empresaId
+        : null;
+
+    return registrarRateLimitOperativo({
+      usuarioId: usuarioActualId,
+      modulo: "historial",
+      accion: "exportar_historial",
+      limite: RATE_LIMIT_EXPORTACIONES_HISTORIAL,
+      ventanaSegundos: RATE_LIMIT_EXPORTACIONES_HISTORIAL_SEGUNDOS,
+      alcance: empresaPermitida ? "usuario_empresa" : "usuario",
+      empresaId: empresaPermitida,
+      claveSufijo: formato,
+      metadatos: {
+        formato,
+        cantidad,
+        fecha_desde: filtros.fechaDesde || null,
+        fecha_hasta: filtros.fechaHasta || null,
+        modulo_filtro: filtros.modulo || null,
+      },
+    });
   }
 
   async function auditarConsultaHistorial(accion: string, metadatos: Record<string, unknown>) {

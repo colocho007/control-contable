@@ -25,6 +25,7 @@ import {
   obtenerEmpresasOperativasDesdeIds,
 } from "../../lib/empresasOperativas";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import { registrarRateLimitOperativo } from "../../lib/rateLimitOperativo";
 import {
   obtenerReporteMensual,
   type CalendarioPago,
@@ -67,6 +68,11 @@ interface FiltrosReportes {
 
 const LIMITE_REPORTES = 100;
 const LIMITE_FILAS_EXPORTACION_REPORTES = 1000;
+const RATE_LIMIT_EXPORTACIONES_REPORTES = 10;
+const RATE_LIMIT_EXPORTACIONES_REPORTES_SEGUNDOS = 15 * 60;
+const RATE_LIMIT_EXPORTACIONES_REPORTES_PESADAS = 5;
+const RATE_LIMIT_EXPORTACIONES_REPORTES_PESADAS_SEGUNDOS = 30 * 60;
+const UMBRAL_EXPORTACION_PESADA_REPORTES = 500;
 const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 
 function fechaLocalISO(fecha = new Date()) {
@@ -656,7 +662,7 @@ export default function ReportesPage() {
     return secciones;
   }
 
-  function exportarCsv() {
+  async function exportarCsv() {
     const secciones = seccionesExportacionReportes();
     if (!secciones.length) {
       window.alert("No hay datos de reportes para exportar.");
@@ -665,6 +671,21 @@ export default function ReportesPage() {
 
     const totalFilas = totalFilasSecciones(secciones);
     if (!validarExportacionReporte("csv", totalFilas)) {
+      return;
+    }
+
+    const rateLimit = await validarRateLimitExportacionReporte("csv", totalFilas);
+    if (!rateLimit.permitido) {
+      liberarExportacionReporte();
+      window.alert(rateLimit.mensaje);
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato: "csv",
+        filtros,
+        motivo: "rate_limit_excedido",
+        filas_aproximadas: totalFilas,
+        retry_after_segundos: rateLimit.retry_after_segundos,
+        rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+      });
       return;
     }
 
@@ -682,7 +703,7 @@ export default function ReportesPage() {
     }
   }
 
-  function imprimirPdf() {
+  async function imprimirPdf() {
     const secciones = seccionesExportacionReportes();
     if (!secciones.length) {
       window.alert("No hay datos de reportes para imprimir.");
@@ -691,6 +712,24 @@ export default function ReportesPage() {
 
     const totalFilas = totalFilasSecciones(secciones);
     if (!validarExportacionReporte("pdf_vista_imprimible", totalFilas)) {
+      return;
+    }
+
+    const rateLimit = await validarRateLimitExportacionReporte(
+      "pdf_vista_imprimible",
+      totalFilas
+    );
+    if (!rateLimit.permitido) {
+      liberarExportacionReporte();
+      window.alert(rateLimit.mensaje);
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato: "pdf_vista_imprimible",
+        filtros,
+        motivo: "rate_limit_excedido",
+        filas_aproximadas: totalFilas,
+        retry_after_segundos: rateLimit.retry_after_segundos,
+        rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+      });
       return;
     }
 
@@ -787,6 +826,58 @@ export default function ReportesPage() {
     window.setTimeout(() => {
       exportacionEnProcesoRef.current = false;
     }, 800);
+  }
+
+  async function validarRateLimitExportacionReporte(formato: string, totalFilas: number) {
+    if (!usuarioActualId) {
+      return { permitido: true, mensaje: "", retry_after_segundos: 0, rpc_disponible: false };
+    }
+
+    const empresaId = filtros.empresaId ? Number(filtros.empresaId) : null;
+    const empresaPermitida =
+      empresaId !== null && Number.isInteger(empresaId) && empresasPermitidasIds.includes(empresaId)
+        ? empresaId
+        : null;
+    const base = await registrarRateLimitOperativo({
+      usuarioId: usuarioActualId,
+      modulo: "reportes",
+      accion: "exportar_reporte",
+      limite: RATE_LIMIT_EXPORTACIONES_REPORTES,
+      ventanaSegundos: RATE_LIMIT_EXPORTACIONES_REPORTES_SEGUNDOS,
+      alcance: empresaPermitida ? "usuario_empresa" : "usuario",
+      empresaId: empresaPermitida,
+      claveSufijo: formato,
+      metadatos: {
+        formato,
+        filas_aproximadas: totalFilas,
+        fecha_desde: filtros.fechaDesde || null,
+        fecha_hasta: filtros.fechaHasta || null,
+        moneda: filtros.moneda || null,
+        exportacion_pesada: totalFilas > UMBRAL_EXPORTACION_PESADA_REPORTES,
+      },
+    });
+
+    if (!base.permitido || totalFilas <= UMBRAL_EXPORTACION_PESADA_REPORTES) {
+      return base;
+    }
+
+    return registrarRateLimitOperativo({
+      usuarioId: usuarioActualId,
+      modulo: "reportes",
+      accion: "exportar_reporte",
+      limite: RATE_LIMIT_EXPORTACIONES_REPORTES_PESADAS,
+      ventanaSegundos: RATE_LIMIT_EXPORTACIONES_REPORTES_PESADAS_SEGUNDOS,
+      alcance: empresaPermitida ? "usuario_empresa" : "usuario",
+      empresaId: empresaPermitida,
+      claveSufijo: `${formato}_pesada`,
+      metadatos: {
+        formato,
+        filas_aproximadas: totalFilas,
+        fecha_desde: filtros.fechaDesde || null,
+        fecha_hasta: filtros.fechaHasta || null,
+        tipo_control: "exportacion_pesada",
+      },
+    });
   }
 
   async function auditarReporte(accion: string, metadatos: Record<string, unknown>) {

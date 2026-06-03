@@ -6,6 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { registrarAuditoriaEvento, type ValorJsonAuditoria } from "../../lib/auditoria";
+import { registrarRateLimitOperativo } from "../../lib/rateLimitOperativo";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
 import {
@@ -19,6 +20,8 @@ import {
 
 const IMPORTACION_MAX_BYTES = 5 * 1024 * 1024;
 const IMPORTACION_MAX_FILAS = 1000;
+const IMPORTACION_RATE_LIMIT_MAX = 5;
+const IMPORTACION_RATE_LIMIT_VENTANA_SEGUNDOS = 30 * 60;
 const IMPORTACION_ACTIVA_KEY = "controlplus_importacion_activa";
 const IDEMPOTENCY_PREFIX_IMPORTACIONES = "controlplus_idempotency_importaciones";
 const EXTENSIONES_IMPORTACION_PERMITIDAS = [".xlsx", ".xls", ".csv"];
@@ -1188,6 +1191,57 @@ monto_gtq: montoGtq,
     return `${IDEMPOTENCY_PREFIX_IMPORTACIONES}:${tipo}:${hash}`;
   }
 
+  function empresaUnicaImportacion() {
+    const empresasValidas = Array.from(
+      new Set(
+        filasValidas
+          .map((fila) => Number((fila.data as Record<string, unknown>).empresa_id))
+          .filter((empresaId) =>
+            Number.isInteger(empresaId) && empresasPermitidasIds.includes(empresaId)
+          )
+      )
+    );
+
+    return empresasValidas.length === 1 ? empresasValidas[0] : null;
+  }
+
+  async function validarRateLimitImportacion() {
+    if (!userId) {
+      return {
+        permitido: true,
+        mensaje: "",
+        retry_after_segundos: 0,
+        rpc_disponible: false,
+      };
+    }
+
+    const empresaId = empresaUnicaImportacion();
+    const resultado = await registrarRateLimitOperativo({
+      usuarioId: userId,
+      modulo: "importaciones",
+      accion: "importar_excel",
+      limite: IMPORTACION_RATE_LIMIT_MAX,
+      ventanaSegundos: IMPORTACION_RATE_LIMIT_VENTANA_SEGUNDOS,
+      alcance: empresaId ? "usuario_empresa" : "usuario",
+      empresaId,
+      claveSufijo: tipo,
+      metadatos: {
+        tipo_importacion: tipo,
+        archivo_hash: archivoHash || null,
+        archivo_nombre: nombreArchivo || null,
+        filas_totales: preview.length,
+        filas_validas: filasValidas.length,
+        empresa_id: empresaId,
+      },
+    });
+
+    if (!resultado.rpc_disponible) {
+      console.warn(resultado.mensaje);
+    }
+
+    return resultado;
+  }
+
   async function iniciarIdempotenciaImportacion() {
     if (!userId) {
       return {
@@ -1704,6 +1758,22 @@ async function confirmarImportacion() {
       usuario_actual: userId,
       archivo_hash: archivoHash,
     });
+    return;
+  }
+
+  const rateLimit = await validarRateLimitImportacion();
+
+  if (!rateLimit.permitido) {
+    await registrarIntentoImportacionBloqueado("rate_limit_excedido", {
+      tipo_importacion: tipo,
+      archivo: nombreArchivo || null,
+      archivo_hash: archivoHash,
+      filas_totales: preview.length,
+      filas_validas: filasValidas.length,
+      retry_after_segundos: rateLimit.retry_after_segundos,
+      rpc_registro_intento_bloqueado: rateLimit.rpc_disponible,
+    });
+    toast.error(rateLimit.mensaje || "Demasiados intentos. Espera antes de reintentar.");
     return;
   }
 
