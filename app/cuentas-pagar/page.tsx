@@ -86,8 +86,10 @@ interface PagoCuentaPagar {
 interface ResultadoPagoCxP {
   pago: PagoCuentaPagar;
   cuenta: CuentaPagar;
+  idempotency_replay?: boolean;
 }
 
+const IDEMPOTENCY_PREFIX_CXP = "controlplus_idempotency_cxp";
 const ESTADOS_CXP = ["Pendiente", "Parcial", "Pagado", "Vencido", "Anulado"];
 const MONEDAS = ["GTQ", "USD"];
 const METODOS_PAGO = ["Efectivo", "Transferencia", "Depósito", "Cheque", "Otro"];
@@ -113,6 +115,33 @@ function fechaHoyISO() {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Error inesperado.";
+}
+
+function generarIdempotencyKey() {
+  const aleatorio =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `cxp-${aleatorio}`;
+}
+
+function obtenerIdempotencyKey(alcance: string) {
+  const storageKey = `${IDEMPOTENCY_PREFIX_CXP}:${alcance}`;
+  const existente = window.localStorage.getItem(storageKey);
+  if (existente) return existente;
+
+  const nuevo = generarIdempotencyKey();
+  window.localStorage.setItem(storageKey, nuevo);
+  return nuevo;
+}
+
+function liberarIdempotencyKey(alcance: string) {
+  window.localStorage.removeItem(`${IDEMPOTENCY_PREFIX_CXP}:${alcance}`);
+}
+
+function esErrorOperacionEnProceso(error: unknown) {
+  return getErrorMessage(error).toLowerCase().includes("en proceso");
 }
 
 function estaVencida(cuenta: CuentaPagar) {
@@ -497,6 +526,17 @@ export default function CuentasPagarPage() {
       }
     }
 
+    const idempotencyScope = [
+      "registrar_pago_cxp",
+      userId,
+      cuenta.id,
+      formPago.fechaPago,
+      formPago.metodoPago,
+      formPago.monto,
+      formPago.referencia.trim(),
+    ].join(":");
+    const idempotencyKey = obtenerIdempotencyKey(idempotencyScope);
+
     setProcesando(true);
     const toastId = toast.loading("Registrando pago...");
 
@@ -523,18 +563,21 @@ export default function CuentasPagarPage() {
           p_monto: monto,
           p_observaciones: textoONull(formPago.observaciones),
           p_creado_por: userId,
+          p_idempotency_key: idempotencyKey,
         }
       );
 
       if (rpcError) throw rpcError;
       const resultado = resultadoRpc as ResultadoPagoCxP;
 
-      await auditarPagoCxP(
-        "registrar_pago_cuenta_por_pagar",
-        resultado.pago,
-        resultado.cuenta,
-        null
-      );
+      if (!resultado.idempotency_replay) {
+        await auditarPagoCxP(
+          "registrar_pago_cuenta_por_pagar",
+          resultado.pago,
+          resultado.cuenta,
+          null
+        );
+      }
 
       setCuentaPagoId(null);
       setFormPago({
@@ -546,9 +589,13 @@ export default function CuentasPagarPage() {
         observaciones: "",
       });
       await cargarDatos();
+      liberarIdempotencyKey(idempotencyScope);
       toast.success("Pago registrado.", { id: toastId });
     } catch (error) {
       console.error("Error registrando pago CxP:", error);
+      if (!esErrorOperacionEnProceso(error)) {
+        liberarIdempotencyKey(idempotencyScope);
+      }
       toast.error(getErrorMessage(error), { id: toastId });
     } finally {
       setProcesando(false);
@@ -614,6 +661,14 @@ export default function CuentasPagarPage() {
       return;
     }
 
+    const idempotencyScope = [
+      "anular_pago_cxp",
+      userId,
+      pago.id,
+      pago.cuenta_por_pagar_id,
+    ].join(":");
+    const idempotencyKey = obtenerIdempotencyKey(idempotencyScope);
+
     setProcesando(true);
     const toastId = toast.loading("Anulando pago...");
 
@@ -625,23 +680,30 @@ export default function CuentasPagarPage() {
           p_empresa_id: empresaId,
           p_anulado_por: userId,
           p_motivo_anulacion: motivo.trim(),
+          p_idempotency_key: idempotencyKey,
         }
       );
 
       if (rpcError) throw rpcError;
       const resultado = resultadoRpc as ResultadoPagoCxP;
 
-      await auditarPagoCxP(
-        "anular_pago_cuenta_por_pagar",
-        resultado.pago,
-        resultado.cuenta,
-        pago.estado
-      );
+      if (!resultado.idempotency_replay) {
+        await auditarPagoCxP(
+          "anular_pago_cuenta_por_pagar",
+          resultado.pago,
+          resultado.cuenta,
+          pago.estado
+        );
+      }
 
       await cargarDatos();
+      liberarIdempotencyKey(idempotencyScope);
       toast.success("Pago anulado y saldo devuelto.", { id: toastId });
     } catch (error) {
       console.error("Error anulando pago CxP:", error);
+      if (!esErrorOperacionEnProceso(error)) {
+        liberarIdempotencyKey(idempotencyScope);
+      }
       toast.error(getErrorMessage(error), { id: toastId });
     } finally {
       setProcesando(false);
