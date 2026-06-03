@@ -99,12 +99,15 @@ type CategoriaDiagnostico =
 
 interface AlertaDiagnostico {
   id: string;
+  alertaClave: string;
   categoria: CategoriaDiagnostico;
   fecha: string | null;
   modulo: string;
   accion: string;
   severidad: SeveridadAlerta;
+  usuarioId?: string | null;
   usuario: string | null;
+  empresaId?: number | null;
   empresa: string | null;
   mensaje: string;
   metadatos: Record<string, string>;
@@ -116,6 +119,24 @@ interface AlertaDiagnostico {
   entidadId: string | number | null;
   eventoOriginal?: AuditoriaEvento;
   logOriginal?: LogSistema;
+}
+
+interface MonitoreoAlertaPersistida {
+  id: string;
+  alerta_clave: string;
+  estado: EstadoAlerta;
+  modulo: string;
+  accion: string | null;
+  severidad: "info" | "baja" | "media" | "alta" | "critica";
+  fuente: string;
+  entidad_tipo: string | null;
+  entidad_id: string | null;
+  revisado_por: string | null;
+  revisado_at: string | null;
+  resuelto_por: string | null;
+  resuelto_at: string | null;
+  archivado_por: string | null;
+  archivado_at: string | null;
 }
 
 const ROLES_MONITOREO = ["admin"];
@@ -373,18 +394,87 @@ function metadatosResumidos(valor: ValorJsonAuditoria | LogSistema | null | unde
     }, {});
 }
 
+function severidadSql(severidad: SeveridadAlerta) {
+  const mapa: Record<SeveridadAlerta, MonitoreoAlertaPersistida["severidad"]> = {
+    Critica: "critica",
+    Alta: "alta",
+    Media: "media",
+    Baja: "baja",
+    Informativa: "info",
+  };
+
+  return mapa[severidad];
+}
+
+function alertaClaveBase(partes: Array<string | number | null | undefined>) {
+  return partes
+    .map((parte) => String(parte ?? "sin-dato").trim().toLowerCase())
+    .join("|")
+    .replace(/\s+/g, "-")
+    .slice(0, 500);
+}
+
+function uuidValido(valor?: string | null) {
+  if (!valor) return null;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(valor)
+    ? valor
+    : null;
+}
+
+function payloadMonitoreoAlerta(alerta: AlertaDiagnostico) {
+  const usuarioId = alerta.eventoOriginal?.usuario_id ?? alerta.usuarioId ?? null;
+
+  return {
+    alerta_clave: alerta.alertaClave,
+    empresa_id: alerta.eventoOriginal?.empresa_id ?? alerta.empresaId ?? null,
+    usuario_id: uuidValido(usuarioId),
+    modulo: alerta.modulo,
+    accion: alerta.accion,
+    severidad: severidadSql(alerta.severidad),
+    estado: estadoInicialAlerta(alerta),
+    titulo: `${etiqueta(alerta.modulo)} / ${etiqueta(alerta.accion)}`.slice(0, 220),
+    mensaje: alerta.mensaje,
+    fuente: alerta.fuente,
+    entidad_tipo: alerta.entidadTipo,
+    entidad_id: alerta.entidadId !== null && alerta.entidadId !== undefined
+      ? String(alerta.entidadId)
+      : null,
+    ruta_destino: alerta.ruta,
+    posible_causa: alerta.posibleCausa,
+    accion_recomendada: alerta.accionRecomendada,
+    metadatos: {
+      categoria: alerta.categoria,
+      fecha_origen: alerta.fecha,
+      usuario_visible: alerta.usuario,
+      empresa_visible: alerta.empresa,
+      resumen: alerta.metadatos,
+    },
+  };
+}
+
 function alertaDesdeEvento(
   evento: AuditoriaEvento,
   categoria: CategoriaDiagnostico
 ): AlertaDiagnostico {
   return {
     id: `auditoria:${evento.id}:${categoria}`,
+    alertaClave: alertaClaveBase([
+      "auditoria_eventos",
+      categoria,
+      evento.modulo,
+      evento.accion,
+      evento.entidad_tipo,
+      evento.entidad_id,
+      evento.id,
+    ]),
     categoria,
     fecha: evento.creado_at,
     modulo: evento.modulo || "sistema",
     accion: evento.accion || "evento",
     severidad: severidadEvento(evento),
+    usuarioId: evento.usuario_id || null,
     usuario: evento.usuario_nombre_snapshot || evento.usuario_id || null,
+    empresaId: evento.empresa_id,
     empresa: evento.empresa_id ? `Empresa ${evento.empresa_id}` : null,
     mensaje:
       evento.descripcion ||
@@ -417,12 +507,20 @@ function alertaDesdeLog(log: LogSistema, index: number): AlertaDiagnostico {
 
   return {
     id: `log:${String(log.id || index)}`,
+    alertaClave: alertaClaveBase([
+      "logs",
+      modulo,
+      accion,
+      String(log.id || fecha || index),
+    ]),
     categoria: "errores",
     fecha,
     modulo,
     accion,
     severidad: mensaje.toLowerCase().includes("error") ? "Alta" : "Media",
+    usuarioId: obtenerCampoLog(log, ["usuario_id", "user_id"]),
     usuario: obtenerCampoLog(log, ["usuario", "usuario_id", "user_id"]),
+    empresaId: null,
     empresa: obtenerCampoLog(log, ["empresa", "empresa_id"]),
     mensaje,
     metadatos: metadatosResumidos(log),
@@ -451,6 +549,7 @@ export default function MonitoreoSistemaPage() {
   const [trabajosActivos, setTrabajosActivos] = useState<TrabajoActivo[]>([]);
   const [logs, setLogs] = useState<LogSistema[]>([]);
   const [avisoLogs, setAvisoLogs] = useState<string | null>(null);
+  const [avisoMonitoreoAlertas, setAvisoMonitoreoAlertas] = useState<string | null>(null);
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [autorizado, setAutorizado] = useState(false);
   const [cargando, setCargando] = useState(false);
@@ -458,9 +557,13 @@ export default function MonitoreoSistemaPage() {
   const [categoriaActiva, setCategoriaActiva] = useState<CategoriaDiagnostico>("errores");
   const [alertaSeleccionadaId, setAlertaSeleccionadaId] = useState<string | null>(null);
   const [estadosAlertas, setEstadosAlertas] = useState<Record<string, EstadoAlerta>>({});
+  const [alertasPersistidas, setAlertasPersistidas] = useState<Record<string, MonitoreoAlertaPersistida>>({});
+  const [sincronizandoAlertas, setSincronizandoAlertas] = useState(false);
+  const [persistenciaAlertasActiva, setPersistenciaAlertasActiva] = useState(false);
   const [filtroModulo, setFiltroModulo] = useState("todos");
   const [filtroEstado, setFiltroEstado] = useState<EstadoAlerta | "todos">("todos");
   const [filtroSeveridad, setFiltroSeveridad] = useState<SeveridadAlerta | "todos">("todos");
+  const [filtroFuente, setFiltroFuente] = useState("todos");
 
   useEffect(() => {
     let activo = true;
@@ -677,8 +780,8 @@ export default function MonitoreoSistemaPage() {
         accion,
         entidad_tipo: alerta.fuente,
         entidad_id: alerta.entidadId || alerta.id,
-        estado_anterior: estadosAlertas[alerta.id] || estadoInicialAlerta(alerta),
-        estado_nuevo: estadoNuevo || estadosAlertas[alerta.id] || estadoInicialAlerta(alerta),
+        estado_anterior: estadoActualAlerta(alerta),
+        estado_nuevo: estadoNuevo || estadoActualAlerta(alerta),
         descripcion: `Acción de monitoreo sobre alerta: ${alerta.mensaje.slice(0, 140)}`,
         sensible: alerta.severidad === "Alta" || alerta.severidad === "Critica",
         metadatos: {
@@ -701,6 +804,7 @@ export default function MonitoreoSistemaPage() {
     setFiltroModulo("todos");
     setFiltroEstado("todos");
     setFiltroSeveridad("todos");
+    setFiltroFuente("todos");
   }
 
   async function seleccionarAlerta(alerta: AlertaDiagnostico) {
@@ -709,7 +813,54 @@ export default function MonitoreoSistemaPage() {
   }
 
   async function cambiarEstadoAlerta(alerta: AlertaDiagnostico, estado: EstadoAlerta) {
-    setEstadosAlertas((actual) => ({ ...actual, [alerta.id]: estado }));
+    const alertaPersistida = alertasPersistidas[alerta.alertaClave];
+    const ahora = new Date().toISOString();
+    const cambios: Record<string, string | null> = {
+      estado,
+      actualizado_at: ahora,
+    };
+
+    if (estado === "En revisión") {
+      cambios.revisado_por = perfilActual?.id || null;
+      cambios.revisado_at = ahora;
+    }
+
+    if (estado === "Resuelta") {
+      cambios.resuelto_por = perfilActual?.id || null;
+      cambios.resuelto_at = ahora;
+    }
+
+    if (estado === "Archivada") {
+      cambios.archivado_por = perfilActual?.id || null;
+      cambios.archivado_at = ahora;
+    }
+
+    if (persistenciaAlertasActiva && alertaPersistida) {
+      const { data, error } = await supabase
+        .from("monitoreo_alertas")
+        .update(cambios)
+        .eq("id", alertaPersistida.id)
+        .select(
+          "id,alerta_clave,estado,modulo,accion,severidad,fuente,entidad_tipo,entidad_id,revisado_por,revisado_at,resuelto_por,resuelto_at,archivado_por,archivado_at"
+        )
+        .single();
+
+      if (error) {
+        console.warn("No se pudo actualizar monitoreo_alertas:", error);
+        setAvisoMonitoreoAlertas(
+          "No se pudo guardar el estado persistente de la alerta. Se aplico temporalmente en esta sesion."
+        );
+        setEstadosAlertas((actual) => ({ ...actual, [alerta.alertaClave]: estado }));
+      } else {
+        setAlertasPersistidas((actual) => ({
+          ...actual,
+          [alerta.alertaClave]: data as MonitoreoAlertaPersistida,
+        }));
+      }
+    } else {
+      setEstadosAlertas((actual) => ({ ...actual, [alerta.alertaClave]: estado }));
+    }
+
     await auditarAccionAlerta(alerta, `marcar_alerta_${estado.toLowerCase().replace(" ", "_")}`, estado);
     toast.success(`Alerta marcada como ${estado}.`);
   }
@@ -769,12 +920,15 @@ export default function MonitoreoSistemaPage() {
       ...operacionesParciales.map((evento) => alertaDesdeEvento(evento, "parciales")),
       ...usuariosInactivos.map((usuario) => ({
         id: `usuario-inactivo:${usuario.id}`,
+        alertaClave: alertaClaveBase(["perfiles", "usuario_inactivo", usuario.id]),
         categoria: "usuarios_inactivos" as const,
         fecha: null,
         modulo: "usuarios",
         accion: "usuario_inactivo",
         severidad: "Alta" as const,
+        usuarioId: usuario.id,
         usuario: usuario.nombre || usuario.id,
+        empresaId: null,
         empresa: null,
         mensaje: `${usuario.nombre || "Usuario"} está bloqueado o inactivo.`,
         metadatos: {
@@ -791,12 +945,15 @@ export default function MonitoreoSistemaPage() {
       })),
       ...trabajosActivos.map((trabajo) => ({
         id: `trabajo-activo:${trabajo.id}`,
+        alertaClave: alertaClaveBase(["borradores_trabajo", trabajo.modulo, trabajo.id]),
         categoria: "usuarios_trabajando" as const,
         fecha: trabajo.actualizado_at,
         modulo: trabajo.modulo || "operacion",
         accion: "trabajo_activo",
         severidad: "Informativa" as const,
+        usuarioId: trabajo.usuario_id,
         usuario: trabajo.perfiles?.nombre || trabajo.usuario_id,
+        empresaId: trabajo.empresa_id,
         empresa: trabajo.empresa_id ? `Empresa ${trabajo.empresa_id}` : null,
         mensaje: trabajo.titulo || trabajo.ruta || "Operación activa visible.",
         metadatos: {
@@ -819,12 +976,15 @@ export default function MonitoreoSistemaPage() {
 
           return {
             id: `asignacion:${item.id}`,
+            alertaClave: alertaClaveBase(["usuario_modulos", item.usuario_id, item.modulo_clave, item.id]),
             categoria: "asignaciones" as const,
             fecha: null,
             modulo: item.modulo_clave,
             accion: "modulo_asignado",
             severidad: modulo?.activo === false ? ("Media" as const) : ("Informativa" as const),
+            usuarioId: item.usuario_id,
             usuario: usuario?.nombre || item.usuario_id,
+            empresaId: null,
             empresa: null,
             mensaje: `${usuario?.nombre || "Usuario"} tiene asignado ${modulo?.nombre || item.modulo_clave}.`,
             metadatos: {
@@ -848,12 +1008,15 @@ export default function MonitoreoSistemaPage() {
         }),
       ...modulos.map((modulo) => ({
         id: `modulo:${modulo.clave}`,
+        alertaClave: alertaClaveBase(["modulos_sistema", modulo.clave, modulo.activo ? "activo" : "inactivo"]),
         categoria: modulo.activo ? ("modulos_activos" as const) : ("modulos_inactivos" as const),
         fecha: null,
         modulo: modulo.clave,
         accion: modulo.activo ? "modulo_activo" : "modulo_inactivo",
         severidad: modulo.activo ? ("Informativa" as const) : ("Media" as const),
+        usuarioId: null,
         usuario: null,
+        empresaId: null,
         empresa: null,
         mensaje: `${modulo.nombre} está ${modulo.activo ? "activo" : "inactivo"} globalmente.`,
         metadatos: {
@@ -877,12 +1040,15 @@ export default function MonitoreoSistemaPage() {
     fallasPorModulo.forEach((item) => {
       alertas.push({
         id: `fallas-modulo:${item.modulo}`,
+        alertaClave: alertaClaveBase(["auditoria_eventos", "fallas_agrupadas", item.modulo]),
         categoria: "fallas",
         fecha: null,
         modulo: item.modulo,
         accion: "fallas_agrupadas",
         severidad: item.total >= 5 ? "Alta" : "Media",
+        usuarioId: null,
         usuario: null,
+        empresaId: null,
         empresa: null,
         mensaje: `${item.total} evento(s) problemático(s) agrupados en ${etiqueta(item.modulo)}.`,
         metadatos: { total: String(item.total) },
@@ -909,6 +1075,97 @@ export default function MonitoreoSistemaPage() {
     usuariosInactivos,
   ]);
 
+  useEffect(() => {
+    if (!autorizado || alertasDiagnostico.length === 0) return;
+
+    let cancelado = false;
+
+    async function sincronizarMonitoreoAlertas() {
+      setSincronizandoAlertas(true);
+
+      try {
+        const claves = Array.from(
+          new Set(alertasDiagnostico.map((alerta) => alerta.alertaClave))
+        );
+
+        const { data: existentes, error: errorSelect } = await supabase
+          .from("monitoreo_alertas")
+          .select(
+            "id,alerta_clave,estado,modulo,accion,severidad,fuente,entidad_tipo,entidad_id,revisado_por,revisado_at,resuelto_por,resuelto_at,archivado_por,archivado_at"
+          )
+          .in("alerta_clave", claves);
+
+        if (errorSelect) throw errorSelect;
+
+        const existentesPorClave = new Map(
+          ((existentes || []) as MonitoreoAlertaPersistida[]).map((alerta) => [
+            alerta.alerta_clave,
+            alerta,
+          ])
+        );
+        const faltantes = alertasDiagnostico.filter(
+          (alerta) => !existentesPorClave.has(alerta.alertaClave)
+        );
+
+        if (faltantes.length > 0) {
+          const { error: errorInsert } = await supabase
+            .from("monitoreo_alertas")
+            .upsert(
+              faltantes.map((alerta) => payloadMonitoreoAlerta(alerta)),
+              { onConflict: "alerta_clave", ignoreDuplicates: true }
+            );
+
+          if (errorInsert) throw errorInsert;
+        }
+
+        const { data: sincronizadas, error: errorRefresh } = await supabase
+          .from("monitoreo_alertas")
+          .select(
+            "id,alerta_clave,estado,modulo,accion,severidad,fuente,entidad_tipo,entidad_id,revisado_por,revisado_at,resuelto_por,resuelto_at,archivado_por,archivado_at"
+          )
+          .in("alerta_clave", claves);
+
+        if (errorRefresh) throw errorRefresh;
+        if (cancelado) return;
+
+        setAlertasPersistidas(
+          ((sincronizadas || []) as MonitoreoAlertaPersistida[]).reduce<
+            Record<string, MonitoreoAlertaPersistida>
+          >((acc, alerta) => {
+            acc[alerta.alerta_clave] = alerta;
+            return acc;
+          }, {})
+        );
+        setPersistenciaAlertasActiva(true);
+        setAvisoMonitoreoAlertas(null);
+      } catch (error) {
+        if (cancelado) return;
+        console.warn("Persistencia de monitoreo_alertas no disponible:", error);
+        setPersistenciaAlertasActiva(false);
+        setAvisoMonitoreoAlertas(
+          "La tabla monitoreo_alertas no esta disponible o RLS no permite usarla. Se mantiene monitoreo en modo temporal hasta ejecutar el SQL incluido."
+        );
+      } finally {
+        if (!cancelado) setSincronizandoAlertas(false);
+      }
+    }
+
+    void sincronizarMonitoreoAlertas();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [alertasDiagnostico, autorizado]);
+
+  function estadoActualAlerta(alerta: AlertaDiagnostico) {
+    return (
+      alertasPersistidas[alerta.alertaClave]?.estado ||
+      estadosAlertas[alerta.alertaClave] ||
+      estadosAlertas[alerta.id] ||
+      estadoInicialAlerta(alerta)
+    );
+  }
+
   const alertasPorCategoria = useMemo(() => {
     return alertasDiagnostico.reduce<Record<CategoriaDiagnostico, AlertaDiagnostico[]>>(
       (acc, alerta) => {
@@ -933,12 +1190,37 @@ export default function MonitoreoSistemaPage() {
   const modulosFiltro = Array.from(
     new Set(alertasCategoriaActual.map((alerta) => alerta.modulo))
   ).sort();
+  const fuentesFiltro = Array.from(
+    new Set(alertasCategoriaActual.map((alerta) => alerta.fuente))
+  ).sort();
+  const conteosPorEstado = ESTADOS_ALERTA.reduce<Record<EstadoAlerta, number>>(
+    (acc, estado) => {
+      acc[estado] = alertasCategoriaActual.filter(
+        (alerta) => estadoActualAlerta(alerta) === estado
+      ).length;
+      return acc;
+    },
+    {
+      Pendiente: 0,
+      "En revisión": 0,
+      Resuelta: 0,
+      Archivada: 0,
+    }
+  );
+  const conteosCategoria = Object.fromEntries(
+    Object.entries(alertasPorCategoria).map(([categoria, alertas]) => [
+      categoria,
+      alertas.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").length,
+    ])
+  ) as Record<CategoriaDiagnostico, number>;
   const alertasFiltradas = alertasCategoriaActual.filter((alerta) => {
-    const estado = estadosAlertas[alerta.id] || estadoInicialAlerta(alerta);
+    const estado = estadoActualAlerta(alerta);
     return (
       (filtroModulo === "todos" || alerta.modulo === filtroModulo) &&
       (filtroEstado === "todos" || estado === filtroEstado) &&
-      (filtroSeveridad === "todos" || alerta.severidad === filtroSeveridad)
+      (filtroSeveridad === "todos" || alerta.severidad === filtroSeveridad) &&
+      (filtroFuente === "todos" || alerta.fuente === filtroFuente) &&
+      (estado !== "Archivada" || filtroEstado === "Archivada")
     );
   });
   const alertaSeleccionada =
@@ -978,12 +1260,12 @@ export default function MonitoreoSistemaPage() {
   }, [alertasSeguridad.length, eventosError.length, logs.length, modulos, operacionesParciales.length, trabajosActivos.length]);
 
   const resumen = {
-    modulosActivos: modulos.filter((modulo) => modulo.activo).length,
-    modulosInactivos: modulos.filter((modulo) => !modulo.activo).length,
+    modulosActivos: conteosCategoria.modulos_activos,
+    modulosInactivos: conteosCategoria.modulos_inactivos,
     usuariosActivos: usuariosActivos.length,
-    usuariosInactivos: usuariosInactivos.length,
-    errores: eventosError.length + logs.length,
-    sensibles: alertasSeguridad.length,
+    usuariosInactivos: conteosCategoria.usuarios_inactivos,
+    errores: conteosCategoria.errores,
+    sensibles: conteosCategoria.sensibles,
   };
 
   if (validandoAcceso || !autorizado) {
@@ -1062,11 +1344,22 @@ export default function MonitoreoSistemaPage() {
                   {avisoLogs}
                 </div>
               )}
+              {avisoMonitoreoAlertas && (
+                <div className="border border-cyan-400/30 bg-cyan-400/10 text-cyan-100 rounded-2xl px-5 py-4 mb-6 text-sm">
+                  {avisoMonitoreoAlertas}
+                </div>
+              )}
+              {sincronizandoAlertas && (
+                <div className="border border-white/10 bg-white/[0.03] text-gray-300 rounded-2xl px-5 py-3 mb-6 text-sm flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Sincronizando estados persistentes de alertas...
+                </div>
+              )}
 
               <section className="grid md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
                 <TarjetaResumen titulo="Modulos activos" valor={resumen.modulosActivos} icono={<ToggleRight size={22} />} activo={categoriaActiva === "modulos_activos"} onClick={() => seleccionarCategoria("modulos_activos")} />
                 <TarjetaResumen titulo="Modulos inactivos" valor={resumen.modulosInactivos} icono={<ToggleLeft size={22} />} activo={categoriaActiva === "modulos_inactivos"} onClick={() => seleccionarCategoria("modulos_inactivos")} />
-                <TarjetaResumen titulo="Usuarios trabajando" valor={trabajosActivos.length} icono={<Users size={22} />} activo={categoriaActiva === "usuarios_trabajando"} onClick={() => seleccionarCategoria("usuarios_trabajando")} />
+                <TarjetaResumen titulo="Usuarios trabajando" valor={conteosCategoria.usuarios_trabajando} icono={<Users size={22} />} activo={categoriaActiva === "usuarios_trabajando"} onClick={() => seleccionarCategoria("usuarios_trabajando")} />
                 <TarjetaResumen titulo="Bloqueados/inactivos" valor={resumen.usuariosInactivos} icono={<Lock size={22} />} activo={categoriaActiva === "usuarios_inactivos"} onClick={() => seleccionarCategoria("usuarios_inactivos")} />
                 <TarjetaResumen titulo="Errores/logs" valor={resumen.errores} icono={<XCircle size={22} />} activo={categoriaActiva === "errores"} onClick={() => seleccionarCategoria("errores")} />
                 <TarjetaResumen titulo="Alertas sensibles" valor={resumen.sensibles} icono={<ShieldAlert size={22} />} activo={categoriaActiva === "sensibles"} onClick={() => seleccionarCategoria("sensibles")} />
@@ -1084,7 +1377,7 @@ export default function MonitoreoSistemaPage() {
                     <Dato label="Logs conectados" valor={logs.length} />
                     <button type="button" onClick={() => seleccionarCategoria("parciales")} className="text-left bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-amber-300/50 cursor-pointer">
                       <p className="text-[11px] uppercase font-black text-gray-500">Operaciones parciales</p>
-                      <p className="text-2xl font-black mt-2">{alertasPorCategoria.parciales.length}</p>
+                      <p className="text-2xl font-black mt-2">{conteosCategoria.parciales}</p>
                     </button>
                     <button type="button" onClick={() => seleccionarCategoria("fallas")} className="text-left bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-red-300/50 cursor-pointer">
                       <p className="text-[11px] uppercase font-black text-gray-500">Fallas por modulo</p>
@@ -1138,28 +1431,32 @@ export default function MonitoreoSistemaPage() {
                   categoria={categoriaActiva}
                   alertas={alertasFiltradas}
                   alertaSeleccionada={alertaSeleccionada}
-                  estados={estadosAlertas}
                   modulosFiltro={modulosFiltro}
+                  fuentesFiltro={fuentesFiltro}
+                  conteosPorEstado={conteosPorEstado}
                   filtroModulo={filtroModulo}
                   filtroEstado={filtroEstado}
                   filtroSeveridad={filtroSeveridad}
+                  filtroFuente={filtroFuente}
                   onFiltroModulo={setFiltroModulo}
                   onFiltroEstado={setFiltroEstado}
                   onFiltroSeveridad={setFiltroSeveridad}
+                  onFiltroFuente={setFiltroFuente}
                   onSeleccionar={seleccionarAlerta}
+                  obtenerEstado={estadoActualAlerta}
                 />
                 <PanelDetalleAlerta
                   alerta={alertaSeleccionada}
-                  estado={alertaSeleccionada ? estadosAlertas[alertaSeleccionada.id] || estadoInicialAlerta(alertaSeleccionada) : null}
+                  estado={alertaSeleccionada ? estadoActualAlerta(alertaSeleccionada) : null}
                   onCambiarEstado={cambiarEstadoAlerta}
                   onIrModulo={(alerta) => router.push(alerta.ruta)}
                 />
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
-                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
-                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
-                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
+                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
@@ -1197,7 +1494,7 @@ export default function MonitoreoSistemaPage() {
                     onClick={() => seleccionarCategoria("asignaciones")}
                     className="mb-3 w-full rounded-xl border border-purple-400/20 bg-purple-400/10 px-4 py-3 text-left text-sm font-bold text-purple-100 hover:border-purple-300/50 cursor-pointer"
                   >
-                    Ver {alertasPorCategoria.asignaciones.length} asignaciones en diagnóstico
+                    Ver {conteosCategoria.asignaciones} asignaciones en diagnóstico
                   </button>
                   <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
                     {usuarioModulos.filter((item) => item.activo !== false).map((item) => {
@@ -1348,28 +1645,36 @@ function PanelDiagnostico({
   categoria,
   alertas,
   alertaSeleccionada,
-  estados,
   modulosFiltro,
+  fuentesFiltro,
+  conteosPorEstado,
   filtroModulo,
   filtroEstado,
   filtroSeveridad,
+  filtroFuente,
   onFiltroModulo,
   onFiltroEstado,
   onFiltroSeveridad,
+  onFiltroFuente,
   onSeleccionar,
+  obtenerEstado,
 }: {
   categoria: CategoriaDiagnostico;
   alertas: AlertaDiagnostico[];
   alertaSeleccionada: AlertaDiagnostico | null;
-  estados: Record<string, EstadoAlerta>;
   modulosFiltro: string[];
+  fuentesFiltro: string[];
+  conteosPorEstado: Record<EstadoAlerta, number>;
   filtroModulo: string;
   filtroEstado: EstadoAlerta | "todos";
   filtroSeveridad: SeveridadAlerta | "todos";
+  filtroFuente: string;
   onFiltroModulo: (valor: string) => void;
   onFiltroEstado: (valor: EstadoAlerta | "todos") => void;
   onFiltroSeveridad: (valor: SeveridadAlerta | "todos") => void;
+  onFiltroFuente: (valor: string) => void;
   onSeleccionar: (alerta: AlertaDiagnostico) => void;
+  obtenerEstado: (alerta: AlertaDiagnostico) => EstadoAlerta;
 }) {
   return (
     <div className="panel">
@@ -1383,7 +1688,24 @@ function PanelDiagnostico({
         </span>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
+        {ESTADOS_ALERTA.map((estado) => (
+          <button
+            key={estado}
+            type="button"
+            onClick={() => onFiltroEstado(estado)}
+            className={`rounded-xl border px-3 py-2 text-left text-xs font-bold ${
+              filtroEstado === estado
+                ? "border-cyan-300/70 bg-cyan-400/10 text-cyan-100"
+                : "border-white/10 bg-[#0f172a]/70 text-gray-300 hover:border-cyan-300/40"
+            }`}
+          >
+            {estado}: {conteosPorEstado[estado]}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid md:grid-cols-4 gap-3 mb-4">
         <select
           value={filtroModulo}
           onChange={(event) => onFiltroModulo(event.target.value)}
@@ -1420,11 +1742,23 @@ function PanelDiagnostico({
             </option>
           ))}
         </select>
+        <select
+          value={filtroFuente}
+          onChange={(event) => onFiltroFuente(event.target.value)}
+          className="input-custom rounded-xl border border-white/10 bg-[#0f172a]/80 px-3 py-2 text-sm"
+        >
+          <option value="todos">Todas las fuentes</option>
+          {fuentesFiltro.map((fuente) => (
+            <option key={fuente} value={fuente}>
+              {fuente}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
         {alertas.map((alerta) => {
-          const estado = estados[alerta.id] || estadoInicialAlerta(alerta);
+          const estado = obtenerEstado(alerta);
           const seleccionada = alertaSeleccionada?.id === alerta.id;
 
           return (
@@ -1578,16 +1912,16 @@ function PanelResumenCategoria({
   titulo,
   categoria,
   alertas,
-  estados,
   onVerCategoria,
   onSeleccionar,
+  obtenerEstado,
 }: {
   titulo: string;
   categoria: CategoriaDiagnostico;
   alertas: AlertaDiagnostico[];
-  estados: Record<string, EstadoAlerta>;
   onVerCategoria: (categoria: CategoriaDiagnostico) => void;
   onSeleccionar: (alerta: AlertaDiagnostico) => void;
+  obtenerEstado: (alerta: AlertaDiagnostico) => EstadoAlerta;
 }) {
   return (
     <div className="panel">
@@ -1621,7 +1955,7 @@ function PanelResumenCategoria({
             </p>
             <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
             <span className="inline-block mt-3 text-[11px] rounded-full border border-white/10 text-gray-300 px-2 py-0.5">
-              {estados[alerta.id] || estadoInicialAlerta(alerta)}
+              {obtenerEstado(alerta)}
             </span>
           </button>
         ))}
