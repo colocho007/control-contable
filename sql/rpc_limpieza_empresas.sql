@@ -55,15 +55,55 @@ declare
   v_total bigint := 0;
 begin
   if v_usuario_id is null then
-    raise exception 'Sesion no valida para eliminar empresa.';
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'sesion_no_valida',
+      'mensaje', 'Sesion no valida para eliminar empresa.'
+    );
   end if;
 
   if p_confirmacion <> 'ELIMINAR EMPRESA' then
-    raise exception 'Confirmacion invalida para eliminar empresa.';
+    insert into intentos_bloqueados (
+      usuario_id,
+      empresa_id,
+      modulo,
+      accion,
+      motivo,
+      severidad,
+      entidad_tipo,
+      entidad_id,
+      mensaje,
+      metadatos
+    )
+    values (
+      v_usuario_id,
+      null,
+      'empresas',
+      'eliminar_empresa_vacia',
+      'confirmacion_invalida',
+      'media',
+      'empresa',
+      case when p_empresa_id is null then null else p_empresa_id::text end,
+      'Confirmacion invalida para eliminar empresa vacia.',
+      jsonb_build_object('confirmacion_requerida', 'ELIMINAR EMPRESA')
+    );
+
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'confirmacion_invalida',
+      'mensaje', 'Confirmacion invalida para eliminar empresa.'
+    );
   end if;
 
   if p_empresa_id is null or p_empresa_id <= 0 then
-    raise exception 'Debe indicar una empresa valida.';
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'empresa_invalida',
+      'mensaje', 'Debe indicar una empresa valida.'
+    );
   end if;
 
   select *
@@ -73,7 +113,37 @@ begin
     and activo = true;
 
   if not found or lower(coalesce(v_perfil.rol, '')) <> 'admin' then
-    raise exception 'Solo admin activo puede eliminar empresas vacias.';
+    insert into intentos_bloqueados (
+      usuario_id,
+      empresa_id,
+      modulo,
+      accion,
+      motivo,
+      severidad,
+      entidad_tipo,
+      entidad_id,
+      mensaje,
+      metadatos
+    )
+    values (
+      v_usuario_id,
+      null,
+      'empresas',
+      'eliminar_empresa_vacia',
+      'usuario_no_admin',
+      'alta',
+      'empresa',
+      p_empresa_id::text,
+      'Usuario no autorizado intento eliminar empresa vacia.',
+      jsonb_build_object('requiere_rol', 'admin')
+    );
+
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'usuario_no_autorizado',
+      'mensaje', 'Solo admin activo puede eliminar empresas vacias.'
+    );
   end if;
 
   select *
@@ -82,7 +152,12 @@ begin
   where id = p_empresa_id;
 
   if not found then
-    raise exception 'La empresa no existe.';
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'empresa_no_existe',
+      'mensaje', 'La empresa no existe.'
+    );
   end if;
 
   v_nombre := lower(
@@ -115,7 +190,78 @@ begin
   end if;
 
   if coalesce(array_length(v_motivos, 1), 0) = 0 or v_estado = 'activa' then
-    raise exception 'No se permite eliminar fisicamente empresas reales activas.';
+    insert into auditoria_eventos (
+      usuario_id,
+      usuario_nombre_snapshot,
+      empresa_id,
+      modulo,
+      accion,
+      entidad_tipo,
+      entidad_id,
+      estado_anterior,
+      descripcion,
+      sensible,
+      metadatos,
+      origen
+    )
+    values (
+      v_usuario_id,
+      v_perfil.nombre,
+      p_empresa_id,
+      'empresas',
+      'bloquear_eliminacion_empresa',
+      'empresa',
+      p_empresa_id,
+      v_empresa.estado,
+      'Eliminacion fisica bloqueada porque la empresa no es candidata de limpieza.',
+      true,
+      jsonb_build_object(
+        'motivos_limpieza', v_motivos,
+        'estado', v_empresa.estado,
+        'accion_segura', 'archivar_o_inactivar'
+      ),
+      'rpc_limpieza_empresas'
+    );
+
+    insert into intentos_bloqueados (
+      usuario_id,
+      empresa_id,
+      modulo,
+      accion,
+      motivo,
+      severidad,
+      entidad_tipo,
+      entidad_id,
+      mensaje,
+      metadatos
+    )
+    values (
+      v_usuario_id,
+      p_empresa_id,
+      'empresas',
+      'eliminar_empresa_vacia',
+      'empresa_real_activa',
+      'alta',
+      'empresa',
+      p_empresa_id::text,
+      'Eliminacion fisica bloqueada para empresa real activa.',
+      jsonb_build_object(
+        'estado', v_empresa.estado,
+        'motivos_limpieza', v_motivos,
+        'accion_segura', 'archivar_o_inactivar'
+      )
+    );
+
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'empresa_real_activa',
+      'mensaje', 'No se permite eliminar fisicamente empresas reales activas.',
+      'empresa_id', p_empresa_id,
+      'nombre', coalesce(v_empresa.nombre, v_empresa.razon_social, v_empresa.nombre_comercial),
+      'estado', v_empresa.estado,
+      'motivos_limpieza', v_motivos
+    );
   end if;
 
   foreach v_tabla in array v_tablas loop
@@ -206,8 +352,18 @@ begin
         'no_borro_documentos_storage', true
       )
     );
-
-    raise exception 'La empresa tiene dependencias. Solo se permite archivar o inactivar.';
+    return jsonb_build_object(
+      'ok', false,
+      'eliminada', false,
+      'codigo', 'empresa_con_dependencias',
+      'mensaje', 'La empresa tiene dependencias. Solo se permite archivar o inactivar.',
+      'empresa_id', p_empresa_id,
+      'nombre', coalesce(v_empresa.nombre, v_empresa.razon_social, v_empresa.nombre_comercial),
+      'estado', v_empresa.estado,
+      'dependencias', v_dependencias,
+      'total_dependencias', v_total,
+      'motivos_limpieza', v_motivos
+    );
   end if;
 
   insert into auditoria_eventos (
@@ -255,6 +411,7 @@ begin
   where id = p_empresa_id;
 
   return jsonb_build_object(
+    'ok', true,
     'eliminada', true,
     'empresa_id', p_empresa_id,
     'nombre', coalesce(v_empresa.nombre, v_empresa.razon_social, v_empresa.nombre_comercial),

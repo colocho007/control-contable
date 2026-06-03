@@ -7,6 +7,8 @@
 -- - Se agrega p_idempotency_key text default null a cada RPC.
 -- - El frontend debe enviarlo siempre en operaciones criticas.
 -- - Se eliminan firmas anteriores para evitar sobrecargas ambiguas en Supabase RPC.
+-- - Si una operacion falla despues de reservar idempotencia, devuelve ok=false
+--   para conservar la marca fallida en idempotency_keys_operativas.
 
 drop function if exists public.registrar_pago_cxp(text, bigint, date, text, text, text, text, numeric, text, uuid);
 drop function if exists public.anular_pago_cxp(text, bigint, uuid, text);
@@ -84,12 +86,28 @@ begin
         if v_idempotency.resultado_resumen is not null then
           return v_idempotency.resultado_resumen || jsonb_build_object('idempotency_replay', true);
         end if;
-        raise exception 'La operacion ya fue procesada.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_ya_procesada',
+          'mensaje', 'La operacion ya fue procesada.'
+        );
       end if;
       if v_idempotency.estado = 'en_proceso' then
-        raise exception 'La operacion ya esta en proceso. Espera antes de reintentar.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_en_proceso',
+          'mensaje', 'La operacion ya esta en proceso. Espera antes de reintentar.'
+        );
       end if;
-      raise exception 'La llave de idempotencia ya fue usada con estado %. Genera una nueva operacion.', v_idempotency.estado;
+      return jsonb_build_object(
+        'ok', false,
+        'permitido', false,
+        'codigo', 'idempotency_key_usada',
+        'mensaje', 'La llave de idempotencia ya fue usada con otro estado. Genera una nueva operacion.',
+        'estado', v_idempotency.estado
+      );
     end if;
 
     insert into idempotency_keys_operativas (
@@ -219,7 +237,14 @@ begin
           error_resumen = left(sqlerrm, 500)
       where id = v_idempotency.id;
     end if;
-    raise;
+    return jsonb_build_object(
+      'ok', false,
+      'permitido', false,
+      'codigo', 'registrar_pago_cxp_fallido',
+      'mensaje', left(sqlerrm, 500),
+      'detalle_resumido', left(sqlerrm, 500),
+      'idempotency_key', v_idempotency_key
+    );
   end;
 end;
 $$;
@@ -289,12 +314,28 @@ begin
         if v_idempotency.resultado_resumen is not null then
           return v_idempotency.resultado_resumen || jsonb_build_object('idempotency_replay', true);
         end if;
-        raise exception 'La operacion ya fue procesada.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_ya_procesada',
+          'mensaje', 'La operacion ya fue procesada.'
+        );
       end if;
       if v_idempotency.estado = 'en_proceso' then
-        raise exception 'La operacion ya esta en proceso. Espera antes de reintentar.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_en_proceso',
+          'mensaje', 'La operacion ya esta en proceso. Espera antes de reintentar.'
+        );
       end if;
-      raise exception 'La llave de idempotencia ya fue usada con estado %. Genera una nueva operacion.', v_idempotency.estado;
+      return jsonb_build_object(
+        'ok', false,
+        'permitido', false,
+        'codigo', 'idempotency_key_usada',
+        'mensaje', 'La llave de idempotencia ya fue usada con otro estado. Genera una nueva operacion.',
+        'estado', v_idempotency.estado
+      );
     end if;
 
     insert into idempotency_keys_operativas (
@@ -416,7 +457,14 @@ begin
           error_resumen = left(sqlerrm, 500)
       where id = v_idempotency.id;
     end if;
-    raise;
+    return jsonb_build_object(
+      'ok', false,
+      'permitido', false,
+      'codigo', 'anular_pago_cxp_fallido',
+      'mensaje', left(sqlerrm, 500),
+      'detalle_resumido', left(sqlerrm, 500),
+      'idempotency_key', v_idempotency_key
+    );
   end;
 end;
 $$;
@@ -492,12 +540,28 @@ begin
         if v_idempotency.resultado_resumen is not null then
           return v_idempotency.resultado_resumen || jsonb_build_object('idempotency_replay', true);
         end if;
-        raise exception 'La operacion ya fue procesada.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_ya_procesada',
+          'mensaje', 'La operacion ya fue procesada.'
+        );
       end if;
       if v_idempotency.estado = 'en_proceso' then
-        raise exception 'La operacion ya esta en proceso. Espera antes de reintentar.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_en_proceso',
+          'mensaje', 'La operacion ya esta en proceso. Espera antes de reintentar.'
+        );
       end if;
-      raise exception 'La llave de idempotencia ya fue usada con estado %. Genera una nueva operacion.', v_idempotency.estado;
+      return jsonb_build_object(
+        'ok', false,
+        'permitido', false,
+        'codigo', 'idempotency_key_usada',
+        'mensaje', 'La llave de idempotencia ya fue usada con otro estado. Genera una nueva operacion.',
+        'estado', v_idempotency.estado
+      );
     end if;
 
     insert into idempotency_keys_operativas (
@@ -624,7 +688,14 @@ begin
           error_resumen = left(sqlerrm, 500)
       where id = v_idempotency.id;
     end if;
-    raise;
+    return jsonb_build_object(
+      'ok', false,
+      'permitido', false,
+      'codigo', 'registrar_pago_cxc_fallido',
+      'mensaje', left(sqlerrm, 500),
+      'detalle_resumido', left(sqlerrm, 500),
+      'idempotency_key', v_idempotency_key
+    );
   end;
 end;
 $$;
@@ -694,12 +765,28 @@ begin
         if v_idempotency.resultado_resumen is not null then
           return v_idempotency.resultado_resumen || jsonb_build_object('idempotency_replay', true);
         end if;
-        raise exception 'La operacion ya fue procesada.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_ya_procesada',
+          'mensaje', 'La operacion ya fue procesada.'
+        );
       end if;
       if v_idempotency.estado = 'en_proceso' then
-        raise exception 'La operacion ya esta en proceso. Espera antes de reintentar.';
+        return jsonb_build_object(
+          'ok', false,
+          'permitido', false,
+          'codigo', 'operacion_en_proceso',
+          'mensaje', 'La operacion ya esta en proceso. Espera antes de reintentar.'
+        );
       end if;
-      raise exception 'La llave de idempotencia ya fue usada con estado %. Genera una nueva operacion.', v_idempotency.estado;
+      return jsonb_build_object(
+        'ok', false,
+        'permitido', false,
+        'codigo', 'idempotency_key_usada',
+        'mensaje', 'La llave de idempotencia ya fue usada con otro estado. Genera una nueva operacion.',
+        'estado', v_idempotency.estado
+      );
     end if;
 
     insert into idempotency_keys_operativas (
@@ -821,7 +908,14 @@ begin
           error_resumen = left(sqlerrm, 500)
       where id = v_idempotency.id;
     end if;
-    raise;
+    return jsonb_build_object(
+      'ok', false,
+      'permitido', false,
+      'codigo', 'anular_pago_cxc_fallido',
+      'mensaje', left(sqlerrm, 500),
+      'detalle_resumido', left(sqlerrm, 500),
+      'idempotency_key', v_idempotency_key
+    );
   end;
 end;
 $$;

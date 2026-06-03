@@ -2,6 +2,9 @@
 -- Ejecutar en Supabase SQL Editor despues de revisar.
 -- Requiere sql/seguridad_operativa.sql.
 -- No borra filas ni modifica RLS de otras tablas.
+-- Si se excede el limite, registra intentos_bloqueados y devuelve permitido=false.
+-- Las excepciones se reservan para sesion invalida, parametros invalidos o empresa ajena,
+-- antes de escribir evidencia operativa que deba persistir.
 
 create or replace function public.registrar_rate_limit_operativo(
   p_clave text,

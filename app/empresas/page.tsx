@@ -735,6 +735,10 @@ export default function EmpresasPage() {
       });
 
       if (error) throw error;
+      if (data && typeof data === "object" && "ok" in data && data.ok === false) {
+        alert(typeof data.mensaje === "string" ? data.mensaje : "No se pudo eliminar la empresa.");
+        return;
+      }
 
       setMensaje("Empresa vacia eliminada definitivamente de forma segura.");
       setEmpresaPrevisualizada(null);

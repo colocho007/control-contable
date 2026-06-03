@@ -84,6 +84,8 @@ interface PagoCuentaCobrar {
 }
 
 interface ResultadoPagoCxC {
+  ok?: boolean;
+  mensaje?: string;
   pago: PagoCuentaCobrar;
   cuenta: CuentaCobrar;
   idempotency_replay?: boolean;
@@ -144,6 +146,21 @@ function liberarIdempotencyKey(alcance: string) {
 
 function esErrorOperacionEnProceso(error: unknown) {
   return getErrorMessage(error).toLowerCase().includes("en proceso");
+}
+
+function validarResultadoRpcPago(resultado: unknown) {
+  if (
+    resultado &&
+    typeof resultado === "object" &&
+    "ok" in resultado &&
+    resultado.ok === false
+  ) {
+    const mensaje =
+      "mensaje" in resultado && typeof resultado.mensaje === "string"
+        ? resultado.mensaje
+        : "Operacion no permitida.";
+    throw new Error(mensaje);
+  }
 }
 
 function estaVencida(cuenta: CuentaCobrar) {
@@ -562,6 +579,7 @@ export default function CuentasCobrarPage() {
       );
 
       if (rpcError) throw rpcError;
+      validarResultadoRpcPago(resultadoRpc);
       const resultado = resultadoRpc as ResultadoPagoCxC;
 
       if (!resultado.idempotency_replay) {
@@ -679,6 +697,7 @@ export default function CuentasCobrarPage() {
       );
 
       if (rpcError) throw rpcError;
+      validarResultadoRpcPago(resultadoRpc);
       const resultado = resultadoRpc as ResultadoPagoCxC;
 
       if (!resultado.idempotency_replay) {

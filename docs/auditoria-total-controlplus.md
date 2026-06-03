@@ -19,7 +19,7 @@ Recomendacion general: listo para prueba controlada con contador solo si se acep
 - Autorizacion: la mayoria de modulos usan `validarAccesoModuloUsuario`; `Admin` y `Monitoreo` usan validacion directa de usuario activo/rol.
 - Empresas: Dashboard, Reportes y Calendario usan `obtenerEmpresasOperativasDesdeIds`/`esEmpresaOperativaVisible`; Cheques aplica filtro propio equivalente.
 - Documentos: `documentos-tramites` usa bucket privado y `createSignedUrl`; `obtenerUrlDocumento` valida estado, bucket, ruta y empresa.
-- Auditoria: amplia cobertura con `auditoria_eventos`; hay riesgo transaccional en algunas RPC cuando se inserta auditoria y luego se lanza excepcion.
+- Auditoria: amplia cobertura con `auditoria_eventos`; el riesgo transaccional detectado en limpieza de empresas y pagos CxP/CxC quedo corregido en SQL versionado.
 - SQL: las RPC `security definer` versionadas usan `set search_path = public`.
 
 ## 3. Hallazgos criticos
@@ -56,7 +56,7 @@ Impacto: evidencias de tareas pueden quedar publicas; updates por id tienen meno
 
 Recomendacion: mover evidencias a `documentos-tramites` o bucket privado con signed URLs; agregar filtro `empresa_id` en updates y auditoria de completar/cancelar.
 
-### ALTO-3: Auditoria de bloqueos dentro de RPC puede revertirse si luego se hace `raise exception`
+### ALTO-3: Auditoria de bloqueos dentro de RPC puede revertirse si luego se hace `raise exception` - Corregido parcialmente
 
 Archivos:
 
@@ -70,7 +70,7 @@ Evidencia:
 
 Impacto: en PostgreSQL, si la excepcion aborta la transaccion del RPC, esos cambios pueden no persistir. La UI recibe error, pero el registro de bloqueo/fallo puede perderse.
 
-Recomendacion: para bloqueos esperados, devolver JSON `{ permitido: false }` en vez de lanzar excepcion; para fallos que deban persistir, usar patron de RPC que no aborte o registrar bloqueo desde backend/service role.
+Correccion posterior: `sql/rpc_limpieza_empresas.sql` ahora devuelve `ok:false` en bloqueos esperados despues de auditar; `sql/rpc_pagos_cxp_cxc.sql` devuelve `ok:false` despues de marcar idempotencia `fallida` dentro de la operacion. `sql/rpc_rate_limit_operativo.sql` ya conservaba el patron correcto para limite excedido.
 
 ### ALTO-4: Modulo Usuarios legacy duplicado con Admin Operativo
 
@@ -116,7 +116,7 @@ Los grants se apoyan en RLS/policies y validaciones internas. No es necesariamen
 
 Archivo: `sql/rpc_limpieza_empresas.sql`
 
-El `DELETE` esta acotado a empresa 100% vacia y es la unica excepcion documentada. Pendiente: ajustar retorno bloqueado si se quiere que auditoria de bloqueo persista sin depender de transaccion abortada.
+El `DELETE` esta acotado a empresa 100% vacia y es la unica excepcion documentada. Los bloqueos esperados devuelven `ok:false` para conservar auditoria/intentos bloqueados.
 
 ### MEDIO-5: Componentes de documentos relacionados no aplican rate limit de apertura
 
@@ -154,7 +154,7 @@ Estado: restringido por rol admin; persistencia de alertas con RLS admin. Revisa
 
 Revisado: `app/empresas/page.tsx`, `lib/empresasOperativas.ts`, `sql/rpc_limpieza_empresas.sql`.
 
-Estado: crear/editar/archivar auditado; limpieza segura usa previsualizacion y RPC. Pendiente transaccional del bloqueo con `raise exception`.
+Estado: crear/editar/archivar auditado; limpieza segura usa previsualizacion y RPC. Los bloqueos de eliminacion fisica devuelven JSON controlado y conservan auditoria.
 
 ### Proveedores y Clientes
 
@@ -184,7 +184,7 @@ Estado: separa asientos formales de movimientos operativos; valida moneda GTQ/US
 
 Revisado: `app/cuentas-pagar/page.tsx`, `app/cuentas-cobrar/page.tsx`, `sql/rpc_pagos_cxp_cxc.sql`.
 
-Estado: pagos/anulaciones via RPC con idempotencia. Hallazgo: marcado `fallida` dentro de RPC puede revertirse al relanzar excepcion.
+Estado: pagos/anulaciones via RPC con idempotencia. El marcado `fallida` ahora se conserva porque la RPC devuelve `ok:false` en fallos esperados dentro de la operacion.
 
 ### Reportes
 
@@ -272,6 +272,9 @@ Se revisaron mediante lectura directa o busquedas dirigidas:
 1. Se agrego `generarIdempotencyKeyCrearUsuario()` en `app/usuarios/page.tsx`.
 2. El flujo legacy de creacion de perfil en Usuarios ahora envia `idempotency_key` con prefijo `controlplus_idempotency_admin:crear_usuario_operativo:`.
 3. `/api/admin/perfiles` mantiene rate limit local si falla la RPC `registrar_rate_limit_operativo`, en lugar de cortar con 500.
+4. `sql/rpc_limpieza_empresas.sql` devuelve JSON controlado para bloqueos esperados y conserva auditoria/intentos bloqueados.
+5. `sql/rpc_pagos_cxp_cxc.sql` conserva idempotencia `fallida` devolviendo `ok:false` en vez de relanzar dentro del bloque transaccional.
+6. `app/empresas/page.tsx`, `app/cuentas-pagar/page.tsx` y `app/cuentas-cobrar/page.tsx` manejan respuestas RPC `ok:false`.
 
 ## 11. SQL pendiente si aplica
 
@@ -285,7 +288,7 @@ Ejecutar/revisar en Supabase antes de prueba real:
 
 SQL recomendado pendiente:
 
-- Ajustar RPCs que intentan auditar y luego hacen `raise exception`, para que los bloqueos esperados devuelvan JSON y no pierdan auditoria por rollback.
+- Revisar si se desea llevar el mismo patron JSON controlado a otras validaciones esperadas que hoy lanzan excepcion antes de escribir evidencia.
 
 ## 12. Pruebas ejecutadas
 
@@ -316,7 +319,7 @@ Resultado:
 
 1. Desactivar o migrar `app/finanzas/page.tsx` antes de carga real.
 2. Endurecer `app/tareas/page.tsx`: bucket privado, signed URL, filtros `empresa_id` en updates y auditoria.
-3. Resolver persistencia de auditoria/bloqueos en RPCs que lanzan excepcion.
+3. Ampliar patron `ok:false` a validaciones esperadas adicionales si se desea evitar excepciones de negocio en RPCs.
 4. Integrar rate limit de apertura en `components/DocumentosEntidad.tsx`.
 5. Ejecutar y verificar SQL pendientes en Supabase.
 6. Ejecutar pruebas funcionales con contador: crear empresa real, proveedor/cliente, OC, cheque, CxP/CxC, documento, reporte y cierre contable.
