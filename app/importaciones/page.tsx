@@ -5,7 +5,7 @@ import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
-import { registrarAuditoriaEvento } from "../../lib/auditoria";
+import { registrarAuditoriaEvento, type ValorJsonAuditoria } from "../../lib/auditoria";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
 import {
@@ -20,10 +20,15 @@ import {
 const IMPORTACION_MAX_BYTES = 5 * 1024 * 1024;
 const IMPORTACION_MAX_FILAS = 1000;
 const IMPORTACION_ACTIVA_KEY = "controlplus_importacion_activa";
+const IDEMPOTENCY_PREFIX_IMPORTACIONES = "controlplus_idempotency_importaciones";
+const EXTENSIONES_IMPORTACION_PERMITIDAS = [".xlsx", ".xls", ".csv"];
 
 interface Empresa {
   id: number;
   nombre: string;
+  estado?: string | null;
+  razon_social?: string | null;
+  nombre_comercial?: string | null;
 }
  
 interface FondoEmpresa {
@@ -78,6 +83,12 @@ interface FilaPreview {
   valido: boolean;
   errores: string[];
   data: any;
+}
+
+interface ResultadoDuplicados {
+  importables: FilaPreview[];
+  excluidas: FilaPreview[];
+  errores: string[];
 }
 
 const TIPOS_IMPORTACION: {
@@ -182,6 +193,80 @@ const TIPOS_IMPORTACION: {
   },
 ];
 
+const COLUMNAS_OBLIGATORIAS: Record<TipoImportacion, string[]> = {
+  proveedores: ["Empresa", "Nombre Proveedor", "NIT"],
+  ordenes_compra: ["Empresa", "Proveedor", "Total", "Moneda"],
+  cheques: ["Empresa", "Beneficiario", "Concepto", "Monto", "Forma Pago", "Moneda", "Fecha Pago"],
+  movimientos: ["Empresa", "Fecha", "Tipo", "Descripcion", "Monto", "Moneda", "Referencia"],
+  planillas: ["Empresa", "Empleado", "Total Pagar", "Fecha", "Moneda"],
+};
+
+const ALIAS_COLUMNAS: Record<TipoImportacion, Record<string, string[]>> = {
+  proveedores: {
+    "Empresa": ["Empresa", "empresa", "EMPRESA"],
+    "Nombre Proveedor": ["Nombre Proveedor", "Proveedor", "proveedor", "Nombre", "nombre"],
+    "NIT": ["NIT", "nit"],
+    "Telefono": ["Telefono", "Teléfono", "telefono"],
+    "Correo": ["Correo", "correo", "Email"],
+    "Direccion": ["Direccion", "Dirección", "direccion"],
+    "Banco": ["Banco", "banco"],
+    "Cuenta Bancaria": ["Cuenta Bancaria", "Cuenta", "cuenta_bancaria"],
+    "Moneda": ["Moneda", "moneda"],
+  },
+  ordenes_compra: {
+    "Empresa": ["Empresa", "empresa", "EMPRESA"],
+    "Proveedor": ["Proveedor", "proveedor", "Beneficiario"],
+    "Numero Orden": ["Numero Orden", "Número Orden", "OC"],
+    "Fecha Orden": ["Fecha Orden", "fecha_orden"],
+    "Fecha Documento": ["Fecha Documento", "fecha_documento"],
+    "Fecha Factura": ["Fecha Factura", "fecha_factura"],
+    "Numero Factura": ["Numero Factura", "Número Factura", "Factura"],
+    "Descripcion": ["Descripcion", "Descripción", "Concepto"],
+    "Cantidad": ["Cantidad", "cantidad"],
+    "Precio Unitario": ["Precio Unitario", "precio_unitario"],
+    "Total": ["Total", "total"],
+    "Moneda": ["Moneda", "moneda"],
+  },
+  cheques: {
+    "Empresa": ["Empresa", "empresa", "EMPRESA"],
+    "Beneficiario": ["Beneficiario", "beneficiario", "Proveedor"],
+    "Concepto": ["Concepto", "Descripcion", "Descripción"],
+    "Monto": ["Monto", "monto"],
+    "Tipo Pago": ["Tipo Pago", "tipo_pago"],
+    "Forma Pago": ["Forma Pago", "forma_pago"],
+    "Moneda": ["Moneda", "moneda"],
+    "Tipo Cambio": ["Tipo Cambio", "tipo_cambio", "TipoCambio"],
+    "Fecha Pago": ["Fecha Pago", "fecha_pago", "Fecha"],
+    "Prioridad": ["Prioridad", "prioridad"],
+    "Banco": ["Banco", "banco"],
+    "Cuenta Bancaria": ["Cuenta Bancaria", "Cuenta", "cuenta_bancaria"],
+    "Numero Cheque": ["Numero Cheque", "Número Cheque", "No Cheque"],
+  },
+  movimientos: {
+    "Empresa": ["Empresa", "empresa", "EMPRESA"],
+    "Fecha": ["Fecha", "fecha"],
+    "Tipo": ["Tipo", "tipo"],
+    "Descripcion": ["Descripcion", "Descripción", "Concepto"],
+    "Monto": ["Monto", "monto"],
+    "Moneda": ["Moneda", "moneda"],
+    "Referencia": ["Referencia", "referencia"],
+  },
+  planillas: {
+    "Empresa": ["Empresa", "empresa", "EMPRESA"],
+    "Empleado": ["Empleado", "empleado"],
+    "DPI": ["DPI", "dpi"],
+    "Puesto": ["Puesto", "puesto"],
+    "Sueldo Base": ["Sueldo Base", "sueldo_base"],
+    "Bonificacion": ["Bonificacion", "Bonificación"],
+    "Descuentos": ["Descuentos", "descuentos"],
+    "ISR": ["ISR", "isr"],
+    "IGSS": ["IGSS", "igss"],
+    "Total Pagar": ["Total Pagar", "total_pagar"],
+    "Fecha": ["Fecha", "fecha"],
+    "Moneda": ["Moneda", "moneda"],
+  },
+};
+
 export default function ImportacionesPage() {
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [cargandoImportaciones, setCargandoImportaciones] = useState(false);
@@ -200,6 +285,8 @@ export default function ImportacionesPage() {
 
   const [tipo, setTipo] = useState<TipoImportacion>("proveedores");
   const [nombreArchivo, setNombreArchivo] = useState("");
+  const [archivoHash, setArchivoHash] = useState("");
+  const [columnasArchivo, setColumnasArchivo] = useState<string[]>([]);
   const [preview, setPreview] = useState<FilaPreview[]>([]);
 
   const configActual = useMemo(
@@ -214,6 +301,12 @@ export default function ImportacionesPage() {
     motivo: string,
     metadatos: Record<string, unknown>
   ) {
+    const metadatosSeguros = {
+      ...metadatos,
+      archivo_hash: archivoHash || metadatos.archivo_hash || null,
+      archivo_contenido_guardado: false,
+    };
+
     try {
       await registrarAuditoriaEvento({
         modulo: "importaciones",
@@ -223,11 +316,39 @@ export default function ImportacionesPage() {
         origen: "modulo_importaciones",
         metadatos: {
           motivo,
-          ...metadatos,
-        },
+          ...metadatosSeguros,
+        } as ValorJsonAuditoria,
       });
     } catch (error) {
       console.warn("No se pudo auditar intento de importacion bloqueado:", error);
+    }
+
+    if (!userId) return;
+
+    try {
+      const empresaId =
+        typeof metadatos.empresa_id === "number" &&
+        Number.isFinite(metadatos.empresa_id)
+          ? metadatos.empresa_id
+          : null;
+
+      const { error } = await supabase.from("intentos_bloqueados").insert({
+        usuario_id: userId,
+        empresa_id: empresaId,
+        modulo: "importaciones",
+        accion: "confirmar_importacion",
+        motivo,
+        severidad: "media",
+        entidad_tipo: String(metadatos.tipo_importacion || tipo),
+        mensaje: "Intento de importacion bloqueado por validacion operativa.",
+        metadatos: metadatosSeguros,
+      });
+
+      if (error) {
+        console.warn("No se pudo registrar intento bloqueado de importacion:", error.message);
+      }
+    } catch (error) {
+      console.warn("Intento bloqueado de importacion no persistido:", error);
     }
   }
 
@@ -290,7 +411,7 @@ export default function ImportacionesPage() {
 
       const { data, error } = await supabase
         .from("empresas")
-        .select("id,nombre")
+        .select("id,nombre,estado,razon_social,nombre_comercial")
         .in("id", idsPermitidos)
         .order("nombre", { ascending: true });
 
@@ -368,6 +489,77 @@ export default function ImportacionesPage() {
     }
   }
 
+  function normalizarTexto(valor?: string | null) {
+    return (valor || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function esEstadoOperativo(valor?: string | null) {
+    const estado = normalizarTexto(valor || "Activa");
+    return !["inactiva", "inactivo", "archivada", "archivado", "anulada", "anulado"].includes(estado);
+  }
+
+  function esEmpresaDePrueba(empresa: Empresa) {
+    const texto = normalizarTexto(
+      [empresa.nombre, empresa.razon_social, empresa.nombre_comercial]
+        .filter(Boolean)
+        .join(" ")
+    );
+
+    return texto.includes("control plus") || texto.includes("prueba") || texto.includes("demo");
+  }
+
+  function normalizarClave(valor: unknown) {
+    return String(valor ?? "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  }
+
+  function extensionArchivo(nombre: string) {
+    const limpio = nombre.trim().toLowerCase();
+    const punto = limpio.lastIndexOf(".");
+    return punto >= 0 ? limpio.slice(punto) : "";
+  }
+
+  async function calcularHashArchivo(buffer: ArrayBuffer) {
+    const digest = await crypto.subtle.digest("SHA-256", buffer);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+  }
+
+  function columnasPermitidasParaTipo(tipoImportacion: TipoImportacion) {
+    return new Set(
+      Object.values(ALIAS_COLUMNAS[tipoImportacion])
+        .flat()
+        .map(normalizarClave)
+    );
+  }
+
+  function columnaPresente(columnas: string[], tipoImportacion: TipoImportacion, columna: string) {
+    const columnasNormalizadas = new Set(columnas.map(normalizarClave));
+    const aliases = ALIAS_COLUMNAS[tipoImportacion][columna] || [columna];
+    return aliases.some((alias) => columnasNormalizadas.has(normalizarClave(alias)));
+  }
+
+  function validarColumnasArchivo(columnas: string[], tipoImportacion: TipoImportacion) {
+    const columnasLimpias = columnas.map((columna) => columna.trim()).filter(Boolean);
+    const permitidas = columnasPermitidasParaTipo(tipoImportacion);
+    const faltantes = COLUMNAS_OBLIGATORIAS[tipoImportacion].filter(
+      (columna) => !columnaPresente(columnasLimpias, tipoImportacion, columna)
+    );
+    const sobrantes = columnasLimpias.filter(
+      (columna) => !permitidas.has(normalizarClave(columna))
+    );
+
+    return { faltantes, sobrantes };
+  }
+
   function limpiarTexto(valor: any) {
     return String(valor ?? "").trim();
   }
@@ -423,10 +615,10 @@ export default function ImportacionesPage() {
   }
 
   function buscarEmpresa(nombreEmpresa: string) {
-    const normalizado = nombreEmpresa.trim().toLowerCase();
+    const normalizado = normalizarClave(nombreEmpresa);
 
     return empresas.find(
-      (empresa) => empresa.nombre.trim().toLowerCase() === normalizado
+      (empresa) => normalizarClave(empresa.nombre) === normalizado
     );
   }
 
@@ -440,6 +632,21 @@ export default function ImportacionesPage() {
 
     if (!empresa) {
       errores.push(`Empresa no encontrada: ${nombreEmpresa}`);
+      return null;
+    }
+
+    if (!empresasPermitidasIds.includes(Number(empresa.id))) {
+      errores.push(`Empresa no permitida para tu usuario: ${nombreEmpresa}`);
+      return null;
+    }
+
+    if (!esEstadoOperativo(empresa.estado)) {
+      errores.push(`Empresa inactiva o archivada: ${nombreEmpresa}`);
+      return null;
+    }
+
+    if (esEmpresaDePrueba(empresa)) {
+      errores.push(`No se permite importar a empresas de prueba/demo: ${nombreEmpresa}`);
       return null;
     }
 
@@ -516,6 +723,8 @@ export default function ImportacionesPage() {
       );
 
       if (!nombre) errores.push("Falta nombre del proveedor");
+      const nit = limpiarTexto(leerCampo(fila, ["NIT", "nit"]));
+      if (!nit) errores.push("Falta NIT del proveedor");
 
       return {
         fila: indice + 2,
@@ -525,7 +734,7 @@ export default function ImportacionesPage() {
           empresa_id: empresa?.id || null,
           empresa: empresa?.nombre || nombreEmpresa,
           nombre,
-          nit: limpiarTexto(leerCampo(fila, ["NIT", "nit"])) || null,
+          nit: nit || null,
           telefono:
             limpiarTexto(leerCampo(fila, ["Telefono", "Teléfono", "telefono"])) ||
             null,
@@ -828,6 +1037,31 @@ monto_gtq: montoGtq,
 
     if (!archivo) return;
 
+    const extension = extensionArchivo(archivo.name);
+
+    if (!EXTENSIONES_IMPORTACION_PERMITIDAS.includes(extension)) {
+      toast.error("Formato no permitido. Usa .xlsx, .xls o .csv.");
+      await registrarIntentoImportacionBloqueado("extension_no_permitida", {
+        archivo: archivo.name,
+        extension,
+        extensiones_permitidas: EXTENSIONES_IMPORTACION_PERMITIDAS,
+        tipo_importacion: tipo,
+      });
+      e.target.value = "";
+      return;
+    }
+
+    if (archivo.size <= 0) {
+      toast.error("El archivo esta vacio.");
+      await registrarIntentoImportacionBloqueado("archivo_vacio", {
+        archivo: archivo.name,
+        bytes: archivo.size,
+        tipo_importacion: tipo,
+      });
+      e.target.value = "";
+      return;
+    }
+
     if (archivo.size > IMPORTACION_MAX_BYTES) {
       toast.error("El archivo supera el limite de 5 MB.");
       await registrarIntentoImportacionBloqueado("archivo_excede_tamano", {
@@ -841,20 +1075,86 @@ monto_gtq: montoGtq,
     }
 
     setNombreArchivo(archivo.name);
+    setArchivoHash("");
+    setColumnasArchivo([]);
     setPreview([]);
 
     try {
+      const buffer = await archivo.arrayBuffer();
+      const hash = await calcularHashArchivo(buffer);
+      setArchivoHash(hash);
+
       const catalogosCheques =
         tipo === "cheques" ? await asegurarDatosCheques() : undefined;
-      const buffer = await archivo.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
+
+      if (!workbook.SheetNames.length) {
+        toast.error("El archivo no contiene hojas validas.");
+        await registrarIntentoImportacionBloqueado("archivo_sin_hojas_validas", {
+          archivo: archivo.name,
+          archivo_hash: hash,
+          tipo_importacion: tipo,
+        });
+        setNombreArchivo("");
+        e.target.value = "";
+        return;
+      }
+
       const hoja = workbook.Sheets[workbook.SheetNames[0]];
+
+      if (!hoja || !hoja["!ref"]) {
+        toast.error("La primera hoja no contiene datos validos.");
+        await registrarIntentoImportacionBloqueado("hoja_sin_datos_validos", {
+          archivo: archivo.name,
+          archivo_hash: hash,
+          tipo_importacion: tipo,
+        });
+        setNombreArchivo("");
+        e.target.value = "";
+        return;
+      }
+
       const filas: any[] = XLSX.utils.sheet_to_json(hoja, {
         defval: "",
       });
+      const columnas = filas.length ? Object.keys(filas[0]) : [];
+      setColumnasArchivo(columnas);
+
+      const columnasInvalidas = validarColumnasArchivo(columnas, tipo);
+
+      if (columnasInvalidas.faltantes.length || columnasInvalidas.sobrantes.length) {
+        const partes = [
+          columnasInvalidas.faltantes.length
+            ? `Faltan: ${columnasInvalidas.faltantes.join(", ")}`
+            : "",
+          columnasInvalidas.sobrantes.length
+            ? `Sobran/no reconocidas: ${columnasInvalidas.sobrantes.join(", ")}`
+            : "",
+        ].filter(Boolean);
+
+        toast.error(`Columnas invalidas. ${partes.join(". ")}`);
+        await registrarIntentoImportacionBloqueado("columnas_invalidas", {
+          archivo: archivo.name,
+          archivo_hash: hash,
+          tipo_importacion: tipo,
+          columnas_faltantes: columnasInvalidas.faltantes,
+          columnas_sobrantes: columnasInvalidas.sobrantes,
+        });
+        setNombreArchivo("");
+        setPreview([]);
+        e.target.value = "";
+        return;
+      }
 
       if (!filas.length) {
-        toast.error("El archivo está vacío");
+        toast.error("El archivo esta vacio.");
+        await registrarIntentoImportacionBloqueado("archivo_sin_filas", {
+          archivo: archivo.name,
+          archivo_hash: hash,
+          tipo_importacion: tipo,
+        });
+        setNombreArchivo("");
+        e.target.value = "";
         return;
       }
 
@@ -862,6 +1162,7 @@ monto_gtq: montoGtq,
         toast.error(`El archivo supera el limite de ${IMPORTACION_MAX_FILAS} filas.`);
         await registrarIntentoImportacionBloqueado("archivo_excede_filas", {
           archivo: archivo.name,
+          archivo_hash: hash,
           filas: filas.length,
           limite_filas: IMPORTACION_MAX_FILAS,
           tipo_importacion: tipo,
@@ -876,16 +1177,440 @@ monto_gtq: montoGtq,
       );
 
       setPreview(resultado);
-      toast.success("Archivo leído correctamente");
+      toast.success("Archivo leido correctamente");
     } catch (error: any) {
-      console.error(error);
+      console.error("Error leyendo archivo de importacion:", error?.message || error);
       toast.error(error.message || "Error leyendo Excel");
+    }
+  }
+
+  function idempotencyKeyImportacion(hash = archivoHash) {
+    return `${IDEMPOTENCY_PREFIX_IMPORTACIONES}:${tipo}:${hash}`;
+  }
+
+  async function iniciarIdempotenciaImportacion() {
+    if (!userId) {
+      return {
+        ok: false,
+        mensaje: "Sesion no valida.",
+        persistidaId: null as string | null,
+      };
+    }
+
+    if (!archivoHash) {
+      return {
+        ok: false,
+        mensaje: "No se pudo calcular el hash del archivo. Vuelve a cargarlo.",
+        persistidaId: null as string | null,
+      };
+    }
+
+    const key = idempotencyKeyImportacion();
+
+    try {
+      const { data: existente, error: consultaError } = await supabase
+        .from("idempotency_keys_operativas")
+        .select("id,estado,usuario_id,modulo,accion,resultado_resumen")
+        .eq("idempotency_key", key)
+        .maybeSingle();
+
+      if (consultaError) throw consultaError;
+
+      if (existente) {
+        if (existente.usuario_id !== userId) {
+          return {
+            ok: false,
+            mensaje: "Este archivo ya fue registrado por otro usuario.",
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.modulo !== "importaciones" || existente.accion !== `importar_${tipo}`) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otra operacion.",
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.estado === "completada") {
+          return {
+            ok: false,
+            mensaje: "Este archivo ya fue importado. No se repetira la carga.",
+            persistidaId: String(existente.id),
+            replay: true,
+          };
+        }
+
+        if (existente.estado === "en_proceso") {
+          return {
+            ok: false,
+            mensaje: "Esta importacion ya esta en proceso. Espera antes de reintentar.",
+            persistidaId: String(existente.id),
+          };
+        }
+
+        return {
+          ok: false,
+          mensaje: "Este archivo ya fue usado en una importacion previa. Revisa el historial antes de reintentar.",
+          persistidaId: String(existente.id),
+        };
+      }
+
+      const { data: creada, error: insertError } = await supabase
+        .from("idempotency_keys_operativas")
+        .insert({
+          expira_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          idempotency_key: key,
+          usuario_id: userId,
+          empresa_id: null,
+          modulo: "importaciones",
+          accion: `importar_${tipo}`,
+          estado: "en_proceso",
+          request_hash: archivoHash,
+          entidad_tipo: configActual.tabla,
+          entidad_id: null,
+        })
+        .select("id")
+        .single();
+
+      if (insertError) throw insertError;
+
+      return {
+        ok: true,
+        persistidaId: String(creada.id),
+      };
+    } catch (error) {
+      console.warn("Idempotencia persistente de importaciones no disponible:", error);
+      return {
+        ok: true,
+        persistidaId: null as string | null,
+        modoTemporal: true,
+      };
+    }
+  }
+
+  async function completarIdempotenciaImportacion(
+    persistidaId: string | null,
+    resultadoResumen: Record<string, unknown>
+  ) {
+    if (!persistidaId) return;
+
+    const { error } = await supabase
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "completada",
+        entidad_tipo: configActual.tabla,
+        resultado_resumen: resultadoResumen,
+        error_resumen: null,
+      })
+      .eq("id", persistidaId);
+
+    if (error) {
+      console.warn("No se pudo completar idempotencia de importacion:", error.message);
+    }
+  }
+
+  async function fallarIdempotenciaImportacion(
+    persistidaId: string | null,
+    error: unknown
+  ) {
+    if (!persistidaId) return;
+
+    const { error: updateError } = await supabase
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "fallida",
+        error_resumen:
+          error instanceof Error ? error.message.slice(0, 500) : "Error no identificado",
+      })
+      .eq("id", persistidaId);
+
+    if (updateError) {
+      console.warn("No se pudo marcar idempotencia fallida de importacion:", updateError.message);
+    }
+  }
+
+  function separarDuplicadosInternos(
+    filas: FilaPreview[],
+    obtenerClave: (fila: FilaPreview) => string | null
+  ) {
+    const vistas = new Set<string>();
+    const importables: FilaPreview[] = [];
+    const excluidas: FilaPreview[] = [];
+
+    filas.forEach((fila) => {
+      const clave = obtenerClave(fila);
+      if (!clave) {
+        importables.push(fila);
+        return;
+      }
+
+      if (vistas.has(clave)) {
+        excluidas.push({
+          ...fila,
+          valido: false,
+          errores: [...fila.errores, "Duplicado dentro del archivo"],
+        });
+        return;
+      }
+
+      vistas.add(clave);
+      importables.push(fila);
+    });
+
+    return { importables, excluidas };
+  }
+
+  async function detectarDuplicadosImportacion(filas: FilaPreview[]): Promise<ResultadoDuplicados> {
+    const errores: string[] = [];
+    let resultado: ResultadoDuplicados = { importables: filas, excluidas: [], errores };
+    const empresasIds = Array.from(
+      new Set(
+        filas
+          .map((fila) => Number(fila.data.empresa_id))
+          .filter((empresaId) => Number.isFinite(empresaId) && empresaId > 0)
+      )
+    );
+
+    if (!empresasIds.length) {
+      return {
+        importables: [],
+        excluidas: filas.map((fila) => ({
+          ...fila,
+          valido: false,
+          errores: [...fila.errores, "No hay empresa valida para importar"],
+        })),
+        errores: ["No hay empresas validas para importar."],
+      };
+    }
+
+    if (tipo === "proveedores") {
+      const separados = separarDuplicadosInternos(
+        filas,
+        (fila) => `${fila.data.empresa_id}:${normalizarClave(fila.data.nit)}`
+      );
+      resultado = { ...resultado, ...separados };
+
+      const { data, error } = await supabase
+        .from("proveedores")
+        .select("empresa_id,nit")
+        .in("empresa_id", empresasIds);
+
+      if (error) throw error;
+
+      const existentes = new Set(
+        (data || []).map((item) => `${item.empresa_id}:${normalizarClave(item.nit)}`)
+      );
+      const importables = resultado.importables.filter(
+        (fila) => !existentes.has(`${fila.data.empresa_id}:${normalizarClave(fila.data.nit)}`)
+      );
+      const excluidas = [
+        ...resultado.excluidas,
+        ...resultado.importables
+          .filter((fila) => existentes.has(`${fila.data.empresa_id}:${normalizarClave(fila.data.nit)}`))
+          .map((fila) => ({
+            ...fila,
+            valido: false,
+            errores: [...fila.errores, "Proveedor duplicado por empresa + NIT"],
+          })),
+      ];
+
+      return { importables, excluidas, errores };
+    }
+
+    if (tipo === "cheques") {
+      const claveCheque = (fila: FilaPreview) => {
+        if (normalizarClave(fila.data.forma_pago) !== "cheque") return null;
+        return [
+          fila.data.empresa_id,
+          fila.data.fondo_empresa_id || "sin-fondo",
+          fila.data.chequera_id || "sin-chequera",
+          normalizarClave(fila.data.numero_cheque),
+        ].join(":");
+      };
+      const separados = separarDuplicadosInternos(filas, claveCheque);
+      resultado = { ...resultado, ...separados };
+
+      const { data, error } = await supabase
+        .from("cheques")
+        .select("empresa_id,fondo_empresa_id,chequera_id,numero_cheque,estado")
+        .in("empresa_id", empresasIds);
+
+      if (error) throw error;
+
+      const existentes = new Set(
+        (data || [])
+          .filter((item) => !["Anulado", "Rechazado"].includes(String(item.estado || "")))
+          .map((item) =>
+            [
+              item.empresa_id,
+              item.fondo_empresa_id || "sin-fondo",
+              item.chequera_id || "sin-chequera",
+              normalizarClave(item.numero_cheque),
+            ].join(":")
+          )
+      );
+
+      const importables = resultado.importables.filter((fila) => {
+        const clave = claveCheque(fila);
+        return !clave || !existentes.has(clave);
+      });
+      const excluidas = [
+        ...resultado.excluidas,
+        ...resultado.importables
+          .filter((fila) => {
+            const clave = claveCheque(fila);
+            return Boolean(clave && existentes.has(clave));
+          })
+          .map((fila) => ({
+            ...fila,
+            valido: false,
+            errores: [...fila.errores, "Cheque duplicado por empresa + fondo + chequera + numero"],
+          })),
+      ];
+
+      return { importables, excluidas, errores };
+    }
+
+    if (tipo === "ordenes_compra") {
+      const claveOrden = (fila: FilaPreview) => {
+        const numeroOrden = normalizarClave(fila.data.numero_orden);
+        if (numeroOrden) return `${fila.data.empresa_id}:orden:${numeroOrden}`;
+        return `${fila.data.empresa_id}:factura:${normalizarClave(fila.data.proveedor)}:${normalizarClave(fila.data.numero_factura)}`;
+      };
+      const separados = separarDuplicadosInternos(filas, claveOrden);
+      resultado = { ...resultado, ...separados };
+
+      const { data, error } = await supabase
+        .from("ordenes_compra")
+        .select("empresa_id,numero_orden,numero_factura,proveedor")
+        .in("empresa_id", empresasIds);
+
+      if (error) throw error;
+
+      const existentes = new Set(
+        (data || []).flatMap((item) => {
+          const claves: string[] = [];
+          const numeroOrden = normalizarClave(item.numero_orden);
+          const numeroFactura = normalizarClave(item.numero_factura);
+          if (numeroOrden) claves.push(`${item.empresa_id}:orden:${numeroOrden}`);
+          if (numeroFactura) {
+            claves.push(`${item.empresa_id}:factura:${normalizarClave(item.proveedor)}:${numeroFactura}`);
+          }
+          return claves;
+        })
+      );
+
+      const importables = resultado.importables.filter((fila) => !existentes.has(claveOrden(fila)));
+      const excluidas = [
+        ...resultado.excluidas,
+        ...resultado.importables
+          .filter((fila) => existentes.has(claveOrden(fila)))
+          .map((fila) => ({
+            ...fila,
+            valido: false,
+            errores: [...fila.errores, "Orden duplicada por numero de orden o factura/proveedor"],
+          })),
+      ];
+
+      return { importables, excluidas, errores };
+    }
+
+    if (tipo === "movimientos") {
+      const claveMovimiento = (fila: FilaPreview) => {
+        const referencia = normalizarClave(fila.data.referencia);
+        return referencia ? `${fila.data.empresa_id}:${referencia}` : null;
+      };
+      const separados = separarDuplicadosInternos(filas, claveMovimiento);
+      resultado = { ...resultado, ...separados };
+
+      const { data, error } = await supabase
+        .from("movimientos")
+        .select("empresa_id,referencia")
+        .in("empresa_id", empresasIds);
+
+      if (error) throw error;
+
+      const existentes = new Set(
+        (data || [])
+          .filter((item) => normalizarClave(item.referencia))
+          .map((item) => `${item.empresa_id}:${normalizarClave(item.referencia)}`)
+      );
+      const importables = resultado.importables.filter((fila) => {
+        const clave = claveMovimiento(fila);
+        return !clave || !existentes.has(clave);
+      });
+      const excluidas = [
+        ...resultado.excluidas,
+        ...resultado.importables
+          .filter((fila) => {
+            const clave = claveMovimiento(fila);
+            return Boolean(clave && existentes.has(clave));
+          })
+          .map((fila) => ({
+            ...fila,
+            valido: false,
+            errores: [...fila.errores, "Movimiento duplicado por empresa + referencia"],
+          })),
+      ];
+
+      return { importables, excluidas, errores };
+    }
+
+    const clavePlanilla = (fila: FilaPreview) =>
+      [
+        fila.data.empresa_id,
+        normalizarClave(fila.data.dpi || fila.data.empleado),
+        normalizarClave(fila.data.fecha),
+      ].join(":");
+    const separados = separarDuplicadosInternos(filas, clavePlanilla);
+    resultado = { ...resultado, ...separados };
+
+    try {
+      const { data, error } = await supabase
+        .from("planillas")
+        .select("empresa_id,dpi,empleado,fecha")
+        .in("empresa_id", empresasIds);
+
+      if (error) throw error;
+
+      const existentes = new Set(
+        (data || []).map((item) =>
+          [
+            item.empresa_id,
+            normalizarClave(item.dpi || item.empleado),
+            normalizarClave(item.fecha),
+          ].join(":")
+        )
+      );
+      const importables = resultado.importables.filter((fila) => !existentes.has(clavePlanilla(fila)));
+      const excluidas = [
+        ...resultado.excluidas,
+        ...resultado.importables
+          .filter((fila) => existentes.has(clavePlanilla(fila)))
+          .map((fila) => ({
+            ...fila,
+            valido: false,
+            errores: [...fila.errores, "Planilla duplicada por empleado/DPI + fecha"],
+          })),
+      ];
+
+      return { importables, excluidas, errores };
+    } catch (error) {
+      console.warn("No se pudo validar duplicados de planillas:", error);
+      return resultado;
     }
   }
 
   async function registrarAuditoriaImportacion(
     filasInsertadas: FilaPreview[],
-    resultado: "confirmada" | "parcial" = "confirmada"
+    resultado: "confirmada" | "parcial" = "confirmada",
+    opciones: {
+      filasExcluidas?: FilaPreview[];
+      erroresResumen?: string[];
+      idempotencyKey?: string | null;
+    } = {}
   ) {
     const empresasAfectadas = Array.from(
       new Set(
@@ -920,16 +1645,23 @@ monto_gtq: montoGtq,
           filas_exitosas: filasInsertadas.length,
           filas_insertadas: filasInsertadas.length,
           filas_con_error: filasConError.length,
+          filas_excluidas: opciones.filasExcluidas?.length || 0,
           filas_pendientes_ejecucion:
             resultado === "parcial"
               ? Math.max(filasValidas.length - filasInsertadas.length, 0)
               : 0,
           archivo_origen: nombreArchivo || null,
+          archivo_hash: archivoHash || null,
+          idempotency_key: opciones.idempotencyKey || null,
           columnas_configuradas: configActual.columnas,
+          columnas_detectadas: columnasArchivo,
           resumen_errores:
-            filasConError.length > 0
-              ? "Se excluyeron filas por errores de validacion."
-              : null,
+            opciones.erroresResumen?.length
+              ? opciones.erroresResumen.slice(0, 20)
+              : filasConError.length > 0
+                ? ["Se excluyeron filas por errores de validacion."]
+                : null,
+          contenido_excel_guardado: false,
         },
       });
 
@@ -950,12 +1682,17 @@ async function confirmarImportacion() {
   }
 
   if (!userId) {
-    toast.error("Sesión no válida");
+    toast.error("Sesion no valida");
     return;
   }
 
   if (!filasValidas.length) {
-    toast.error("No hay filas válidas para importar");
+    toast.error("No hay filas validas para importar");
+    return;
+  }
+
+  if (!archivoHash) {
+    toast.error("Vuelve a cargar el archivo para calcular su hash de seguridad.");
     return;
   }
 
@@ -965,22 +1702,66 @@ async function confirmarImportacion() {
     await registrarIntentoImportacionBloqueado("importacion_activa_en_navegador", {
       tipo_importacion: tipo,
       usuario_actual: userId,
+      archivo_hash: archivoHash,
     });
+    return;
+  }
+
+  const idempotency = await iniciarIdempotenciaImportacion();
+
+  if (!idempotency.ok) {
+    await registrarIntentoImportacionBloqueado("idempotencia_bloqueada", {
+      tipo_importacion: tipo,
+      archivo: nombreArchivo || null,
+      archivo_hash: archivoHash,
+      mensaje: idempotency.mensaje,
+    });
+    toast.error(idempotency.mensaje || "No se puede repetir esta importacion.");
     return;
   }
 
   window.localStorage.setItem(IMPORTACION_ACTIVA_KEY, userId);
   setProcesando(true);
   const toastId = toast.loading("Importando datos...");
+  let operacionFinalizada = false;
 
   try {
     const tabla = configActual.tabla;
+    const duplicados = await detectarDuplicadosImportacion(filasValidas);
+    const filasParaImportar = duplicados.importables;
+    const filasExcluidas = duplicados.excluidas;
+    const erroresResumen = [
+      ...duplicados.errores,
+      ...filasExcluidas.slice(0, 20).map((fila) =>
+        `Fila ${fila.fila}: ${fila.errores.join("; ")}`
+      ),
+    ];
+
+    if (!filasParaImportar.length) {
+      await registrarIntentoImportacionBloqueado("importacion_sin_filas_insertables", {
+        tipo_importacion: tipo,
+        archivo: nombreArchivo || null,
+        archivo_hash: archivoHash,
+        filas_totales: preview.length,
+        filas_validas: filasValidas.length,
+        filas_excluidas: filasExcluidas.length,
+        errores_resumen: erroresResumen.slice(0, 20),
+      });
+      await fallarIdempotenciaImportacion(
+        idempotency.persistidaId,
+        new Error("La importacion no tiene filas insertables.")
+      );
+      toast.error("No hay filas insertables. Todas fueron excluidas por duplicados o validaciones.", {
+        id: toastId,
+      });
+      return;
+    }
 
     if (tipo === "cheques") {
       const filasImportadas: FilaPreview[] = [];
 
       try {
-        for (const fila of filasValidas) {
+        for (const fila of filasParaImportar) {
           const registro = fila.data;
 
           const { data, error } = await supabase
@@ -1004,65 +1785,114 @@ async function confirmarImportacion() {
                 estado: "Reservado",
                 cheque_pago_id: data.id,
               })
-              .eq("id", Number(registro.cheque_fisico_id));
+              .eq("id", Number(registro.cheque_fisico_id))
+              .eq("estado", "Disponible");
 
             if (chequeFisicoError) throw chequeFisicoError;
           }
         }
       } catch (error) {
         if (filasImportadas.length > 0) {
-          await registrarAuditoriaImportacion(filasImportadas, "parcial");
+          await registrarAuditoriaImportacion(filasImportadas, "parcial", {
+            filasExcluidas,
+            erroresResumen,
+            idempotencyKey: idempotencyKeyImportacion(),
+          });
         }
 
         throw error;
       }
 
+      const resultadoAuditoria = filasExcluidas.length ? "parcial" : "confirmada";
       const auditoriaRegistrada = await registrarAuditoriaImportacion(
-        filasImportadas
+        filasImportadas,
+        resultadoAuditoria,
+        {
+          filasExcluidas,
+          erroresResumen,
+          idempotencyKey: idempotencyKeyImportacion(),
+        }
       );
+
+      await completarIdempotenciaImportacion(idempotency.persistidaId, {
+        tipo_importacion: tipo,
+        archivo_hash: archivoHash,
+        filas_totales: preview.length,
+        filas_insertadas: filasImportadas.length,
+        filas_excluidas: filasExcluidas.length,
+        resultado: resultadoAuditoria,
+      });
+      operacionFinalizada = true;
 
       await cargarDatosCheques(empresasPermitidasIds);
 
       if (auditoriaRegistrada) {
-        toast.success(`Se importaron ${filasImportadas.length} cheques / pagos`, {
-          id: toastId,
-        });
+        toast.success(
+          `Se importaron ${filasImportadas.length} cheques / pagos${filasExcluidas.length ? `; ${filasExcluidas.length} excluidos` : ""}`,
+          { id: toastId }
+        );
       } else {
         toast.error(
-          "Cheques importados, pero no se pudo registrar la auditoría.",
+          "Cheques importados, pero no se pudo registrar la auditoria.",
           { id: toastId }
         );
       }
 
       setPreview([]);
       setNombreArchivo("");
+      setArchivoHash("");
+      setColumnasArchivo([]);
       return;
     }
 
-    const registros = filasValidas.map((fila) => fila.data);
+    const registros = filasParaImportar.map((fila) => fila.data);
 
     const { error } = await supabase.from(tabla).insert(registros);
 
     if (error) throw error;
 
-    const auditoriaRegistrada = await registrarAuditoriaImportacion(filasValidas);
+    const resultadoAuditoria = filasExcluidas.length ? "parcial" : "confirmada";
+    const auditoriaRegistrada = await registrarAuditoriaImportacion(
+      filasParaImportar,
+      resultadoAuditoria,
+      {
+        filasExcluidas,
+        erroresResumen,
+        idempotencyKey: idempotencyKeyImportacion(),
+      }
+    );
+
+    await completarIdempotenciaImportacion(idempotency.persistidaId, {
+      tipo_importacion: tipo,
+      archivo_hash: archivoHash,
+      filas_totales: preview.length,
+      filas_insertadas: filasParaImportar.length,
+      filas_excluidas: filasExcluidas.length,
+      resultado: resultadoAuditoria,
+    });
+    operacionFinalizada = true;
 
     if (auditoriaRegistrada) {
       toast.success(
-        `Se importaron ${filasValidas.length} registros en ${configActual.label}`,
+        `Se importaron ${filasParaImportar.length} registros en ${configActual.label}${filasExcluidas.length ? `; ${filasExcluidas.length} excluidos` : ""}`,
         { id: toastId }
       );
     } else {
       toast.error(
-        "Datos importados, pero no se pudo registrar la auditoría.",
+        "Datos importados, pero no se pudo registrar la auditoria.",
         { id: toastId }
       );
     }
 
     setPreview([]);
     setNombreArchivo("");
+    setArchivoHash("");
+    setColumnasArchivo([]);
   } catch (error: any) {
-    console.error(error);
+    console.error("Error confirmando importacion:", error?.message || error);
+    if (!operacionFinalizada) {
+      await fallarIdempotenciaImportacion(idempotency.persistidaId, error);
+    }
     toast.error(error.message || "Error importando datos", { id: toastId });
   } finally {
     window.localStorage.removeItem(IMPORTACION_ACTIVA_KEY);
