@@ -19,6 +19,21 @@ const ROLES_SISTEMA = [
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RATE_LIMIT_VENTANA_MS = 5 * 60 * 1000;
+const RATE_LIMIT_MAX_IP = 20;
+const RATE_LIMIT_MAX_USUARIO = 8;
+
+type RegistroRateLimit = { conteo: number; reiniciaEn: number };
+
+const rateLimitMemoria = globalThis as typeof globalThis & {
+  __controlPlusRateLimitPerfiles?: Map<string, RegistroRateLimit>;
+};
+
+const rateLimitPerfiles =
+  rateLimitMemoria.__controlPlusRateLimitPerfiles ||
+  new Map<string, RegistroRateLimit>();
+
+rateLimitMemoria.__controlPlusRateLimitPerfiles = rateLimitPerfiles;
 
 function json(status: number, body: Record<string, unknown>) {
   return NextResponse.json(body, { status });
@@ -28,8 +43,56 @@ function normalizarTexto(valor: unknown) {
   return typeof valor === "string" ? valor.trim() : "";
 }
 
+function obtenerIp(request: NextRequest) {
+  return (
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") ||
+    "ip-desconocida"
+  );
+}
+
+function consumirRateLimit(clave: string, maximo: number) {
+  const ahora = Date.now();
+  const registro = rateLimitPerfiles.get(clave);
+
+  if (!registro || registro.reiniciaEn <= ahora) {
+    rateLimitPerfiles.set(clave, {
+      conteo: 1,
+      reiniciaEn: ahora + RATE_LIMIT_VENTANA_MS,
+    });
+    return { permitido: true, restante: maximo - 1, reiniciaEn: ahora + RATE_LIMIT_VENTANA_MS };
+  }
+
+  if (registro.conteo >= maximo) {
+    return { permitido: false, restante: 0, reiniciaEn: registro.reiniciaEn };
+  }
+
+  registro.conteo += 1;
+  rateLimitPerfiles.set(clave, registro);
+  return { permitido: true, restante: maximo - registro.conteo, reiniciaEn: registro.reiniciaEn };
+}
+
+function respuestaRateLimit(reiniciaEn: number) {
+  const segundos = Math.max(1, Math.ceil((reiniciaEn - Date.now()) / 1000));
+  return NextResponse.json(
+    { error: "Demasiados intentos. Espera antes de reintentar." },
+    {
+      status: 429,
+      headers: {
+        "Retry-After": String(segundos),
+      },
+    }
+  );
+}
+
 export async function POST(request: NextRequest) {
   const response = NextResponse.next();
+  const ip = obtenerIp(request);
+  const limiteIp = consumirRateLimit(`ip:${ip}`, RATE_LIMIT_MAX_IP);
+
+  if (!limiteIp.permitido) {
+    return respuestaRateLimit(limiteIp.reiniciaEn);
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -67,6 +130,15 @@ export async function POST(request: NextRequest) {
 
   if (userError || !user) {
     return json(401, { error: "Sesion no valida." });
+  }
+
+  const limiteUsuario = consumirRateLimit(
+    `usuario:${user.id}:ip:${ip}`,
+    RATE_LIMIT_MAX_USUARIO
+  );
+
+  if (!limiteUsuario.permitido) {
+    return respuestaRateLimit(limiteUsuario.reiniciaEn);
   }
 
   const { data: perfilActual, error: perfilActualError } = await supabaseSesion

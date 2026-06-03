@@ -506,6 +506,11 @@ export default function AdminPage() {
   }
 
   async function crearUsuarioOperativo() {
+    if (procesando) {
+      toast.error("Ya hay una operacion administrativa en proceso.");
+      return;
+    }
+
     if (!nuevoUsuario.nombre.trim() || !nuevoUsuario.correo.trim() || !nuevoUsuario.uid.trim()) {
       toast.error("Completa nombre, correo y UID de Supabase Auth");
       return;
@@ -539,6 +544,11 @@ export default function AdminPage() {
   }
 
   async function guardarPermisosUsuario() {
+    if (procesando) {
+      toast.error("Ya hay una operacion administrativa en proceso.");
+      return;
+    }
+
     if (!usuarioEditando) {
       toast.error("Selecciona un usuario");
       return;

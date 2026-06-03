@@ -66,6 +66,7 @@ interface FiltrosReportes {
 }
 
 const LIMITE_REPORTES = 100;
+const LIMITE_FILAS_EXPORTACION_REPORTES = 1000;
 
 function fechaLocalISO(fecha = new Date()) {
   const copia = new Date(fecha);
@@ -249,6 +250,8 @@ export default function ReportesPage() {
     idsPermitidos: number[],
     filtrosAplicados: FiltrosReportes
   ) {
+    if (cargandoReportes) return;
+
     setCargandoReportes(true);
     setErrorCarga(null);
 
@@ -644,6 +647,21 @@ export default function ReportesPage() {
     const secciones = seccionesExportacionReportes();
     if (!secciones.length) {
       window.alert("No hay datos de reportes para exportar.");
+      return;
+    }
+
+    const totalFilas = secciones.reduce(
+      (total, seccion) => total + seccion.filas.length,
+      0
+    );
+    if (totalFilas > LIMITE_FILAS_EXPORTACION_REPORTES) {
+      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato: "csv",
+        filtros,
+        filas: totalFilas,
+        limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
+      });
       return;
     }
 

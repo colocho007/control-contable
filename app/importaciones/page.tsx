@@ -17,6 +17,10 @@ import {
   Database,
 } from "lucide-react";
 
+const IMPORTACION_MAX_BYTES = 5 * 1024 * 1024;
+const IMPORTACION_MAX_FILAS = 1000;
+const IMPORTACION_ACTIVA_KEY = "controlplus_importacion_activa";
+
 interface Empresa {
   id: number;
   nombre: string;
@@ -205,6 +209,27 @@ export default function ImportacionesPage() {
 
   const filasValidas = preview.filter((f) => f.valido);
   const filasConError = preview.filter((f) => !f.valido);
+
+  async function registrarIntentoImportacionBloqueado(
+    motivo: string,
+    metadatos: Record<string, unknown>
+  ) {
+    try {
+      await registrarAuditoriaEvento({
+        modulo: "importaciones",
+        accion: "bloquear_importacion",
+        descripcion: "Intento de importacion bloqueado por limite operativo",
+        sensible: true,
+        origen: "modulo_importaciones",
+        metadatos: {
+          motivo,
+          ...metadatos,
+        },
+      });
+    } catch (error) {
+      console.warn("No se pudo auditar intento de importacion bloqueado:", error);
+    }
+  }
 
   useEffect(() => {
     iniciar();
@@ -803,6 +828,18 @@ monto_gtq: montoGtq,
 
     if (!archivo) return;
 
+    if (archivo.size > IMPORTACION_MAX_BYTES) {
+      toast.error("El archivo supera el limite de 5 MB.");
+      await registrarIntentoImportacionBloqueado("archivo_excede_tamano", {
+        archivo: archivo.name,
+        bytes: archivo.size,
+        limite_bytes: IMPORTACION_MAX_BYTES,
+        tipo_importacion: tipo,
+      });
+      e.target.value = "";
+      return;
+    }
+
     setNombreArchivo(archivo.name);
     setPreview([]);
 
@@ -818,6 +855,19 @@ monto_gtq: montoGtq,
 
       if (!filas.length) {
         toast.error("El archivo está vacío");
+        return;
+      }
+
+      if (filas.length > IMPORTACION_MAX_FILAS) {
+        toast.error(`El archivo supera el limite de ${IMPORTACION_MAX_FILAS} filas.`);
+        await registrarIntentoImportacionBloqueado("archivo_excede_filas", {
+          archivo: archivo.name,
+          filas: filas.length,
+          limite_filas: IMPORTACION_MAX_FILAS,
+          tipo_importacion: tipo,
+        });
+        setNombreArchivo("");
+        e.target.value = "";
         return;
       }
 
@@ -894,6 +944,11 @@ monto_gtq: montoGtq,
   }
 
 async function confirmarImportacion() {
+  if (procesando) {
+    toast.error("Ya hay una importacion en proceso.");
+    return;
+  }
+
   if (!userId) {
     toast.error("Sesión no válida");
     return;
@@ -904,6 +959,17 @@ async function confirmarImportacion() {
     return;
   }
 
+  const importacionActiva = window.localStorage.getItem(IMPORTACION_ACTIVA_KEY);
+  if (importacionActiva && importacionActiva !== userId) {
+    toast.error("Hay una importacion activa en este navegador.");
+    await registrarIntentoImportacionBloqueado("importacion_activa_en_navegador", {
+      tipo_importacion: tipo,
+      usuario_actual: userId,
+    });
+    return;
+  }
+
+  window.localStorage.setItem(IMPORTACION_ACTIVA_KEY, userId);
   setProcesando(true);
   const toastId = toast.loading("Importando datos...");
 
@@ -999,6 +1065,7 @@ async function confirmarImportacion() {
     console.error(error);
     toast.error(error.message || "Error importando datos", { id: toastId });
   } finally {
+    window.localStorage.removeItem(IMPORTACION_ACTIVA_KEY);
     setProcesando(false);
   }
 }

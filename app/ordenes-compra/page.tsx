@@ -927,6 +927,11 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
   }
 
   async function crearOrden() {
+    if (procesandoId !== null) {
+      toast.error("Ya hay una operacion de ordenes en proceso.");
+      return;
+    }
+
     if (!userId) {
       toast.error("Sesión no válida");
       return;
@@ -979,6 +984,7 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
     }
 
     suspenderAutoguardado();
+    setProcesandoId(-1);
     const toastId = toast.loading("Creando orden de compra...");
     let ordenFinalizada = false;
     let auditoriaCentralRegistrada = true;
@@ -1309,6 +1315,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         toast.error(error.message || "Error al crear orden", { id: toastId });
       }
     } finally {
+      setProcesandoId(null);
       if (ordenFinalizada) {
         ordenCreadaIdRef.current = null;
         borradorConsumidoRef.current = false;
@@ -1325,6 +1332,11 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
   }
 
   async function confirmarFirma(orden: OrdenCompra) {
+    if (procesandoId !== null) {
+      toast.error("Ya hay una operacion de ordenes en proceso.");
+      return;
+    }
+
     if (!userId) return;
 
     if (esAuditorSoloLecturaOrden(orden.empresa_id)) {
@@ -1527,6 +1539,11 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
   }
 
   async function observarOrden(orden: OrdenCompra) {
+    if (procesandoId !== null) {
+      toast.error("Ya hay una operacion de ordenes en proceso.");
+      return;
+    }
+
     if (!userId) return;
 
     const comentario = window.prompt("Escribe el motivo de la observación:");

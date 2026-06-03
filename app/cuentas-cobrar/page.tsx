@@ -434,6 +434,11 @@ export default function CuentasCobrarPage() {
   }
 
   async function registrarPago(cuenta: CuentaCobrar) {
+    if (procesando) {
+      toast.error("Ya hay una operacion en proceso.");
+      return;
+    }
+
     if (!userId) {
       toast.error("Sesion no valida.");
       return;
@@ -545,6 +550,11 @@ export default function CuentasCobrarPage() {
   }
 
   async function anularPago(pago: PagoCuentaCobrar) {
+    if (procesando) {
+      toast.error("Ya hay una operacion en proceso.");
+      return;
+    }
+
     if (!userId) {
       toast.error("Sesion no valida.");
       return;

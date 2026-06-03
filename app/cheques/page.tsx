@@ -1439,6 +1439,11 @@ async function crearChequera() {
  }
 
  async function crearCheque() {
+  if (procesandoId !== null) {
+    toast.error("Ya hay una operacion de cheques en proceso.");
+    return;
+  }
+
   if (esAuditorSoloLecturaCheque(form.empresaId)) {
     toast.error("El auditor solo lectura no puede crear cheques.");
     return;
@@ -1566,6 +1571,7 @@ async function crearChequera() {
   }
 
   suspenderAutoguardado();
+  setProcesandoId(-1);
   const toastId = toast.loading("Creando cheque...");
   let chequeFinalizado = false;
   let auditoriaCentralRegistrada = true;
@@ -1861,6 +1867,7 @@ async function crearChequera() {
       toast.error(error.message || "Error al crear cheque", { id: toastId });
     }
   } finally {
+    setProcesandoId(null);
     if (chequeFinalizado) {
       chequeCreadoIdRef.current = null;
       borradorConsumidoRef.current = false;
@@ -1910,6 +1917,11 @@ async function crearChequera() {
   }
 
 async function autorizarCheque(cheque: Cheque) {
+  if (procesandoId !== null) {
+    toast.error("Ya hay una operacion de cheques en proceso.");
+    return;
+  }
+
   if (!userId) return;
   if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
     toast.error("El auditor solo lectura no puede autorizar cheques.");
@@ -2072,6 +2084,11 @@ async function autorizarCheque(cheque: Cheque) {
 }
 
 async function rechazarCheque(cheque: Cheque) {
+  if (procesandoId !== null) {
+    toast.error("Ya hay una operacion de cheques en proceso.");
+    return;
+  }
+
   if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
     toast.error("El auditor solo lectura no puede rechazar cheques.");
     return;
@@ -2241,6 +2258,11 @@ if (userId && perfilActual) {
 }
 
 async function archivarCheque(cheque: Cheque) {
+  if (procesandoId !== null) {
+    toast.error("Ya hay una operacion de cheques en proceso.");
+    return;
+  }
+
   if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
     toast.error("El auditor solo lectura no puede archivar cheques.");
     return;
@@ -2411,6 +2433,11 @@ if (userId && perfilActual) {
 }
 
 async function marcarPagado(cheque: Cheque) {
+  if (procesandoId !== null) {
+    toast.error("Ya hay una operacion de cheques en proceso.");
+    return;
+  }
+
   if (!userId) return;
   if (esAuditorSoloLecturaCheque(cheque.empresa_id)) {
     toast.error("El auditor solo lectura no puede pagar cheques.");
