@@ -113,6 +113,7 @@ const TIPOS_DOCUMENTO_ORDENES = [
 ];
 const REFERENCIA_BORRADOR_ORDEN = "nueva-orden";
 const TITULO_BORRADOR_ORDEN = "Borrador de orden de compra";
+const IDEMPOTENCY_PREFIX_ORDENES = "controlplus_idempotency_ordenes";
 const COLUMNAS_BORRADOR_ORDEN =
   "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
 
@@ -887,6 +888,260 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
     );
   }
 
+  function generarIdempotencyKeyOrden(accion: string) {
+    const aleatorio =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return `${IDEMPOTENCY_PREFIX_ORDENES}:${accion}:${aleatorio}`;
+  }
+
+  function obtenerIdempotencyKeyOrden(alcance: string, accion: string) {
+    const storageKey = `${IDEMPOTENCY_PREFIX_ORDENES}:${alcance}`;
+    const existente = window.localStorage.getItem(storageKey);
+    if (existente) return { key: existente, storageKey };
+
+    const key = generarIdempotencyKeyOrden(accion);
+    window.localStorage.setItem(storageKey, key);
+    return { key, storageKey };
+  }
+
+  function liberarIdempotencyKeyOrden(storageKey: string) {
+    window.localStorage.removeItem(storageKey);
+  }
+
+  async function iniciarOperacionIdempotenteOrden({
+    alcance,
+    accion,
+    empresaId,
+    entidadTipo,
+    entidadId,
+    requestHash,
+  }: {
+    alcance: string;
+    accion: string;
+    empresaId: number | null;
+    entidadTipo: string;
+    entidadId: string | number | null;
+    requestHash?: string | null;
+  }) {
+    if (!userId) {
+      return {
+        ok: false,
+        mensaje: "Sesion no valida.",
+        key: "",
+        storageKey: "",
+        persistidaId: null as string | null,
+      };
+    }
+
+    const { key, storageKey } = obtenerIdempotencyKeyOrden(alcance, accion);
+
+    try {
+      const { data: existente, error: consultaError } = await supabase
+        .from("idempotency_keys_operativas")
+        .select("id,estado,resultado_resumen,usuario_id,empresa_id,modulo,accion")
+        .eq("idempotency_key", key)
+        .maybeSingle();
+
+      if (consultaError) throw consultaError;
+
+      if (existente) {
+        if (existente.usuario_id !== userId) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otro usuario.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (
+          existente.empresa_id !== null &&
+          existente.empresa_id !== empresaId
+        ) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otra empresa.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.modulo !== "ordenes" || existente.accion !== accion) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otra operacion.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.estado === "completada") {
+          return {
+            ok: false,
+            mensaje: "Esta operacion ya fue procesada. No se duplicara historial ni auditoria.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+            replay: true,
+          };
+        }
+
+        if (existente.estado === "en_proceso") {
+          return {
+            ok: false,
+            mensaje: "La operacion ya esta en proceso. Espera antes de reintentar.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        return {
+          ok: false,
+          mensaje: "La llave de idempotencia ya fue usada. Inicia una nueva operacion.",
+          key,
+          storageKey,
+          persistidaId: String(existente.id),
+        };
+      }
+
+      const { data: creada, error: insertError } = await supabase
+        .from("idempotency_keys_operativas")
+        .insert({
+          expira_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          idempotency_key: key,
+          usuario_id: userId,
+          empresa_id: empresaId,
+          modulo: "ordenes",
+          accion,
+          estado: "en_proceso",
+          request_hash: requestHash || alcance,
+          entidad_tipo: entidadTipo,
+          entidad_id:
+            entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+        })
+        .select("id")
+        .single();
+
+      if (insertError) {
+        const { data: creadaPorOtroIntento, error: reconsultaError } =
+          await supabase
+            .from("idempotency_keys_operativas")
+            .select("id,estado,resultado_resumen,usuario_id,empresa_id,modulo,accion")
+            .eq("idempotency_key", key)
+            .maybeSingle();
+
+        if (!reconsultaError && creadaPorOtroIntento) {
+          if (creadaPorOtroIntento.estado === "completada") {
+            return {
+              ok: false,
+              mensaje: "Esta operacion ya fue procesada. No se duplicara historial ni auditoria.",
+              key,
+              storageKey,
+              persistidaId: String(creadaPorOtroIntento.id),
+              replay: true,
+            };
+          }
+
+          if (creadaPorOtroIntento.estado === "en_proceso") {
+            return {
+              ok: false,
+              mensaje: "La operacion ya esta en proceso. Espera antes de reintentar.",
+              key,
+              storageKey,
+              persistidaId: String(creadaPorOtroIntento.id),
+            };
+          }
+
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia ya fue usada. Inicia una nueva operacion.",
+            key,
+            storageKey,
+            persistidaId: String(creadaPorOtroIntento.id),
+          };
+        }
+
+        throw insertError;
+      }
+
+      return {
+        ok: true,
+        key,
+        storageKey,
+        persistidaId: String(creada.id),
+      };
+    } catch (error) {
+      console.warn("Idempotencia persistente de ordenes no disponible:", error);
+      return {
+        ok: true,
+        key,
+        storageKey,
+        persistidaId: null as string | null,
+        modoTemporal: true,
+      };
+    }
+  }
+
+  async function completarOperacionIdempotenteOrden(
+    persistidaId: string | null,
+    storageKey: string,
+    entidadTipo: string,
+    entidadId: string | number | null,
+    resultadoResumen: Record<string, unknown>
+  ) {
+    if (persistidaId) {
+      const { error } = await supabase
+        .from("idempotency_keys_operativas")
+        .update({
+          estado: "completada",
+          entidad_tipo: entidadTipo,
+          entidad_id:
+            entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+          resultado_resumen: resultadoResumen,
+          error_resumen: null,
+        })
+        .eq("id", persistidaId);
+
+      if (error) {
+        console.warn("No se pudo completar idempotencia de ordenes:", error);
+      }
+    }
+
+    liberarIdempotencyKeyOrden(storageKey);
+  }
+
+  async function fallarOperacionIdempotenteOrden(
+    persistidaId: string | null,
+    storageKey: string,
+    error: unknown
+  ) {
+    if (persistidaId) {
+      const { error: updateError } = await supabase
+        .from("idempotency_keys_operativas")
+        .update({
+          estado: "fallida",
+          error_resumen:
+            error instanceof Error
+              ? error.message.slice(0, 500)
+              : "Error no identificado",
+        })
+        .eq("id", persistidaId);
+
+      if (updateError) {
+        console.warn("No se pudo marcar idempotencia fallida de ordenes:", updateError);
+      }
+    }
+
+    liberarIdempotencyKeyOrden(storageKey);
+  }
+
   async function registrarAuditoriaOrden(
     params: RegistrarAuditoriaEventoParams,
     contexto: string
@@ -983,6 +1238,41 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
       return;
     }
 
+    const idempotency = await iniciarOperacionIdempotenteOrden({
+      alcance: [
+        "crear_orden",
+        userId,
+        form.empresaId,
+        borradorOrigenIdRef.current || REFERENCIA_BORRADOR_ORDEN,
+        form.proveedor,
+        form.concepto,
+        form.monto,
+        firmantesSeleccionados.join(","),
+      ].join(":"),
+      accion: "crear_orden",
+      empresaId: Number(form.empresaId),
+      entidadTipo: "orden_compra",
+      entidadId: null,
+      requestHash: [
+        form.empresaId,
+        form.proveedor,
+        form.concepto,
+        form.monto,
+        form.moneda,
+        form.fechaNecesaria,
+        firmantesSeleccionados.join(","),
+      ].join("|"),
+    });
+
+    if (!idempotency.ok) {
+      if (idempotency.replay) {
+        await refrescarOrdenes();
+      }
+
+      toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
+      return;
+    }
+
     suspenderAutoguardado();
     setProcesandoId(-1);
     const toastId = toast.loading("Creando orden de compra...");
@@ -1041,6 +1331,17 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
 
           bloquearBorradorConsumido(
             "Esta orden ya fue creada desde este borrador."
+          );
+          await completarOperacionIdempotenteOrden(
+            idempotency.persistidaId,
+            idempotency.storageKey,
+            "orden_compra",
+            ordenExistente.id,
+            {
+              orden_id: ordenExistente.id,
+              accion: "crear_orden",
+              resultado: "borrador_ya_consumido",
+            }
           );
           toast.error("Esta orden ya fue creada desde este borrador.", {
             id: toastId,
@@ -1149,6 +1450,17 @@ function esAuditorSoloLecturaOrden(empresaId?: number | string | null) {
           bloquearBorradorConsumido(
             "Esta orden ya fue creada desde este borrador."
           );
+          await completarOperacionIdempotenteOrden(
+            idempotency.persistidaId,
+            idempotency.storageKey,
+            "orden_compra",
+            ordenExistente?.id ?? null,
+            {
+              orden_id: ordenExistente?.id ?? null,
+              accion: "crear_orden",
+              resultado: "borrador_duplicado",
+            }
+          );
           toast.error("Esta orden ya fue creada desde este borrador.", {
             id: toastId,
           });
@@ -1251,6 +1563,19 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       setFirmantesSeleccionados([]);
       ordenFinalizada = true;
 
+      await completarOperacionIdempotenteOrden(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        "orden_compra",
+        ordenCreada.id,
+        {
+          orden_id: ordenCreada.id,
+          estado: ordenCreada.estado,
+          accion: "crear_orden",
+          firmas_requeridas: firmantesSeleccionados.length,
+        }
+      );
+
       try {
         await refrescarOrdenes();
       } catch (error) {
@@ -1314,6 +1639,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       } else {
         toast.error(error.message || "Error al crear orden", { id: toastId });
       }
+
+      if (!ordenFinalizada) {
+        await fallarOperacionIdempotenteOrden(
+          idempotency.persistidaId,
+          idempotency.storageKey,
+          error
+        );
+      }
     } finally {
       setProcesandoId(null);
       if (ordenFinalizada) {
@@ -1369,6 +1702,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
     const firmasYaCompletadas =
       orden.ordenes_compra_firmas?.filter((f) => f.estado === "Firmado").length || 0;
     const estaFirmaAprueba = firmasYaCompletadas + 1 >= orden.firmas_requeridas;
+    const accionIdempotente = estaFirmaAprueba ? "aprobar_orden" : "firmar_orden";
 
     if (estaFirmaAprueba) {
       if (!orden.empresa_id) {
@@ -1391,6 +1725,38 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       }
     }
 
+    const idempotency = await iniciarOperacionIdempotenteOrden({
+      alcance: [
+        accionIdempotente,
+        userId,
+        orden.id,
+        firma.id,
+        orden.estado,
+        firmasYaCompletadas,
+      ].join(":"),
+      accion: accionIdempotente,
+      empresaId: orden.empresa_id,
+      entidadTipo: "orden_compra",
+      entidadId: orden.id,
+      requestHash: [
+        orden.id,
+        firma.id,
+        userId,
+        orden.estado,
+        firmasYaCompletadas,
+        orden.firmas_requeridas,
+      ].join("|"),
+    });
+
+    if (!idempotency.ok) {
+      if (idempotency.replay) {
+        await refrescarOrdenes();
+      }
+
+      toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
+      return;
+    }
+
     setProcesandoId(orden.id);
     const toastId = toast.loading("Confirmando firma...");
     let firmaActualizada = false;
@@ -1402,16 +1768,22 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
     try {
       const ahora = new Date().toISOString();
 
-      const { error: firmaError } = await supabase
+      const { data: firmaProcesada, error: firmaError } = await supabase
         .from("ordenes_compra_firmas")
         .update({
           estado: "Firmado",
           firmado_at: ahora,
           comentario: "Firma confirmada",
         })
-        .eq("id", firma.id);
+        .eq("id", firma.id)
+        .eq("estado", "Pendiente")
+        .select("id")
+        .maybeSingle();
 
       if (firmaError) throw firmaError;
+      if (!firmaProcesada) {
+        throw new Error("Esta firma ya fue procesada.");
+      }
       firmaActualizada = true;
       etapaFallida = "contar_firmas";
 
@@ -1481,6 +1853,21 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       );
       operacionCompletada = true;
 
+      await completarOperacionIdempotenteOrden(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        "orden_compra",
+        orden.id,
+        {
+          orden_id: orden.id,
+          firma_id: firma.id,
+          accion: accionIdempotente,
+          estado: nuevoEstado,
+          firmas_completadas: nuevasFirmasCompletadas,
+          aprobada: estaAprobada,
+        }
+      );
+
       await refrescarOrdenes();
 
       if (!historialRegistrado) {
@@ -1533,6 +1920,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       } else {
         toast.error(error.message || "Error al firmar", { id: toastId });
       }
+
+      if (!operacionCompletada) {
+        await fallarOperacionIdempotenteOrden(
+          idempotency.persistidaId,
+          idempotency.storageKey,
+          error
+        );
+      }
     } finally {
       setProcesandoId(null);
     }
@@ -1546,9 +1941,21 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
 
     if (!userId) return;
 
+    if (esAuditorSoloLecturaOrden(orden.empresa_id)) {
+      toast.error("El auditor solo lectura no puede observar ordenes.");
+      return;
+    }
+
     const comentario = window.prompt("Escribe el motivo de la observación:");
 
     if (!comentario) {
+      toast.error("Debes escribir un motivo");
+      return;
+    }
+
+    const comentarioNormalizado = comentario.trim();
+
+    if (!comentarioNormalizado) {
       toast.error("Debes escribir un motivo");
       return;
     }
@@ -1562,6 +1969,55 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
       return;
     }
 
+    if (firma.estado === "Observada") {
+      toast.error("Ya observaste esta orden.");
+      return;
+    }
+
+    if (firma.estado === "Firmado") {
+      toast.error("No puedes observar una firma ya confirmada.");
+      return;
+    }
+
+    if (
+      !tieneFuncionOrden(userId, orden.empresa_id, ["firmante_orden", "autorizador_compra"]) &&
+      !ROLES_FIRMANTES.includes(normalizarRol(perfilActual?.rol))
+    ) {
+      toast.error("No tienes funcion operativa para observar ordenes en esta empresa.");
+      return;
+    }
+
+    const idempotency = await iniciarOperacionIdempotenteOrden({
+      alcance: [
+        "observar_orden",
+        userId,
+        orden.id,
+        firma.id,
+        orden.estado,
+        comentarioNormalizado,
+      ].join(":"),
+      accion: "observar_orden",
+      empresaId: orden.empresa_id,
+      entidadTipo: "orden_compra",
+      entidadId: orden.id,
+      requestHash: [
+        orden.id,
+        firma.id,
+        userId,
+        orden.estado,
+        comentarioNormalizado,
+      ].join("|"),
+    });
+
+    if (!idempotency.ok) {
+      if (idempotency.replay) {
+        await refrescarOrdenes();
+      }
+
+      toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
+      return;
+    }
+
     setProcesandoId(orden.id);
     const toastId = toast.loading("Registrando observación...");
     let firmaActualizada = false;
@@ -1572,16 +2028,22 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
     try {
       const ahora = new Date().toISOString();
 
-      const { error: firmaError } = await supabase
+      const { data: firmaProcesada, error: firmaError } = await supabase
         .from("ordenes_compra_firmas")
         .update({
           estado: "Observada",
           rechazado_at: ahora,
-          comentario,
+          comentario: comentarioNormalizado,
         })
-        .eq("id", firma.id);
+        .eq("id", firma.id)
+        .eq("estado", "Pendiente")
+        .select("id")
+        .maybeSingle();
 
       if (firmaError) throw firmaError;
+      if (!firmaProcesada) {
+        throw new Error("Esta firma ya fue procesada.");
+      }
       firmaActualizada = true;
       etapaFallida = "actualizar_orden";
 
@@ -1602,7 +2064,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           accion: "Orden observada",
           estado_anterior: orden.estado,
           estado_nuevo: "Observada",
-          comentario,
+          comentario: comentarioNormalizado,
           usuario_id: userId,
         },
         "observacion de orden"
@@ -1617,7 +2079,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           entidad_id: orden.id,
           estado_anterior: orden.estado,
           estado_nuevo: "Observada",
-          motivo: comentario,
+          motivo: comentarioNormalizado,
           descripcion: "Orden de compra observada",
           sensible: true,
           visible_calendario: Boolean(orden.fecha_necesaria),
@@ -1631,6 +2093,19 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         "observacion de la orden"
       );
       operacionCompletada = true;
+
+      await completarOperacionIdempotenteOrden(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        "orden_compra",
+        orden.id,
+        {
+          orden_id: orden.id,
+          firma_id: firma.id,
+          accion: "observar_orden",
+          estado: "Observada",
+        }
+      );
 
       await refrescarOrdenes();
 
@@ -1663,7 +2138,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
             origen: "modulo_ordenes",
             metadatos: {
               firmante_id: userId,
-              comentario,
+              comentario: comentarioNormalizado,
               etapa_fallida: etapaFallida,
               motivo_error: error.message || "Error no identificado",
             },
@@ -1681,6 +2156,14 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
         );
       } else {
         toast.error(error.message || "Error al observar", { id: toastId });
+      }
+
+      if (!operacionCompletada) {
+        await fallarOperacionIdempotenteOrden(
+          idempotency.persistidaId,
+          idempotency.storageKey,
+          error
+        );
       }
     } finally {
       setProcesandoId(null);
