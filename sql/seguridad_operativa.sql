@@ -2,6 +2,20 @@
 -- Ejecutar en Supabase SQL Editor despues de revisar.
 -- Este script propone tablas para rate limit, idempotencia, intentos bloqueados
 -- y auditoria de Control+ Assist. No modifica RLS de otras tablas.
+--
+-- Modelo de escritura:
+-- - rate_limits_operativos: solo admin/backend/RPC. El frontend comun no debe escribir aqui.
+--   Para rate limit real de produccion, crear una RPC security definer que consuma y registre
+--   ventanas de uso desde el servidor sin exponer capacidad de escritura directa.
+-- - intentos_bloqueados: frontend autenticado puede insertar solo sus propios bloqueos
+--   y solo para empresa null o empresa asignada activa.
+-- - idempotency_keys_operativas: frontend autenticado puede insertar/actualizar solo sus
+--   propias llaves y solo para empresa null o empresa asignada activa.
+-- - control_assist_auditoria: frontend/route de Assist puede insertar solo auditoria propia
+--   y solo para empresa null o empresa asignada activa; SELECT queda admin-only.
+--
+-- Las columnas usuario_id nullable en intentos_bloqueados existen para eventos anonimos/IP
+-- que deben registrarse desde backend/RPC con service role o security definer, no desde frontend.
 
 create table if not exists public.rate_limits_operativos (
   id uuid primary key default gen_random_uuid(),
@@ -201,7 +215,19 @@ create policy "intentos_bloqueados_usuario_insert"
 on public.intentos_bloqueados
 for insert
 to authenticated
-with check (usuario_id = auth.uid() or usuario_id is null);
+with check (
+  intentos_bloqueados.usuario_id = auth.uid()
+  and (
+    intentos_bloqueados.empresa_id is null
+    or exists (
+      select 1
+      from public.usuario_empresas ue
+      where ue.usuario_id = auth.uid()
+        and ue.empresa_id = intentos_bloqueados.empresa_id
+        and ue.activo = true
+    )
+  )
+);
 
 create policy "idempotency_keys_usuario_select"
 on public.idempotency_keys_operativas
@@ -216,20 +242,56 @@ create policy "idempotency_keys_usuario_insert"
 on public.idempotency_keys_operativas
 for insert
 to authenticated
-with check (usuario_id = auth.uid());
+with check (
+  idempotency_keys_operativas.usuario_id = auth.uid()
+  and (
+    idempotency_keys_operativas.empresa_id is null
+    or exists (
+      select 1
+      from public.usuario_empresas ue
+      where ue.usuario_id = auth.uid()
+        and ue.empresa_id = idempotency_keys_operativas.empresa_id
+        and ue.activo = true
+    )
+  )
+);
 
 create policy "idempotency_keys_usuario_update"
 on public.idempotency_keys_operativas
 for update
 to authenticated
-using (usuario_id = auth.uid())
-with check (usuario_id = auth.uid());
+using (idempotency_keys_operativas.usuario_id = auth.uid())
+with check (
+  idempotency_keys_operativas.usuario_id = auth.uid()
+  and (
+    idempotency_keys_operativas.empresa_id is null
+    or exists (
+      select 1
+      from public.usuario_empresas ue
+      where ue.usuario_id = auth.uid()
+        and ue.empresa_id = idempotency_keys_operativas.empresa_id
+        and ue.activo = true
+    )
+  )
+);
 
 create policy "control_assist_auditoria_usuario_insert"
 on public.control_assist_auditoria
 for insert
 to authenticated
-with check (usuario_id = auth.uid());
+with check (
+  control_assist_auditoria.usuario_id = auth.uid()
+  and (
+    control_assist_auditoria.empresa_id is null
+    or exists (
+      select 1
+      from public.usuario_empresas ue
+      where ue.usuario_id = auth.uid()
+        and ue.empresa_id = control_assist_auditoria.empresa_id
+        and ue.activo = true
+    )
+  )
+);
 
 create policy "control_assist_auditoria_admin_select"
 on public.control_assist_auditoria
