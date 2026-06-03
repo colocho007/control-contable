@@ -182,6 +182,7 @@ const TIPOS_DOCUMENTO_CHEQUES = [
   "Otro",
 ];
 const TITULO_BORRADOR_CHEQUE = "Borrador de cheque";
+const IDEMPOTENCY_PREFIX_CHEQUES = "controlplus_idempotency_cheques";
 const COLUMNAS_BORRADOR_CHEQUE =
   "id,usuario_id,empresa_id,modulo,ruta,titulo,referencia_temporal,datos,estado,creado_at,actualizado_at,expira_at";
 
@@ -326,6 +327,224 @@ function alternarSeccionCheques(seccion: "cheque" | "fondo" | "chequera") {
     ...actual,
     [seccion]: !actual[seccion],
   }));
+}
+
+function generarIdempotencyKeyCheque() {
+  const aleatorio =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `cheques-${aleatorio}`;
+}
+
+function obtenerIdempotencyKeyCheque(alcance: string) {
+  const storageKey = `${IDEMPOTENCY_PREFIX_CHEQUES}:${alcance}`;
+  const existente = window.localStorage.getItem(storageKey);
+  if (existente) return { key: existente, storageKey };
+
+  const key = generarIdempotencyKeyCheque();
+  window.localStorage.setItem(storageKey, key);
+  return { key, storageKey };
+}
+
+function liberarIdempotencyKeyCheque(storageKey: string) {
+  window.localStorage.removeItem(storageKey);
+}
+
+async function iniciarOperacionIdempotente({
+  alcance,
+  accion,
+  empresaId,
+  entidadTipo,
+  entidadId,
+  requestHash,
+}: {
+  alcance: string;
+  accion: string;
+  empresaId: number | null;
+  entidadTipo: string;
+  entidadId: string | number | null;
+  requestHash?: string | null;
+}) {
+  if (!userId) {
+    return {
+      ok: false,
+      mensaje: "Sesion no valida.",
+      key: "",
+      storageKey: "",
+      persistidaId: null as string | null,
+    };
+  }
+
+  const { key, storageKey } = obtenerIdempotencyKeyCheque(alcance);
+
+  try {
+    const { data: existente, error: consultaError } = await supabase
+      .from("idempotency_keys_operativas")
+      .select("id,estado,resultado_resumen")
+      .eq("idempotency_key", key)
+      .maybeSingle();
+
+    if (consultaError) throw consultaError;
+
+    if (existente?.estado === "completada") {
+      return {
+        ok: false,
+        mensaje: "Esta operacion ya fue procesada. No se duplicara historial ni auditoria.",
+        key,
+        storageKey,
+        persistidaId: String(existente.id),
+        replay: true,
+      };
+    }
+
+    if (existente?.estado === "en_proceso") {
+      return {
+        ok: false,
+        mensaje: "La operacion ya esta en proceso. Espera antes de reintentar.",
+        key,
+        storageKey,
+        persistidaId: String(existente.id),
+      };
+    }
+
+    if (existente) {
+      return {
+        ok: false,
+        mensaje: "La llave de idempotencia ya fue usada. Inicia una nueva operacion.",
+        key,
+        storageKey,
+        persistidaId: String(existente.id),
+      };
+    }
+
+    const { data: creada, error: insertError } = await supabase
+      .from("idempotency_keys_operativas")
+      .insert({
+        expira_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        idempotency_key: key,
+        usuario_id: userId,
+        empresa_id: empresaId,
+        modulo: "cheques",
+        accion,
+        estado: "en_proceso",
+        request_hash: requestHash || alcance,
+        entidad_tipo: entidadTipo,
+        entidad_id: entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+      })
+      .select("id")
+      .single();
+
+    if (insertError) {
+      const { data: creadaPorOtroIntento, error: reconsultaError } = await supabase
+        .from("idempotency_keys_operativas")
+        .select("id,estado,resultado_resumen")
+        .eq("idempotency_key", key)
+        .maybeSingle();
+
+      if (!reconsultaError && creadaPorOtroIntento?.estado === "completada") {
+        return {
+          ok: false,
+          mensaje: "Esta operacion ya fue procesada. No se duplicara historial ni auditoria.",
+          key,
+          storageKey,
+          persistidaId: String(creadaPorOtroIntento.id),
+          replay: true,
+        };
+      }
+
+      if (!reconsultaError && creadaPorOtroIntento?.estado === "en_proceso") {
+        return {
+          ok: false,
+          mensaje: "La operacion ya esta en proceso. Espera antes de reintentar.",
+          key,
+          storageKey,
+          persistidaId: String(creadaPorOtroIntento.id),
+        };
+      }
+
+      if (!reconsultaError && creadaPorOtroIntento) {
+        return {
+          ok: false,
+          mensaje: "La llave de idempotencia ya fue usada. Inicia una nueva operacion.",
+          key,
+          storageKey,
+          persistidaId: String(creadaPorOtroIntento.id),
+        };
+      }
+
+      throw insertError;
+    }
+
+    return {
+      ok: true,
+      key,
+      storageKey,
+      persistidaId: String(creada.id),
+    };
+  } catch (error) {
+    console.warn("Idempotencia persistente de cheques no disponible:", error);
+    return {
+      ok: true,
+      key,
+      storageKey,
+      persistidaId: null as string | null,
+      modoTemporal: true,
+    };
+  }
+}
+
+async function completarOperacionIdempotente(
+  persistidaId: string | null,
+  storageKey: string,
+  entidadTipo: string,
+  entidadId: string | number | null,
+  resultadoResumen: Record<string, unknown>
+) {
+  if (persistidaId) {
+    const { error } = await supabase
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "completada",
+        entidad_tipo: entidadTipo,
+        entidad_id: entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+        resultado_resumen: resultadoResumen,
+        error_resumen: null,
+      })
+      .eq("id", persistidaId);
+
+    if (error) {
+      console.warn("No se pudo completar idempotencia de cheques:", error);
+    }
+  }
+
+  liberarIdempotencyKeyCheque(storageKey);
+}
+
+async function fallarOperacionIdempotente(
+  persistidaId: string | null,
+  storageKey: string,
+  error: unknown
+) {
+  if (persistidaId) {
+    const { error: updateError } = await supabase
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "fallida",
+        error_resumen:
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Error no identificado",
+      })
+      .eq("id", persistidaId);
+
+    if (updateError) {
+      console.warn("No se pudo marcar idempotencia fallida de cheques:", updateError);
+    }
+  }
+
+  liberarIdempotencyKeyCheque(storageKey);
 }
 
   useEffect(() => {
@@ -1570,6 +1789,38 @@ async function crearChequera() {
     return;
   }
 
+  const idempotency = await iniciarOperacionIdempotente({
+    alcance: [
+      "crear_cheque",
+      userId,
+      form.empresaId,
+      form.fondoEmpresaId,
+      form.chequeFisicoId || "sin-cheque-fisico",
+      form.beneficiario,
+      form.monto,
+      form.fechaPago,
+      referenciaTemporalChequeRef.current,
+    ].join(":"),
+    accion: "crear_cheque",
+    empresaId: Number(form.empresaId),
+    entidadTipo: "cheque",
+    entidadId: null,
+    requestHash: [
+      form.empresaId,
+      form.fondoEmpresaId,
+      form.chequeFisicoId,
+      form.beneficiario,
+      form.concepto,
+      form.monto,
+      form.fechaPago,
+    ].join("|"),
+  });
+
+  if (!idempotency.ok) {
+    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
+    return;
+  }
+
   suspenderAutoguardado();
   setProcesandoId(-1);
   const toastId = toast.loading("Creando cheque...");
@@ -1807,6 +2058,18 @@ async function crearChequera() {
     setForm(formularioVacio);
     chequeFinalizado = true;
 
+    await completarOperacionIdempotente(
+      idempotency.persistidaId,
+      idempotency.storageKey,
+      "cheque",
+      chequeCreado.id,
+      {
+        cheque_id: chequeCreado.id,
+        estado: chequeCreado.estado,
+        accion: "crear_cheque",
+      }
+    );
+
     try {
       await refrescarModuloCheques();
     } catch (error) {
@@ -1865,6 +2128,14 @@ async function crearChequera() {
       );
     } else {
       toast.error(error.message || "Error al crear cheque", { id: toastId });
+    }
+
+    if (!chequeFinalizado) {
+      await fallarOperacionIdempotente(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        error
+      );
     }
   } finally {
     setProcesandoId(null);
@@ -1929,6 +2200,20 @@ async function autorizarCheque(cheque: Cheque) {
   }
   if (!tieneFuncionCheque(userId, cheque.empresa_id, ["autorizador_cheque", "firmante_cheque"]) && !puedeAprobar) {
     toast.error("No tienes funcion operativa para autorizar cheques en esta empresa.");
+    return;
+  }
+
+  const idempotency = await iniciarOperacionIdempotente({
+    alcance: ["autorizar_cheque", userId, cheque.id, cheque.estado].join(":"),
+    accion: "autorizar_cheque",
+    empresaId: cheque.empresa_id,
+    entidadTipo: "cheque",
+    entidadId: cheque.id,
+    requestHash: [cheque.id, cheque.estado, cheque.monto, cheque.fondo_empresa_id].join("|"),
+  });
+
+  if (!idempotency.ok) {
+    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
     return;
   }
 
@@ -2010,6 +2295,18 @@ async function autorizarCheque(cheque: Cheque) {
     );
     operacionCompletada = true;
 
+    await completarOperacionIdempotente(
+      idempotency.persistidaId,
+      idempotency.storageKey,
+      "cheque",
+      cheque.id,
+      {
+        cheque_id: cheque.id,
+        accion: "autorizar_cheque",
+        estado: "Autorizado",
+      }
+    );
+
     setCheques((prev) =>
       prev.map((c) =>
         c.id === cheque.id
@@ -2078,6 +2375,14 @@ async function autorizarCheque(cheque: Cheque) {
     } else {
       toast.error(error.message || "Error al autorizar", { id: toastId });
     }
+
+    if (!operacionCompletada) {
+      await fallarOperacionIdempotente(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        error
+      );
+    }
   } finally {
     setProcesandoId(null);
   }
@@ -2100,6 +2405,20 @@ async function rechazarCheque(cheque: Cheque) {
 
   if (!motivo) {
     toast.error("Debes indicar un motivo");
+    return;
+  }
+
+  const idempotency = await iniciarOperacionIdempotente({
+    alcance: ["rechazar_cheque", userId, cheque.id, cheque.estado, motivo.trim()].join(":"),
+    accion: "rechazar_cheque",
+    empresaId: cheque.empresa_id,
+    entidadTipo: "cheque",
+    entidadId: cheque.id,
+    requestHash: [cheque.id, cheque.estado, motivo.trim()].join("|"),
+  });
+
+  if (!idempotency.ok) {
+    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
     return;
   }
 
@@ -2182,6 +2501,18 @@ async function rechazarCheque(cheque: Cheque) {
     );
     operacionCompletada = true;
 
+    await completarOperacionIdempotente(
+      idempotency.persistidaId,
+      idempotency.storageKey,
+      "cheque",
+      cheque.id,
+      {
+        cheque_id: cheque.id,
+        accion: "rechazar_cheque",
+        estado: "Rechazado",
+      }
+    );
+
     setCheques((prev) =>
       prev.map((c) =>
         c.id === cheque.id
@@ -2252,6 +2583,14 @@ if (userId && perfilActual) {
     } else {
       toast.error(error.message || "Error al rechazar", { id: toastId });
     }
+
+    if (!operacionCompletada) {
+      await fallarOperacionIdempotente(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        error
+      );
+    }
   } finally {
     setProcesandoId(null);
   }
@@ -2274,6 +2613,20 @@ const motivo = window.prompt("Indica el motivo de anulación:");
 
   if (!motivo) {
     toast.error("Debes indicar un motivo");
+    return;
+  }
+
+  const idempotency = await iniciarOperacionIdempotente({
+    alcance: ["anular_cheque", userId, cheque.id, cheque.estado, motivo.trim()].join(":"),
+    accion: "anular_cheque",
+    empresaId: cheque.empresa_id,
+    entidadTipo: "cheque",
+    entidadId: cheque.id,
+    requestHash: [cheque.id, cheque.estado, motivo.trim()].join("|"),
+  });
+
+  if (!idempotency.ok) {
+    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
     return;
   }
 
@@ -2357,6 +2710,18 @@ const motivo = window.prompt("Indica el motivo de anulación:");
     );
     operacionCompletada = true;
 
+    await completarOperacionIdempotente(
+      idempotency.persistidaId,
+      idempotency.storageKey,
+      "cheque",
+      cheque.id,
+      {
+        cheque_id: cheque.id,
+        accion: "anular_cheque",
+        estado: "Anulado",
+      }
+    );
+
     setCheques((prev) =>
       prev.map((c) =>
         c.id === cheque.id
@@ -2427,6 +2792,14 @@ if (userId && perfilActual) {
     } else {
       toast.error(error.message || "Error al anular cheque", { id: toastId });
     }
+
+    if (!operacionCompletada) {
+      await fallarOperacionIdempotente(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        error
+      );
+    }
   } finally {
     setProcesandoId(null);
   }
@@ -2449,6 +2822,26 @@ async function marcarPagado(cheque: Cheque) {
   }
   if (!usuarioActualPuedePagarCheque(cheque)) {
     toast.error("No tienes funcion operativa de pagador de cheques para esta empresa.");
+    return;
+  }
+
+  const idempotency = await iniciarOperacionIdempotente({
+    alcance: ["pagar_cheque", userId, cheque.id, cheque.estado].join(":"),
+    accion: "pagar_cheque",
+    empresaId: cheque.empresa_id,
+    entidadTipo: "cheque",
+    entidadId: cheque.id,
+    requestHash: [
+      cheque.id,
+      cheque.estado,
+      cheque.monto,
+      cheque.fondo_empresa_id,
+      cheque.movimiento_generado,
+    ].join("|"),
+  });
+
+  if (!idempotency.ok) {
+    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
     return;
   }
 
@@ -2579,6 +2972,19 @@ async function marcarPagado(cheque: Cheque) {
     );
     operacionCompletada = true;
 
+    await completarOperacionIdempotente(
+      idempotency.persistidaId,
+      idempotency.storageKey,
+      "cheque",
+      cheque.id,
+      {
+        cheque_id: cheque.id,
+        movimiento_id: movimientoCreadoId,
+        accion: "pagar_cheque",
+        estado: "Pagado",
+      }
+    );
+
     setCheques((prev) =>
       prev.map((c) =>
         c.id === cheque.id
@@ -2655,6 +3061,14 @@ if (userId && perfilActual) {
       });
     } else {
       toast.error(error.message || "Error al pagar cheque", { id: toastId });
+    }
+
+    if (!operacionCompletada) {
+      await fallarOperacionIdempotente(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        error
+      );
     }
   } finally {
     setProcesandoId(null);
