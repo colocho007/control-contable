@@ -109,6 +109,7 @@ const ROLES_SISTEMA = [
   "empleado",
 ];
 const MOTIVO_CAMBIO_PERMISOS = "Actualizacion desde Administrador Operativo";
+const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 const FUNCIONES_POR_MODULO: Record<string, FuncionOperativa[]> = {
   Cheques: ["firmante_cheque", "autorizador_cheque", "pagador_cheque", "revisor_cheque"],
   Ordenes: ["creador_orden", "firmante_orden", "autorizador_compra"],
@@ -265,6 +266,238 @@ export default function AdminPage() {
       );
       return false;
     }
+  }
+
+  function generarIdempotencyKeyAdmin(accion: string) {
+    const aleatorio =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+    return `${IDEMPOTENCY_PREFIX_ADMIN}:${accion}:${aleatorio}`;
+  }
+
+  function obtenerIdempotencyKeyAdmin(alcance: string, accion: string) {
+    const storageKey = `${IDEMPOTENCY_PREFIX_ADMIN}:${alcance}`;
+    const existente = window.localStorage.getItem(storageKey);
+    if (existente) return { key: existente, storageKey };
+
+    const key = generarIdempotencyKeyAdmin(accion);
+    window.localStorage.setItem(storageKey, key);
+    return { key, storageKey };
+  }
+
+  function liberarIdempotencyKeyAdmin(storageKey: string) {
+    window.localStorage.removeItem(storageKey);
+  }
+
+  async function registrarIntentoAdminBloqueado(
+    motivo: string,
+    metadatos: Record<string, unknown>
+  ) {
+    if (!perfilActual?.id) return;
+
+    try {
+      const { error } = await supabase.from("intentos_bloqueados").insert({
+        usuario_id: perfilActual.id,
+        empresa_id:
+          typeof metadatos.empresa_id === "number" && Number.isFinite(metadatos.empresa_id)
+            ? metadatos.empresa_id
+            : null,
+        modulo: "admin-operativo",
+        accion: String(metadatos.accion || "cambio_permisos"),
+        motivo,
+        severidad: "alta",
+        entidad_tipo: String(metadatos.entidad_tipo || "perfil"),
+        entidad_id:
+          metadatos.entidad_id !== undefined && metadatos.entidad_id !== null
+            ? String(metadatos.entidad_id)
+            : null,
+        mensaje: "Intento administrativo bloqueado por validacion operativa.",
+        metadatos: {
+          ...metadatos,
+          datos_sensibles_completos_guardados: false,
+        },
+      });
+
+      if (error) {
+        console.warn("No se pudo registrar intento admin bloqueado:", error.message);
+      }
+    } catch (error) {
+      console.warn("Intento admin bloqueado no persistido:", error);
+    }
+  }
+
+  async function iniciarOperacionIdempotenteAdmin({
+    alcance,
+    accion,
+    entidadTipo,
+    entidadId,
+    requestHash,
+  }: {
+    alcance: string;
+    accion: string;
+    entidadTipo: string;
+    entidadId: string | number | null;
+    requestHash: string;
+  }) {
+    if (!perfilActual?.id) {
+      return {
+        ok: false,
+        mensaje: "Sesion administrativa no valida.",
+        key: "",
+        storageKey: "",
+        persistidaId: null as string | null,
+      };
+    }
+
+    const { key, storageKey } = obtenerIdempotencyKeyAdmin(alcance, accion);
+
+    try {
+      const { data: existente, error: consultaError } = await supabase
+        .from("idempotency_keys_operativas")
+        .select("id,estado,usuario_id,modulo,accion,resultado_resumen")
+        .eq("idempotency_key", key)
+        .maybeSingle();
+
+      if (consultaError) throw consultaError;
+
+      if (existente) {
+        if (existente.usuario_id !== perfilActual.id) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otro usuario.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.modulo !== "admin-operativo" || existente.accion !== accion) {
+          return {
+            ok: false,
+            mensaje: "La llave de idempotencia pertenece a otra operacion.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        if (existente.estado === "completada") {
+          return {
+            ok: false,
+            mensaje: "Esta operacion administrativa ya fue procesada. No se duplicara auditoria.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+            replay: true,
+          };
+        }
+
+        if (existente.estado === "en_proceso") {
+          return {
+            ok: false,
+            mensaje: "Esta operacion administrativa ya esta en proceso.",
+            key,
+            storageKey,
+            persistidaId: String(existente.id),
+          };
+        }
+
+        return {
+          ok: false,
+          mensaje: "La llave de idempotencia ya fue usada. Inicia una nueva operacion.",
+          key,
+          storageKey,
+          persistidaId: String(existente.id),
+        };
+      }
+
+      const { data: creada, error: insertError } = await supabase
+        .from("idempotency_keys_operativas")
+        .insert({
+          expira_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          idempotency_key: key,
+          usuario_id: perfilActual.id,
+          empresa_id: null,
+          modulo: "admin-operativo",
+          accion,
+          estado: "en_proceso",
+          request_hash: requestHash,
+          entidad_tipo: entidadTipo,
+          entidad_id: entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+        })
+        .select("id")
+        .single();
+
+      if (insertError) throw insertError;
+
+      return {
+        ok: true,
+        key,
+        storageKey,
+        persistidaId: String(creada.id),
+      };
+    } catch (error) {
+      console.warn("Idempotencia persistente de Admin no disponible:", error);
+      return {
+        ok: true,
+        key,
+        storageKey,
+        persistidaId: null as string | null,
+        modoTemporal: true,
+      };
+    }
+  }
+
+  async function completarOperacionIdempotenteAdmin(
+    persistidaId: string | null,
+    storageKey: string,
+    entidadTipo: string,
+    entidadId: string | number | null,
+    resultadoResumen: Record<string, unknown>
+  ) {
+    if (persistidaId) {
+      const { error } = await supabase
+        .from("idempotency_keys_operativas")
+        .update({
+          estado: "completada",
+          entidad_tipo: entidadTipo,
+          entidad_id: entidadId !== null && entidadId !== undefined ? String(entidadId) : null,
+          resultado_resumen: resultadoResumen,
+          error_resumen: null,
+        })
+        .eq("id", persistidaId);
+
+      if (error) {
+        console.warn("No se pudo completar idempotencia de Admin:", error.message);
+      }
+    }
+
+    liberarIdempotencyKeyAdmin(storageKey);
+  }
+
+  async function fallarOperacionIdempotenteAdmin(
+    persistidaId: string | null,
+    storageKey: string,
+    error: unknown
+  ) {
+    if (persistidaId) {
+      const { error: updateError } = await supabase
+        .from("idempotency_keys_operativas")
+        .update({
+          estado: "fallida",
+          error_resumen:
+            error instanceof Error ? error.message.slice(0, 500) : "Error no identificado",
+        })
+        .eq("id", persistidaId);
+
+      if (updateError) {
+        console.warn("No se pudo marcar idempotencia fallida de Admin:", updateError.message);
+      }
+    }
+
+    liberarIdempotencyKeyAdmin(storageKey);
   }
 
   async function cargarDatos(
@@ -479,6 +712,103 @@ export default function AdminPage() {
     }
   }
 
+  function snapshotPermisosUsuario(usuarioId: string) {
+    const usuario = usuarios.find((item) => item.id === usuarioId);
+    return {
+      usuario_id: usuarioId,
+      rol: normalizarRol(usuario?.rol),
+      activo: usuario?.activo !== false,
+      empresas: valoresUnicosNumericos(
+        asignaciones
+          .filter((item) => item.usuario_id === usuarioId && item.activo !== false)
+          .map((item) => Number(item.empresa_id))
+      ),
+      modulos: valoresUnicosTexto(
+        usuarioModulos
+          .filter((item) => item.usuario_id === usuarioId && item.activo !== false)
+          .map((item) => item.modulo_clave)
+      ),
+      funciones: valoresUnicosTexto(
+        usuarioFunciones
+          .filter((item) => item.usuario_id === usuarioId && item.activo !== false)
+          .map((item) => `${item.empresa_id}:${item.funcion}`)
+      ),
+    };
+  }
+
+  function snapshotPermisosSeleccionados(
+    usuarioId: string,
+    rol: string,
+    activo: boolean,
+    empresasNormalizadas: number[],
+    modulosNormalizados: string[],
+    funcionesPorEmpresa: Record<number, string[]>
+  ) {
+    const modulosEditables = new Set(modulos.map((modulo) => modulo.clave));
+    const modulosPreservados = usuarioModulos
+      .filter(
+        (item) =>
+          item.usuario_id === usuarioId &&
+          item.activo !== false &&
+          !modulosEditables.has(item.modulo_clave)
+      )
+      .map((item) => item.modulo_clave);
+
+    return {
+      usuario_id: usuarioId,
+      rol,
+      activo,
+      empresas: empresasNormalizadas,
+      modulos: valoresUnicosTexto([...modulosPreservados, ...modulosNormalizados]),
+      funciones: valoresUnicosTexto(
+        Object.entries(funcionesPorEmpresa).flatMap(([empresaId, funciones]) =>
+          funciones.map((funcion) => `${empresaId}:${funcion}`)
+        )
+      ),
+    };
+  }
+
+  function validarOperadorAdmin() {
+    const rolActual = normalizarRol(perfilActual?.rol);
+    if (!ROLES_ADMIN_OPERATIVO.includes(rolActual)) {
+      throw new Error("No tienes permiso para modificar permisos operativos.");
+    }
+  }
+
+  function validarNoAutoBloqueoCritico(
+    usuarioId: string,
+    rol: string,
+    activo: boolean,
+    modulosNormalizados: string[]
+  ) {
+    if (usuarioId !== perfilActual?.id) return;
+
+    if (!activo || rol !== "admin") {
+      throw new Error("No puedes quitar tu propio acceso administrativo.");
+    }
+  }
+
+  function validarFuncionesSeleccionadas(
+    empresasNormalizadas: number[],
+    funcionesPorEmpresa: Record<number, string[]>
+  ) {
+    const empresasSet = new Set(empresasNormalizadas);
+
+    for (const [empresaIdTexto, funciones] of Object.entries(funcionesPorEmpresa)) {
+      const empresaId = Number(empresaIdTexto);
+      if (!empresasSet.has(empresaId)) {
+        throw new Error("Hay funciones asignadas a empresas no seleccionadas.");
+      }
+
+      const funcionInvalida = funciones.find(
+        (funcion) => !FUNCIONES_OPERATIVAS.includes(funcion as FuncionOperativa)
+      );
+      if (funcionInvalida) {
+        throw new Error(`Funcion operativa no valida: ${funcionInvalida}`);
+      }
+    }
+  }
+
   function toggleEmpresa(empresaId: number) {
     setEmpresasSeleccionadas((prev) =>
       prev.includes(empresaId)
@@ -516,6 +846,35 @@ export default function AdminPage() {
       return;
     }
 
+    const rolNuevoUsuario = normalizarRol(nuevoUsuario.rol);
+    if (!ROLES_SISTEMA.includes(rolNuevoUsuario) || rolNuevoUsuario === "admin") {
+      toast.error("El rol seleccionado para el nuevo usuario no es valido.");
+      return;
+    }
+
+    try {
+      validarOperadorAdmin();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      await registrarIntentoAdminBloqueado("operador_no_autorizado", {
+        accion: "guardar_permisos_usuario",
+        entidad_tipo: "perfil",
+        entidad_id: usuarioEditando,
+      });
+      return;
+    }
+
+    const alcance = [
+      "crear_usuario",
+      nuevoUsuario.uid.trim().toLowerCase(),
+      nuevoUsuario.correo.trim().toLowerCase(),
+      rolNuevoUsuario,
+    ].join(":");
+    const { key: idempotencyKey, storageKey } = obtenerIdempotencyKeyAdmin(
+      alcance,
+      "crear_usuario_operativo"
+    );
+
     setProcesando(true);
     const toastId = toast.loading("Creando usuario operativo...");
 
@@ -523,7 +882,11 @@ export default function AdminPage() {
       const respuesta = await fetch("/api/admin/perfiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(nuevoUsuario),
+        body: JSON.stringify({
+          ...nuevoUsuario,
+          rol: rolNuevoUsuario,
+          idempotency_key: idempotencyKey,
+        }),
       });
 
       const resultado = await respuesta.json().catch(() => ({}));
@@ -531,12 +894,25 @@ export default function AdminPage() {
         throw new Error(resultado?.error || "No se pudo crear el usuario.");
       }
 
+      liberarIdempotencyKeyAdmin(storageKey);
       setNuevoUsuario({ nombre: "", correo: "", uid: "", rol: "empleado" });
       await cargarDatos();
-      toast.success(resultado?.advertencia || "Usuario creado correctamente", {
-        id: toastId,
-      });
+      toast.success(
+        resultado?.idempotency_replay
+          ? "La creacion ya habia sido procesada. No se duplico auditoria."
+          : resultado?.advertencia || "Usuario creado correctamente",
+        { id: toastId }
+      );
     } catch (error) {
+      liberarIdempotencyKeyAdmin(storageKey);
+      await registrarIntentoAdminBloqueado("crear_usuario_fallido", {
+        accion: "crear_usuario_operativo",
+        entidad_tipo: "perfil",
+        entidad_id: nuevoUsuario.uid.trim().toLowerCase(),
+        correo: nuevoUsuario.correo.trim().toLowerCase(),
+        rol: rolNuevoUsuario,
+        error: getErrorMessage(error),
+      });
       toast.error(getErrorMessage(error), { id: toastId });
     } finally {
       setProcesando(false);
@@ -551,6 +927,29 @@ export default function AdminPage() {
 
     if (!usuarioEditando) {
       toast.error("Selecciona un usuario");
+      return;
+    }
+
+    try {
+      validarOperadorAdmin();
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      await registrarIntentoAdminBloqueado("operador_no_autorizado", {
+        accion: "crear_usuario_operativo",
+        entidad_tipo: "perfil",
+        entidad_id: nuevoUsuario.uid.trim().toLowerCase(),
+      });
+      return;
+    }
+
+    const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
+    if (!usuarioAnterior) {
+      toast.error("El usuario objetivo no existe o no esta disponible.");
+      await registrarIntentoAdminBloqueado("usuario_objetivo_no_existe", {
+        accion: "guardar_permisos_usuario",
+        entidad_tipo: "perfil",
+        entidad_id: usuarioEditando,
+      });
       return;
     }
 
@@ -589,6 +988,25 @@ export default function AdminPage() {
       return;
     }
 
+    try {
+      validarNoAutoBloqueoCritico(
+        usuarioEditando,
+        rolNormalizado,
+        activoSeleccionado,
+        modulosUnicos
+      );
+      validarFuncionesSeleccionadas(empresasUnicas, funcionesSeleccionadas);
+    } catch (error) {
+      toast.error(getErrorMessage(error));
+      await registrarIntentoAdminBloqueado("validacion_permisos_bloqueada", {
+        accion: "guardar_permisos_usuario",
+        entidad_tipo: "perfil",
+        entidad_id: usuarioEditando,
+        error: getErrorMessage(error),
+      });
+      return;
+    }
+
     const funcionesNormalizadas = Object.fromEntries(
       Object.entries(funcionesSeleccionadas)
         .map(([empresaId, funciones]) => [
@@ -602,12 +1020,48 @@ export default function AdminPage() {
         )
     ) as Record<number, string[]>;
 
+    const permisosAntes = snapshotPermisosUsuario(usuarioEditando);
+    const permisosDespues = snapshotPermisosSeleccionados(
+      usuarioEditando,
+      rolNormalizado,
+      activoSeleccionado,
+      empresasUnicas,
+      modulosUnicos,
+      funcionesNormalizadas
+    );
+    const requestHash = JSON.stringify({
+      usuario: usuarioEditando,
+      permisosDespues,
+    });
+    const idempotency = await iniciarOperacionIdempotenteAdmin({
+      alcance: ["guardar_permisos", usuarioEditando, requestHash].join(":"),
+      accion: "guardar_permisos_usuario",
+      entidadTipo: "perfil",
+      entidadId: usuarioEditando,
+      requestHash,
+    });
+
+    if (!idempotency.ok) {
+      if (idempotency.replay) {
+        await cargarDatos();
+      }
+
+      await registrarIntentoAdminBloqueado("idempotencia_admin_bloqueada", {
+        accion: "guardar_permisos_usuario",
+        entidad_tipo: "perfil",
+        entidad_id: usuarioEditando,
+        mensaje: idempotency.mensaje,
+      });
+      toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
+      return;
+    }
+
     setProcesando(true);
     const toastId = toast.loading("Guardando usuario, empresas, modulos y funciones...");
     let auditoriaCompleta = true;
+    let operacionCompletada = false;
 
     try {
-      const usuarioAnterior = usuarios.find((usuario) => usuario.id === usuarioEditando);
       const datosAuditoria = {
         actualizado_at: new Date().toISOString(),
         actualizado_por: perfilActual.id,
@@ -675,6 +1129,48 @@ export default function AdminPage() {
         }
       );
 
+      auditoriaCompleta =
+        (await registrarAuditoriaAdmin(
+          {
+            modulo: "admin-operativo",
+            accion: "resumen_cambio_permisos_usuario",
+            entidad_tipo: "perfil",
+            entidad_id: usuarioEditando,
+            descripcion: "Resumen antes/despues de cambio de permisos administrativos",
+            sensible: true,
+            metadatos: {
+              antes: permisosAntes,
+              despues: permisosDespues,
+              cambios: {
+                rol: permisosAntes.rol !== permisosDespues.rol,
+                activo: permisosAntes.activo !== permisosDespues.activo,
+                empresas: JSON.stringify(permisosAntes.empresas) !== JSON.stringify(permisosDespues.empresas),
+                modulos: JSON.stringify(permisosAntes.modulos) !== JSON.stringify(permisosDespues.modulos),
+                funciones:
+                  JSON.stringify(permisosAntes.funciones) !==
+                  JSON.stringify(permisosDespues.funciones),
+              },
+            },
+            origen: "admin_operativo",
+          },
+          "resumen de permisos"
+        )) && auditoriaCompleta;
+
+      await completarOperacionIdempotenteAdmin(
+        idempotency.persistidaId,
+        idempotency.storageKey,
+        "perfil",
+        usuarioEditando,
+        {
+          accion: "guardar_permisos_usuario",
+          usuario_id: usuarioEditando,
+          auditoria_completa: auditoriaCompleta,
+          antes: permisosAntes,
+          despues: permisosDespues,
+        }
+      );
+      operacionCompletada = true;
+
       await cargarDatos();
       setUsuarioEditando("");
       setRolSeleccionado("");
@@ -692,6 +1188,19 @@ export default function AdminPage() {
       }
     } catch (error) {
       console.error(error);
+      if (!operacionCompletada) {
+        await fallarOperacionIdempotenteAdmin(
+          idempotency.persistidaId,
+          idempotency.storageKey,
+          error
+        );
+      }
+      await registrarIntentoAdminBloqueado("guardar_permisos_fallido", {
+        accion: "guardar_permisos_usuario",
+        entidad_tipo: "perfil",
+        entidad_id: usuarioEditando,
+        error: getErrorMessage(error),
+      });
       toast.error(getErrorMessage(error), { id: toastId });
     } finally {
       setProcesando(false);
@@ -805,7 +1314,10 @@ export default function AdminPage() {
 
     if (error) throw error;
 
-    const existentes = (data || []) as AsignacionModuloExistente[];
+    const modulosEditables = new Set(modulos.map((modulo) => modulo.clave));
+    const existentes = ((data || []) as AsignacionModuloExistente[]).filter(
+      (item) => modulosEditables.has(item.modulo_clave)
+    );
     const seleccionados = new Set(modulosSeleccionadosNormalizados);
     const existentesPorClave = new Map<string, AsignacionModuloExistente[]>();
 

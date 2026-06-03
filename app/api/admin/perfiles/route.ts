@@ -22,6 +22,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RATE_LIMIT_VENTANA_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_IP = 20;
 const RATE_LIMIT_MAX_USUARIO = 8;
+const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 
 type RegistroRateLimit = { conteo: number; reiniciaEn: number };
 
@@ -40,6 +41,10 @@ function json(status: number, body: Record<string, unknown>) {
 }
 
 function normalizarTexto(valor: unknown) {
+  return typeof valor === "string" ? valor.trim() : "";
+}
+
+function normalizarIdempotencyKey(valor: unknown) {
   return typeof valor === "string" ? valor.trim() : "";
 }
 
@@ -167,6 +172,7 @@ export async function POST(request: NextRequest) {
   const uid = normalizarTexto(body.uid).toLowerCase();
   const correo = normalizarTexto(body.correo).toLowerCase();
   const rol = normalizarTexto(body.rol).toLowerCase();
+  const idempotencyKey = normalizarIdempotencyKey(body.idempotency_key);
 
   if (!nombre) {
     return json(400, { error: "El nombre es obligatorio." });
@@ -184,6 +190,15 @@ export async function POST(request: NextRequest) {
     return json(400, { error: "El rol seleccionado no es valido." });
   }
 
+  if (
+    !idempotencyKey ||
+    !idempotencyKey.startsWith(`${IDEMPOTENCY_PREFIX_ADMIN}:crear_usuario_operativo:`)
+  ) {
+    return json(400, {
+      error: "Falta llave de idempotencia valida para crear el perfil.",
+    });
+  }
+
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
     auth: {
       autoRefreshToken: false,
@@ -191,10 +206,125 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  let idempotencyId: string | null = null;
+
+  async function marcarIdempotenciaFallida(error: unknown) {
+    if (!idempotencyId) return;
+
+    await supabaseAdmin
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "fallida",
+        error_resumen:
+          error instanceof Error
+            ? error.message.slice(0, 500)
+            : "Error no identificado",
+      })
+      .eq("id", idempotencyId);
+  }
+
+  async function registrarIntentoBloqueado(motivo: string, mensaje: string) {
+    await supabaseAdmin.from("intentos_bloqueados").insert({
+      usuario_id: user.id,
+      empresa_id: null,
+      modulo: "admin-operativo",
+      accion: "crear_usuario_operativo",
+      motivo,
+      severidad: "alta",
+      entidad_tipo: "perfil",
+      entidad_id: uid,
+      mensaje,
+      metadatos: {
+        correo,
+        rol,
+        idempotency_key: idempotencyKey,
+        datos_sensibles_completos_guardados: false,
+      },
+    });
+  }
+
+  const { data: idempotencyExistente, error: idempotencyConsultaError } =
+    await supabaseAdmin
+      .from("idempotency_keys_operativas")
+      .select("id,estado,usuario_id,modulo,accion,resultado_resumen")
+      .eq("idempotency_key", idempotencyKey)
+      .maybeSingle();
+
+  if (idempotencyConsultaError) {
+    return json(500, { error: "No se pudo validar la idempotencia." });
+  }
+
+  if (idempotencyExistente) {
+    if (
+      idempotencyExistente.usuario_id !== user.id ||
+      idempotencyExistente.modulo !== "admin-operativo" ||
+      idempotencyExistente.accion !== "crear_usuario_operativo"
+    ) {
+      await registrarIntentoBloqueado(
+        "idempotencia_invalida",
+        "Llave de idempotencia usada en otro contexto."
+      );
+      return json(409, { error: "La llave de idempotencia pertenece a otra operacion." });
+    }
+
+    if (idempotencyExistente.estado === "completada") {
+      return json(200, {
+        ...(typeof idempotencyExistente.resultado_resumen === "object" &&
+        idempotencyExistente.resultado_resumen
+          ? idempotencyExistente.resultado_resumen
+          : {}),
+        idempotency_replay: true,
+      });
+    }
+
+    if (idempotencyExistente.estado === "en_proceso") {
+      await registrarIntentoBloqueado(
+        "idempotencia_en_proceso",
+        "Creacion de perfil ya en proceso."
+      );
+      return json(409, {
+        error: "La creacion de este perfil ya esta en proceso.",
+      });
+    }
+
+    return json(409, {
+      error: "Esta llave de idempotencia ya fue usada. Genera una nueva operacion.",
+    });
+  }
+
+  const { data: idempotencyCreada, error: idempotencyInsertError } =
+    await supabaseAdmin
+      .from("idempotency_keys_operativas")
+      .insert({
+        expira_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        idempotency_key: idempotencyKey,
+        usuario_id: user.id,
+        empresa_id: null,
+        modulo: "admin-operativo",
+        accion: "crear_usuario_operativo",
+        estado: "en_proceso",
+        request_hash: [uid, correo, rol].join("|"),
+        entidad_tipo: "perfil",
+        entidad_id: uid,
+      })
+      .select("id")
+      .single();
+
+  if (idempotencyInsertError) {
+    return json(500, { error: "No se pudo reservar la operacion administrativa." });
+  }
+
+  idempotencyId = String(idempotencyCreada.id);
+
   const { data: usuarioAuth, error: usuarioAuthError } =
     await supabaseAdmin.auth.admin.getUserById(uid);
 
   if (usuarioAuthError || !usuarioAuth.user) {
+    await marcarIdempotenciaFallida(new Error("El UID no existe en Supabase Authentication."));
+    await registrarIntentoBloqueado(
+      "uid_auth_no_existe",
+      "El UID no existe en Supabase Authentication."
+    );
     return json(400, {
       error: "El UID no existe en Supabase Authentication.",
     });
@@ -202,12 +332,18 @@ export async function POST(request: NextRequest) {
 
   const correoAuth = String(usuarioAuth.user.email || "").trim().toLowerCase();
   if (!correoAuth) {
+    await marcarIdempotenciaFallida(new Error("Usuario Auth sin correo registrado."));
     return json(400, {
       error: "El usuario de Supabase Auth no tiene correo registrado.",
     });
   }
 
   if (correoAuth !== correo) {
+    await marcarIdempotenciaFallida(new Error("El correo no coincide con Supabase Auth."));
+    await registrarIntentoBloqueado(
+      "correo_no_coincide_auth",
+      "El correo no coincide con el usuario de Supabase Auth."
+    );
     return json(400, {
       error: "El correo no coincide con el usuario de Supabase Auth.",
     });
@@ -220,12 +356,18 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (perfilPorUidError) {
+    await marcarIdempotenciaFallida(perfilPorUidError);
     return json(500, {
       error: "No se pudo validar si el UID ya tiene perfil.",
     });
   }
 
   if (perfilPorUid) {
+    await marcarIdempotenciaFallida(new Error("Ya existe un perfil para ese UID."));
+    await registrarIntentoBloqueado(
+      "perfil_uid_duplicado",
+      "Ya existe un perfil para ese UID."
+    );
     return json(409, {
       error: "Ya existe un perfil para ese UID.",
     });
@@ -239,6 +381,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
   if (perfilPorCorreoError) {
+    await marcarIdempotenciaFallida(perfilPorCorreoError);
     return json(500, {
       error:
         "No se pudo validar el correo en public.perfiles. Verifica que exista la columna correo.",
@@ -246,6 +389,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (perfilPorCorreo) {
+    await marcarIdempotenciaFallida(new Error("Ya existe un perfil con ese correo."));
+    await registrarIntentoBloqueado(
+      "perfil_correo_duplicado",
+      "Ya existe un perfil con ese correo."
+    );
     return json(409, {
       error: "Ya existe un perfil con ese correo.",
     });
@@ -264,6 +412,7 @@ export async function POST(request: NextRequest) {
     .insert(perfilCreado);
 
   if (insertError) {
+    await marcarIdempotenciaFallida(insertError);
     return json(500, {
       error: `No se pudo crear el perfil: ${insertError.message}`,
     });
@@ -291,12 +440,38 @@ export async function POST(request: NextRequest) {
     });
 
   if (auditoriaError) {
+    await supabaseAdmin
+      .from("idempotency_keys_operativas")
+      .update({
+        estado: "completada",
+        entidad_tipo: "perfil",
+        entidad_id: uid,
+        resultado_resumen: {
+          perfil: perfilCreado,
+          advertencia:
+            "Perfil creado, pero no se pudo registrar la auditoria administrativa.",
+        },
+        error_resumen: null,
+      })
+      .eq("id", idempotencyId);
+
     return json(201, {
       perfil: perfilCreado,
       advertencia:
         "Perfil creado, pero no se pudo registrar la auditoria administrativa.",
     });
   }
+
+  await supabaseAdmin
+    .from("idempotency_keys_operativas")
+    .update({
+      estado: "completada",
+      entidad_tipo: "perfil",
+      entidad_id: uid,
+      resultado_resumen: { perfil: perfilCreado },
+      error_resumen: null,
+    })
+    .eq("id", idempotencyId);
 
   return json(201, { perfil: perfilCreado });
 }
