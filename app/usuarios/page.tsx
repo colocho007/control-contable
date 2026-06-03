@@ -10,6 +10,7 @@ import { Users, Plus, Trash2, Loader2 } from "lucide-react";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
 const MOTIVO_DESACTIVACION = "Desactivado desde modulo Usuarios";
+const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 
 function normalizarRol(rol?: string | null) {
   return (rol || "").trim().toLowerCase();
@@ -17,6 +18,15 @@ function normalizarRol(rol?: string | null) {
 
 function obtenerMensajeError(error: unknown) {
   return error instanceof Error ? error.message : "Error desconocido";
+}
+
+function generarIdempotencyKeyCrearUsuario() {
+  const aleatorio =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `${IDEMPOTENCY_PREFIX_ADMIN}:crear_usuario_operativo:${aleatorio}`;
 }
 
 interface Perfil {
@@ -129,6 +139,7 @@ export default function UsuariosPage() {
           uid: form.uid,
           correo: form.correo,
           rol: form.rol,
+          idempotency_key: generarIdempotencyKeyCrearUsuario(),
         }),
       });
 

@@ -184,11 +184,14 @@ export async function POST(request: NextRequest) {
     });
 
   if (rateLimitPersistenteError) {
-    console.error("Error aplicando rate limit persistente:", rateLimitPersistenteError);
-    return json(500, { error: "No se pudo validar el control de frecuencia." });
+    console.warn(
+      "Rate limit persistente no disponible; se mantiene rate limit local:",
+      rateLimitPersistenteError.message
+    );
   }
 
   if (
+    !rateLimitPersistenteError &&
     rateLimitPersistente &&
     typeof rateLimitPersistente === "object" &&
     "permitido" in rateLimitPersistente &&
