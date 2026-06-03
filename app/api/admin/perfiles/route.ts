@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 
 const ROLES_CREACION = ["admin", "jefe", "supervisor"];
 const ROLES_SISTEMA = [
@@ -22,6 +23,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RATE_LIMIT_VENTANA_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_IP = 20;
 const RATE_LIMIT_MAX_USUARIO = 8;
+const RATE_LIMIT_PERSISTENTE_VENTANA_SEGUNDOS = 5 * 60;
+const RATE_LIMIT_PERSISTENTE_MAX_USUARIO = 8;
 const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 
 type RegistroRateLimit = { conteo: number; reiniciaEn: number };
@@ -54,6 +57,10 @@ function obtenerIp(request: NextRequest) {
     request.headers.get("x-real-ip") ||
     "ip-desconocida"
   );
+}
+
+function hashIp(ip: string) {
+  return createHash("sha256").update(ip).digest("hex");
 }
 
 function consumirRateLimit(clave: string, maximo: number) {
@@ -157,6 +164,53 @@ export async function POST(request: NextRequest) {
   }
 
   const rolActual = String(perfilActual.rol || "").trim().toLowerCase();
+
+  const ipHash = hashIp(ip);
+  const { data: rateLimitPersistente, error: rateLimitPersistenteError } =
+    await supabaseSesion.rpc("registrar_rate_limit_operativo", {
+      p_clave: `admin-perfiles:usuario:${user.id}:ip:${ipHash}`,
+      p_alcance: "usuario",
+      p_modulo: "admin-operativo",
+      p_accion: "crear_usuario_operativo",
+      p_limite: RATE_LIMIT_PERSISTENTE_MAX_USUARIO,
+      p_ventana_segundos: RATE_LIMIT_PERSISTENTE_VENTANA_SEGUNDOS,
+      p_empresa_id: null,
+      p_ip_hash: ipHash,
+      p_metadatos: {
+        ruta: "/api/admin/perfiles",
+        metodo: "POST",
+        ip_real_guardada: false,
+      },
+    });
+
+  if (rateLimitPersistenteError) {
+    console.error("Error aplicando rate limit persistente:", rateLimitPersistenteError);
+    return json(500, { error: "No se pudo validar el control de frecuencia." });
+  }
+
+  if (
+    rateLimitPersistente &&
+    typeof rateLimitPersistente === "object" &&
+    "permitido" in rateLimitPersistente &&
+    rateLimitPersistente.permitido === false
+  ) {
+    const retryAfter =
+      "retry_after_segundos" in rateLimitPersistente &&
+      typeof rateLimitPersistente.retry_after_segundos === "number"
+        ? Math.max(1, Math.ceil(rateLimitPersistente.retry_after_segundos))
+        : RATE_LIMIT_PERSISTENTE_VENTANA_SEGUNDOS;
+
+    return NextResponse.json(
+      { error: "Demasiados intentos. Espera antes de reintentar." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfter),
+        },
+      }
+    );
+  }
+
   if (!ROLES_CREACION.includes(rolActual)) {
     return json(403, { error: "No tienes permiso para crear perfiles." });
   }
