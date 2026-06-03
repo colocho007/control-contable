@@ -14,9 +14,11 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Eye,
   Layers,
   Loader2,
   Lock,
+  Search,
   RefreshCcw,
   ServerCog,
   ShieldAlert,
@@ -82,6 +84,39 @@ interface TrabajoActivo {
 }
 
 type LogSistema = Record<string, unknown>;
+type EstadoAlerta = "Pendiente" | "En revisión" | "Resuelta" | "Archivada";
+type SeveridadAlerta = "Critica" | "Alta" | "Media" | "Baja" | "Informativa";
+type CategoriaDiagnostico =
+  | "errores"
+  | "sensibles"
+  | "parciales"
+  | "fallas"
+  | "usuarios_inactivos"
+  | "usuarios_trabajando"
+  | "asignaciones"
+  | "modulos_activos"
+  | "modulos_inactivos";
+
+interface AlertaDiagnostico {
+  id: string;
+  categoria: CategoriaDiagnostico;
+  fecha: string | null;
+  modulo: string;
+  accion: string;
+  severidad: SeveridadAlerta;
+  usuario: string | null;
+  empresa: string | null;
+  mensaje: string;
+  metadatos: Record<string, string>;
+  posibleCausa: string;
+  accionRecomendada: string;
+  ruta: string;
+  fuente: string;
+  entidadTipo: string | null;
+  entidadId: string | number | null;
+  eventoOriginal?: AuditoriaEvento;
+  logOriginal?: LogSistema;
+}
 
 const ROLES_MONITOREO = ["admin"];
 const LIMITE_EVENTOS = 120;
@@ -177,6 +212,25 @@ const PATRONES_PARCIAL = [
   "pago",
 ];
 
+const ESTADOS_ALERTA: EstadoAlerta[] = [
+  "Pendiente",
+  "En revisión",
+  "Resuelta",
+  "Archivada",
+];
+
+const NOMBRES_CATEGORIA: Record<CategoriaDiagnostico, string> = {
+  errores: "Errores/logs",
+  sensibles: "Alertas sensibles",
+  parciales: "Operaciones parciales",
+  fallas: "Fallas por módulo",
+  usuarios_inactivos: "Usuarios bloqueados/inactivos",
+  usuarios_trabajando: "Usuarios trabajando",
+  asignaciones: "Asignaciones por usuario",
+  modulos_activos: "Módulos activos",
+  modulos_inactivos: "Módulos inactivos",
+};
+
 function normalizar(valor?: string | null) {
   return (valor || "").trim().toLowerCase();
 }
@@ -226,6 +280,167 @@ function obtenerCampoLog(log: LogSistema, campos: string[]) {
   return null;
 }
 
+function rutaModulo(modulo?: string | null, accion?: string | null) {
+  const texto = `${modulo || ""} ${accion || ""}`.toLowerCase();
+
+  if (texto.includes("cheque") || texto.includes("pago")) return "/cheques";
+  if (texto.includes("contab") || texto.includes("asiento")) return "/contabilidad";
+  if (texto.includes("reinicio")) return "/reinicio-controlado";
+  if (
+    texto.includes("permiso") ||
+    texto.includes("usuario") ||
+    texto.includes("perfil") ||
+    texto.includes("modulo")
+  ) {
+    return "/admin";
+  }
+  if (texto.includes("document")) return "/documentos";
+  if (texto.includes("reporte")) return "/reportes";
+  if (texto.includes("orden")) return "/ordenes-compra";
+  if (texto.includes("cuenta") || texto.includes("cxc") || texto.includes("cxp")) {
+    return texto.includes("cobrar") || texto.includes("cxc")
+      ? "/cuentas-cobrar"
+      : "/cuentas-pagar";
+  }
+  if (texto.includes("import")) return "/importaciones";
+
+  return "/dashboard";
+}
+
+function severidadEvento(evento: AuditoriaEvento): SeveridadAlerta {
+  const texto = textoEvento(evento);
+
+  if (evento.sensible || texto.includes("denegado") || texto.includes("bloqueado")) {
+    return "Alta";
+  }
+  if (texto.includes("error") || texto.includes("fallo") || texto.includes("falla")) {
+    return "Alta";
+  }
+  if (texto.includes("parcial") || texto.includes("incompleto")) return "Media";
+  if (texto.includes("borrador") || texto.includes("pendiente")) return "Baja";
+
+  return "Informativa";
+}
+
+function causaEvento(evento: AuditoriaEvento) {
+  const texto = textoEvento(evento);
+
+  if (evento.sensible || texto.includes("denegado")) {
+    return "Acceso, permiso o cambio sensible que requiere validación administrativa.";
+  }
+  if (texto.includes("parcial") || texto.includes("incompleto") || texto.includes("borrador")) {
+    return "Operación iniciada que pudo quedar sin confirmación final o con datos pendientes.";
+  }
+  if (texto.includes("error") || texto.includes("fallo") || texto.includes("falla")) {
+    return "Falla registrada por el módulo, integración o validación operativa.";
+  }
+
+  return "Evento auditado que coincide con patrones de monitoreo y necesita revisión.";
+}
+
+function accionEvento(evento: AuditoriaEvento) {
+  const ruta = rutaModulo(evento.modulo, evento.accion);
+
+  if (evento.sensible) {
+    return "Validar el usuario, empresa y permiso involucrado; confirmar que el cambio fue autorizado.";
+  }
+  if (ruta === "/cheques") return "Revisar el cheque o pago relacionado y completar o revertir el flujo operativo.";
+  if (ruta === "/contabilidad") return "Revisar asiento, cierre o registro contable asociado antes de continuar.";
+  if (ruta === "/reinicio-controlado") return "Revisar el reinicio controlado y sus dependencias operativas.";
+  if (ruta === "/documentos") return "Verificar documento, adjunto o trámite relacionado.";
+
+  return "Abrir el módulo relacionado, validar el registro y documentar la revisión.";
+}
+
+function valorSeguro(valor: unknown) {
+  if (valor === null || valor === undefined || valor === "") return "Sin dato";
+  const texto =
+    typeof valor === "string" ? valor : JSON.stringify(valor, null, 0);
+
+  return texto.length > 180 ? `${texto.slice(0, 180)}...` : texto;
+}
+
+function metadatosResumidos(valor: ValorJsonAuditoria | LogSistema | null | undefined) {
+  if (!valor || typeof valor !== "object" || Array.isArray(valor)) return {};
+
+  const clavesSensibles = ["password", "token", "secret", "clave", "jwt", "cookie"];
+  return Object.entries(valor as Record<string, unknown>)
+    .filter(([clave]) => !clavesSensibles.some((sensible) => clave.toLowerCase().includes(sensible)))
+    .slice(0, 8)
+    .reduce<Record<string, string>>((acc, [clave, dato]) => {
+      acc[clave] = valorSeguro(dato);
+      return acc;
+    }, {});
+}
+
+function alertaDesdeEvento(
+  evento: AuditoriaEvento,
+  categoria: CategoriaDiagnostico
+): AlertaDiagnostico {
+  return {
+    id: `auditoria:${evento.id}:${categoria}`,
+    categoria,
+    fecha: evento.creado_at,
+    modulo: evento.modulo || "sistema",
+    accion: evento.accion || "evento",
+    severidad: severidadEvento(evento),
+    usuario: evento.usuario_nombre_snapshot || evento.usuario_id || null,
+    empresa: evento.empresa_id ? `Empresa ${evento.empresa_id}` : null,
+    mensaje:
+      evento.descripcion ||
+      evento.motivo ||
+      `${etiqueta(evento.entidad_tipo)} ${evento.entidad_id || ""}`.trim() ||
+      "Evento de auditoría sin descripción.",
+    metadatos: {
+      ...metadatosResumidos(evento.metadatos),
+      entidad: valorSeguro(evento.entidad_tipo),
+      entidad_id: valorSeguro(evento.entidad_id),
+      origen: valorSeguro(evento.origen),
+    },
+    posibleCausa: causaEvento(evento),
+    accionRecomendada: accionEvento(evento),
+    ruta: rutaModulo(evento.modulo, evento.accion),
+    fuente: "auditoria_eventos",
+    entidadTipo: evento.entidad_tipo,
+    entidadId: evento.entidad_id,
+    eventoOriginal: evento,
+  };
+}
+
+function alertaDesdeLog(log: LogSistema, index: number): AlertaDiagnostico {
+  const modulo = obtenerCampoLog(log, ["modulo", "module", "origen"]) || "sistema";
+  const accion = obtenerCampoLog(log, ["accion", "action", "tipo", "level"]) || "log_tecnico";
+  const fecha = obtenerCampoLog(log, ["creado_at", "created_at", "fecha"]);
+  const mensaje =
+    obtenerCampoLog(log, ["mensaje", "message", "descripcion", "error"]) ||
+    "Log técnico disponible para revisión.";
+
+  return {
+    id: `log:${String(log.id || index)}`,
+    categoria: "errores",
+    fecha,
+    modulo,
+    accion,
+    severidad: mensaje.toLowerCase().includes("error") ? "Alta" : "Media",
+    usuario: obtenerCampoLog(log, ["usuario", "usuario_id", "user_id"]),
+    empresa: obtenerCampoLog(log, ["empresa", "empresa_id"]),
+    mensaje,
+    metadatos: metadatosResumidos(log),
+    posibleCausa: "Registro técnico emitido por la aplicación o integración.",
+    accionRecomendada: "Revisar el módulo relacionado y contrastar con auditoría antes de cerrar la alerta.",
+    ruta: rutaModulo(modulo, accion),
+    fuente: "logs",
+    entidadTipo: "logs",
+    entidadId: String(log.id || index),
+    logOriginal: log,
+  };
+}
+
+function estadoInicialAlerta(alerta: AlertaDiagnostico) {
+  if (alerta.categoria === "modulos_activos") return "Resuelta";
+  return "Pendiente";
+}
+
 export default function MonitoreoSistemaPage() {
   const router = useRouter();
   const [perfilActual, setPerfilActual] = useState<Perfil | null>(null);
@@ -240,6 +455,12 @@ export default function MonitoreoSistemaPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [procesandoModulo, setProcesandoModulo] = useState<string | null>(null);
+  const [categoriaActiva, setCategoriaActiva] = useState<CategoriaDiagnostico>("errores");
+  const [alertaSeleccionadaId, setAlertaSeleccionadaId] = useState<string | null>(null);
+  const [estadosAlertas, setEstadosAlertas] = useState<Record<string, EstadoAlerta>>({});
+  const [filtroModulo, setFiltroModulo] = useState("todos");
+  const [filtroEstado, setFiltroEstado] = useState<EstadoAlerta | "todos">("todos");
+  const [filtroSeveridad, setFiltroSeveridad] = useState<SeveridadAlerta | "todos">("todos");
 
   useEffect(() => {
     let activo = true;
@@ -278,6 +499,24 @@ export default function MonitoreoSistemaPage() {
       activo = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    const guardado = window.localStorage.getItem("controlplus_monitoreo_estados_alertas");
+    if (!guardado) return;
+
+    try {
+      setEstadosAlertas(JSON.parse(guardado) as Record<string, EstadoAlerta>);
+    } catch {
+      setEstadosAlertas({});
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      "controlplus_monitoreo_estados_alertas",
+      JSON.stringify(estadosAlertas)
+    );
+  }, [estadosAlertas]);
 
   async function cargarDatos() {
     setCargando(true);
@@ -426,6 +665,55 @@ export default function MonitoreoSistemaPage() {
     }
   }
 
+  async function auditarAccionAlerta(
+    alerta: AlertaDiagnostico,
+    accion: string,
+    estadoNuevo?: EstadoAlerta
+  ) {
+    try {
+      await registrarAuditoriaEvento({
+        empresa_id: alerta.eventoOriginal?.empresa_id ?? null,
+        modulo: "monitoreo-sistema",
+        accion,
+        entidad_tipo: alerta.fuente,
+        entidad_id: alerta.entidadId || alerta.id,
+        estado_anterior: estadosAlertas[alerta.id] || estadoInicialAlerta(alerta),
+        estado_nuevo: estadoNuevo || estadosAlertas[alerta.id] || estadoInicialAlerta(alerta),
+        descripcion: `Acción de monitoreo sobre alerta: ${alerta.mensaje.slice(0, 140)}`,
+        sensible: alerta.severidad === "Alta" || alerta.severidad === "Critica",
+        metadatos: {
+          alerta_id: alerta.id,
+          categoria: alerta.categoria,
+          modulo_origen: alerta.modulo,
+          ruta_sugerida: alerta.ruta,
+          fuente_origen: alerta.fuente,
+        },
+        origen: "monitoreo_sistema",
+      });
+    } catch (error) {
+      console.warn("No se pudo registrar auditoría de monitoreo:", error);
+    }
+  }
+
+  async function seleccionarCategoria(categoria: CategoriaDiagnostico) {
+    setCategoriaActiva(categoria);
+    setAlertaSeleccionadaId(null);
+    setFiltroModulo("todos");
+    setFiltroEstado("todos");
+    setFiltroSeveridad("todos");
+  }
+
+  async function seleccionarAlerta(alerta: AlertaDiagnostico) {
+    setAlertaSeleccionadaId(alerta.id);
+    await auditarAccionAlerta(alerta, "abrir_detalle_alerta");
+  }
+
+  async function cambiarEstadoAlerta(alerta: AlertaDiagnostico, estado: EstadoAlerta) {
+    setEstadosAlertas((actual) => ({ ...actual, [alerta.id]: estado }));
+    await auditarAccionAlerta(alerta, `marcar_alerta_${estado.toLowerCase().replace(" ", "_")}`, estado);
+    toast.success(`Alerta marcada como ${estado}.`);
+  }
+
   const usuariosActivos = useMemo(
     () => usuarios.filter((usuario) => usuario.activo !== false),
     [usuarios]
@@ -472,6 +760,191 @@ export default function MonitoreoSistemaPage() {
 
     return agrupados;
   }, [usuarios]);
+
+  const alertasDiagnostico = useMemo(() => {
+    const alertas: AlertaDiagnostico[] = [
+      ...eventosError.map((evento) => alertaDesdeEvento(evento, "errores")),
+      ...logs.map((log, index) => alertaDesdeLog(log, index)),
+      ...alertasSeguridad.map((evento) => alertaDesdeEvento(evento, "sensibles")),
+      ...operacionesParciales.map((evento) => alertaDesdeEvento(evento, "parciales")),
+      ...usuariosInactivos.map((usuario) => ({
+        id: `usuario-inactivo:${usuario.id}`,
+        categoria: "usuarios_inactivos" as const,
+        fecha: null,
+        modulo: "usuarios",
+        accion: "usuario_inactivo",
+        severidad: "Alta" as const,
+        usuario: usuario.nombre || usuario.id,
+        empresa: null,
+        mensaje: `${usuario.nombre || "Usuario"} está bloqueado o inactivo.`,
+        metadatos: {
+          rol: valorSeguro(usuario.rol),
+          correo: valorSeguro(usuario.correo),
+          usuario_id: valorSeguro(usuario.id),
+        },
+        posibleCausa: "Perfil desactivado, bloqueo administrativo o usuario fuera de operación.",
+        accionRecomendada: "Validar motivo del bloqueo en Admin y revisar asignaciones activas antes de reactivar.",
+        ruta: "/admin",
+        fuente: "perfiles",
+        entidadTipo: "perfiles",
+        entidadId: usuario.id,
+      })),
+      ...trabajosActivos.map((trabajo) => ({
+        id: `trabajo-activo:${trabajo.id}`,
+        categoria: "usuarios_trabajando" as const,
+        fecha: trabajo.actualizado_at,
+        modulo: trabajo.modulo || "operacion",
+        accion: "trabajo_activo",
+        severidad: "Informativa" as const,
+        usuario: trabajo.perfiles?.nombre || trabajo.usuario_id,
+        empresa: trabajo.empresa_id ? `Empresa ${trabajo.empresa_id}` : null,
+        mensaje: trabajo.titulo || trabajo.ruta || "Operación activa visible.",
+        metadatos: {
+          ruta: valorSeguro(trabajo.ruta),
+          rol: valorSeguro(trabajo.perfiles?.rol),
+          trabajo_id: valorSeguro(trabajo.id),
+        },
+        posibleCausa: "Usuario tiene un borrador o sesión de trabajo activa.",
+        accionRecomendada: "Confirmar si el usuario sigue trabajando o si la operación debe cerrarse desde el módulo.",
+        ruta: trabajo.ruta || rutaModulo(trabajo.modulo, "trabajo_activo"),
+        fuente: "borradores_trabajo",
+        entidadTipo: "borradores_trabajo",
+        entidadId: trabajo.id,
+      })),
+      ...usuarioModulos
+        .filter((item) => item.activo !== false)
+        .map((item) => {
+          const usuario = usuarios.find((perfil) => perfil.id === item.usuario_id);
+          const modulo = modulos.find((catalogo) => catalogo.clave === item.modulo_clave);
+
+          return {
+            id: `asignacion:${item.id}`,
+            categoria: "asignaciones" as const,
+            fecha: null,
+            modulo: item.modulo_clave,
+            accion: "modulo_asignado",
+            severidad: modulo?.activo === false ? ("Media" as const) : ("Informativa" as const),
+            usuario: usuario?.nombre || item.usuario_id,
+            empresa: null,
+            mensaje: `${usuario?.nombre || "Usuario"} tiene asignado ${modulo?.nombre || item.modulo_clave}.`,
+            metadatos: {
+              usuario_id: valorSeguro(item.usuario_id),
+              modulo_global: modulo?.activo === false ? "inactivo" : "activo",
+              asignacion_id: valorSeguro(item.id),
+            },
+            posibleCausa:
+              modulo?.activo === false
+                ? "La asignación está activa pero el módulo global está inactivo."
+                : "Asignación operativa activa.",
+            accionRecomendada:
+              modulo?.activo === false
+                ? "Revisar en Admin si la asignación debe mantenerse mientras el módulo está inactivo."
+                : "Validar que la asignación corresponde al rol y empresa del usuario.",
+            ruta: "/admin",
+            fuente: "usuario_modulos",
+            entidadTipo: "usuario_modulos",
+            entidadId: item.id,
+          };
+        }),
+      ...modulos.map((modulo) => ({
+        id: `modulo:${modulo.clave}`,
+        categoria: modulo.activo ? ("modulos_activos" as const) : ("modulos_inactivos" as const),
+        fecha: null,
+        modulo: modulo.clave,
+        accion: modulo.activo ? "modulo_activo" : "modulo_inactivo",
+        severidad: modulo.activo ? ("Informativa" as const) : ("Media" as const),
+        usuario: null,
+        empresa: null,
+        mensaje: `${modulo.nombre} está ${modulo.activo ? "activo" : "inactivo"} globalmente.`,
+        metadatos: {
+          orden: valorSeguro(modulo.orden),
+          modulo_id: valorSeguro(modulo.id),
+          clave: modulo.clave,
+        },
+        posibleCausa: modulo.activo
+          ? "Módulo disponible para usuarios con permisos."
+          : "Módulo desactivado globalmente por administración.",
+        accionRecomendada: modulo.activo
+          ? "Verificar asignaciones por usuario si alguien no puede acceder."
+          : "Confirmar si la desactivación es intencional antes de reactivar.",
+        ruta: "/admin",
+        fuente: "modulos_sistema",
+        entidadTipo: "modulos_sistema",
+        entidadId: modulo.clave,
+      })),
+    ];
+
+    fallasPorModulo.forEach((item) => {
+      alertas.push({
+        id: `fallas-modulo:${item.modulo}`,
+        categoria: "fallas",
+        fecha: null,
+        modulo: item.modulo,
+        accion: "fallas_agrupadas",
+        severidad: item.total >= 5 ? "Alta" : "Media",
+        usuario: null,
+        empresa: null,
+        mensaje: `${item.total} evento(s) problemático(s) agrupados en ${etiqueta(item.modulo)}.`,
+        metadatos: { total: String(item.total) },
+        posibleCausa: "Concentración de errores recientes en un módulo.",
+        accionRecomendada: "Filtrar los errores del módulo y revisar los eventos más recientes primero.",
+        ruta: rutaModulo(item.modulo, "fallas"),
+        fuente: "auditoria_eventos",
+        entidadTipo: "auditoria_eventos",
+        entidadId: item.modulo,
+      });
+    });
+
+    return alertas;
+  }, [
+    alertasSeguridad,
+    eventosError,
+    fallasPorModulo,
+    logs,
+    modulos,
+    operacionesParciales,
+    trabajosActivos,
+    usuarioModulos,
+    usuarios,
+    usuariosInactivos,
+  ]);
+
+  const alertasPorCategoria = useMemo(() => {
+    return alertasDiagnostico.reduce<Record<CategoriaDiagnostico, AlertaDiagnostico[]>>(
+      (acc, alerta) => {
+        acc[alerta.categoria].push(alerta);
+        return acc;
+      },
+      {
+        errores: [],
+        sensibles: [],
+        parciales: [],
+        fallas: [],
+        usuarios_inactivos: [],
+        usuarios_trabajando: [],
+        asignaciones: [],
+        modulos_activos: [],
+        modulos_inactivos: [],
+      }
+    );
+  }, [alertasDiagnostico]);
+
+  const alertasCategoriaActual = alertasPorCategoria[categoriaActiva] || [];
+  const modulosFiltro = Array.from(
+    new Set(alertasCategoriaActual.map((alerta) => alerta.modulo))
+  ).sort();
+  const alertasFiltradas = alertasCategoriaActual.filter((alerta) => {
+    const estado = estadosAlertas[alerta.id] || estadoInicialAlerta(alerta);
+    return (
+      (filtroModulo === "todos" || alerta.modulo === filtroModulo) &&
+      (filtroEstado === "todos" || estado === filtroEstado) &&
+      (filtroSeveridad === "todos" || alerta.severidad === filtroSeveridad)
+    );
+  });
+  const alertaSeleccionada =
+    alertasDiagnostico.find((alerta) => alerta.id === alertaSeleccionadaId) ||
+    alertasFiltradas[0] ||
+    null;
 
   const salud = useMemo(() => {
     const modulosInactivos = modulos.filter((modulo) => !modulo.activo).length;
@@ -591,12 +1064,12 @@ export default function MonitoreoSistemaPage() {
               )}
 
               <section className="grid md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-                <TarjetaResumen titulo="Modulos activos" valor={resumen.modulosActivos} icono={<ToggleRight size={22} />} />
-                <TarjetaResumen titulo="Modulos inactivos" valor={resumen.modulosInactivos} icono={<ToggleLeft size={22} />} />
-                <TarjetaResumen titulo="Usuarios activos" valor={resumen.usuariosActivos} icono={<Users size={22} />} />
-                <TarjetaResumen titulo="Bloqueados/inactivos" valor={resumen.usuariosInactivos} icono={<Lock size={22} />} />
-                <TarjetaResumen titulo="Errores/logs" valor={resumen.errores} icono={<XCircle size={22} />} />
-                <TarjetaResumen titulo="Alertas sensibles" valor={resumen.sensibles} icono={<ShieldAlert size={22} />} />
+                <TarjetaResumen titulo="Modulos activos" valor={resumen.modulosActivos} icono={<ToggleRight size={22} />} activo={categoriaActiva === "modulos_activos"} onClick={() => seleccionarCategoria("modulos_activos")} />
+                <TarjetaResumen titulo="Modulos inactivos" valor={resumen.modulosInactivos} icono={<ToggleLeft size={22} />} activo={categoriaActiva === "modulos_inactivos"} onClick={() => seleccionarCategoria("modulos_inactivos")} />
+                <TarjetaResumen titulo="Usuarios trabajando" valor={trabajosActivos.length} icono={<Users size={22} />} activo={categoriaActiva === "usuarios_trabajando"} onClick={() => seleccionarCategoria("usuarios_trabajando")} />
+                <TarjetaResumen titulo="Bloqueados/inactivos" valor={resumen.usuariosInactivos} icono={<Lock size={22} />} activo={categoriaActiva === "usuarios_inactivos"} onClick={() => seleccionarCategoria("usuarios_inactivos")} />
+                <TarjetaResumen titulo="Errores/logs" valor={resumen.errores} icono={<XCircle size={22} />} activo={categoriaActiva === "errores"} onClick={() => seleccionarCategoria("errores")} />
+                <TarjetaResumen titulo="Alertas sensibles" valor={resumen.sensibles} icono={<ShieldAlert size={22} />} activo={categoriaActiva === "sensibles"} onClick={() => seleccionarCategoria("sensibles")} />
               </section>
 
               <section className="grid xl:grid-cols-[1.1fr_1.9fr] gap-6 mb-8">
@@ -609,8 +1082,14 @@ export default function MonitoreoSistemaPage() {
                   <div className="grid grid-cols-2 gap-3 mt-6 text-sm">
                     <Dato label="Eventos auditados" valor={eventos.length} />
                     <Dato label="Logs conectados" valor={logs.length} />
-                    <Dato label="Operaciones abiertas" valor={trabajosActivos.length} />
-                    <Dato label="Fallas por modulo" valor={fallasPorModulo.length} />
+                    <button type="button" onClick={() => seleccionarCategoria("parciales")} className="text-left bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-amber-300/50 cursor-pointer">
+                      <p className="text-[11px] uppercase font-black text-gray-500">Operaciones parciales</p>
+                      <p className="text-2xl font-black mt-2">{alertasPorCategoria.parciales.length}</p>
+                    </button>
+                    <button type="button" onClick={() => seleccionarCategoria("fallas")} className="text-left bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-red-300/50 cursor-pointer">
+                      <p className="text-[11px] uppercase font-black text-gray-500">Fallas por modulo</p>
+                      <p className="text-2xl font-black mt-2">{fallasPorModulo.length}</p>
+                    </button>
                   </div>
                 </div>
 
@@ -654,10 +1133,33 @@ export default function MonitoreoSistemaPage() {
                 </div>
               </section>
 
+              <section className="grid xl:grid-cols-[1.25fr_0.75fr] gap-6 mb-8">
+                <PanelDiagnostico
+                  categoria={categoriaActiva}
+                  alertas={alertasFiltradas}
+                  alertaSeleccionada={alertaSeleccionada}
+                  estados={estadosAlertas}
+                  modulosFiltro={modulosFiltro}
+                  filtroModulo={filtroModulo}
+                  filtroEstado={filtroEstado}
+                  filtroSeveridad={filtroSeveridad}
+                  onFiltroModulo={setFiltroModulo}
+                  onFiltroEstado={setFiltroEstado}
+                  onFiltroSeveridad={setFiltroSeveridad}
+                  onSeleccionar={seleccionarAlerta}
+                />
+                <PanelDetalleAlerta
+                  alerta={alertaSeleccionada}
+                  estado={alertaSeleccionada ? estadosAlertas[alertaSeleccionada.id] || estadoInicialAlerta(alertaSeleccionada) : null}
+                  onCambiarEstado={cambiarEstadoAlerta}
+                  onIrModulo={(alerta) => router.push(alerta.ruta)}
+                />
+              </section>
+
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
-                <PanelEventos titulo="Errores recientes" eventos={eventosError.slice(0, 12)} />
-                <PanelEventos titulo="Operaciones parciales" eventos={operacionesParciales.slice(0, 12)} />
-                <PanelEventos titulo="Alertas de seguridad" eventos={alertasSeguridad.slice(0, 12)} />
+                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
+                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
+                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} estados={estadosAlertas} />
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
@@ -690,6 +1192,13 @@ export default function MonitoreoSistemaPage() {
                     <ShieldCheck size={16} className="text-purple-300" />
                     Asignaciones de modulos por usuario
                   </h2>
+                  <button
+                    type="button"
+                    onClick={() => seleccionarCategoria("asignaciones")}
+                    className="mb-3 w-full rounded-xl border border-purple-400/20 bg-purple-400/10 px-4 py-3 text-left text-sm font-bold text-purple-100 hover:border-purple-300/50 cursor-pointer"
+                  >
+                    Ver {alertasPorCategoria.asignaciones.length} asignaciones en diagnóstico
+                  </button>
                   <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
                     {usuarioModulos.filter((item) => item.activo !== false).map((item) => {
                       const usuario = usuarios.find((perfil) => perfil.id === item.usuario_id);
@@ -719,12 +1228,27 @@ export default function MonitoreoSistemaPage() {
                     <Activity size={16} className="text-red-300" />
                     Fallas por modulo
                   </h2>
+                  <button
+                    type="button"
+                    onClick={() => seleccionarCategoria("fallas")}
+                    className="mb-3 w-full rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-left text-sm font-bold text-red-100 hover:border-red-300/50 cursor-pointer"
+                  >
+                    Abrir agrupación accionable por módulo
+                  </button>
                   <div className="space-y-3">
                     {fallasPorModulo.map((item) => (
-                      <div key={item.modulo} className="flex items-center justify-between bg-[#0f172a]/70 border border-white/10 rounded-xl p-4">
+                      <button
+                        key={item.modulo}
+                        type="button"
+                        onClick={() => {
+                          seleccionarCategoria("fallas");
+                          setFiltroModulo(item.modulo);
+                        }}
+                        className="w-full flex items-center justify-between bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-red-300/50 cursor-pointer"
+                      >
                         <span className="font-black capitalize">{etiqueta(item.modulo)}</span>
                         <span className="text-red-200 font-black">{item.total}</span>
-                      </div>
+                      </button>
                     ))}
                     {fallasPorModulo.length === 0 && (
                       <p className="text-gray-500 text-sm">No se detectaron fallas por modulo en auditoria reciente.</p>
@@ -766,13 +1290,28 @@ function TarjetaResumen({
   titulo,
   valor,
   icono,
+  activo,
+  onClick,
 }: {
   titulo: string;
   valor: number;
   icono: React.ReactNode;
+  activo?: boolean;
+  onClick?: () => void;
 }) {
+  const clickeable = Boolean(onClick && valor > 0);
+
   return (
-    <div className="bg-white/[0.035] border border-white/10 rounded-2xl p-5">
+    <button
+      type="button"
+      onClick={clickeable ? onClick : undefined}
+      disabled={!clickeable}
+      className={`text-left bg-white/[0.035] border rounded-2xl p-5 transition-colors ${
+        activo
+          ? "border-amber-300/70 shadow-[0_0_0_1px_rgba(251,191,36,0.25)]"
+          : "border-white/10"
+      } ${clickeable ? "hover:border-amber-300/60 cursor-pointer" : "cursor-default opacity-80"}`}
+    >
       <div className="flex items-center justify-between text-amber-300 mb-3">
         <span className="text-xs font-black uppercase tracking-wide text-gray-400">
           {titulo}
@@ -780,7 +1319,10 @@ function TarjetaResumen({
         {icono}
       </div>
       <div className="text-3xl font-black">{valor}</div>
-    </div>
+      <p className="text-[11px] text-gray-500 mt-2">
+        {valor > 0 ? "Clic para ver detalle" : "Sin eventos"}
+      </p>
+    </button>
   );
 }
 
@@ -793,40 +1335,297 @@ function Dato({ label, valor }: { label: string; valor: number }) {
   );
 }
 
-function PanelEventos({
-  titulo,
-  eventos,
+function estiloSeveridad(severidad: SeveridadAlerta) {
+  if (severidad === "Critica" || severidad === "Alta") {
+    return "border-red-400/30 bg-red-400/10 text-red-100";
+  }
+  if (severidad === "Media") return "border-amber-400/30 bg-amber-400/10 text-amber-100";
+  if (severidad === "Baja") return "border-cyan-400/30 bg-cyan-400/10 text-cyan-100";
+  return "border-slate-400/30 bg-slate-400/10 text-slate-100";
+}
+
+function PanelDiagnostico({
+  categoria,
+  alertas,
+  alertaSeleccionada,
+  estados,
+  modulosFiltro,
+  filtroModulo,
+  filtroEstado,
+  filtroSeveridad,
+  onFiltroModulo,
+  onFiltroEstado,
+  onFiltroSeveridad,
+  onSeleccionar,
 }: {
-  titulo: string;
-  eventos: AuditoriaEvento[];
+  categoria: CategoriaDiagnostico;
+  alertas: AlertaDiagnostico[];
+  alertaSeleccionada: AlertaDiagnostico | null;
+  estados: Record<string, EstadoAlerta>;
+  modulosFiltro: string[];
+  filtroModulo: string;
+  filtroEstado: EstadoAlerta | "todos";
+  filtroSeveridad: SeveridadAlerta | "todos";
+  onFiltroModulo: (valor: string) => void;
+  onFiltroEstado: (valor: EstadoAlerta | "todos") => void;
+  onFiltroSeveridad: (valor: SeveridadAlerta | "todos") => void;
+  onSeleccionar: (alerta: AlertaDiagnostico) => void;
 }) {
   return (
     <div className="panel">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+        <h2 className="panel-title mb-0">
+          <Search size={16} className="text-amber-300" />
+          Diagnóstico: {NOMBRES_CATEGORIA[categoria]}
+        </h2>
+        <span className="text-xs text-gray-500">
+          {alertas.length > 0 ? `${alertas.length} elemento(s) filtrado(s)` : "sin eventos"}
+        </span>
+      </div>
+
+      <div className="grid md:grid-cols-3 gap-3 mb-4">
+        <select
+          value={filtroModulo}
+          onChange={(event) => onFiltroModulo(event.target.value)}
+          className="input-custom rounded-xl border border-white/10 bg-[#0f172a]/80 px-3 py-2 text-sm"
+        >
+          <option value="todos">Todos los módulos</option>
+          {modulosFiltro.map((modulo) => (
+            <option key={modulo} value={modulo}>
+              {etiqueta(modulo)}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filtroEstado}
+          onChange={(event) => onFiltroEstado(event.target.value as EstadoAlerta | "todos")}
+          className="input-custom rounded-xl border border-white/10 bg-[#0f172a]/80 px-3 py-2 text-sm"
+        >
+          <option value="todos">Todos los estados</option>
+          {ESTADOS_ALERTA.map((estado) => (
+            <option key={estado} value={estado}>
+              {estado}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filtroSeveridad}
+          onChange={(event) => onFiltroSeveridad(event.target.value as SeveridadAlerta | "todos")}
+          className="input-custom rounded-xl border border-white/10 bg-[#0f172a]/80 px-3 py-2 text-sm"
+        >
+          <option value="todos">Todas las severidades</option>
+          {["Critica", "Alta", "Media", "Baja", "Informativa"].map((severidad) => (
+            <option key={severidad} value={severidad}>
+              {severidad}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="space-y-3 max-h-[560px] overflow-y-auto pr-1">
+        {alertas.map((alerta) => {
+          const estado = estados[alerta.id] || estadoInicialAlerta(alerta);
+          const seleccionada = alertaSeleccionada?.id === alerta.id;
+
+          return (
+            <button
+              key={alerta.id}
+              type="button"
+              onClick={() => onSeleccionar(alerta)}
+              className={`w-full text-left rounded-xl border p-4 transition-colors cursor-pointer ${
+                seleccionada
+                  ? "border-amber-300/70 bg-amber-300/10"
+                  : "border-white/10 bg-[#0f172a]/70 hover:border-amber-300/50"
+              }`}
+            >
+              <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                <span className={`rounded-full border px-2 py-0.5 ${estiloSeveridad(alerta.severidad)}`}>
+                  {alerta.severidad}
+                </span>
+                <span className="rounded-full border border-white/10 px-2 py-0.5 text-gray-300">
+                  {estado}
+                </span>
+                <span className="text-gray-500">{fechaHora(alerta.fecha)}</span>
+              </div>
+              <p className="font-black mt-2">
+                {etiqueta(alerta.modulo)} / {etiqueta(alerta.accion)}
+              </p>
+              <p className="text-sm text-gray-300 mt-1 line-clamp-2">{alerta.mensaje}</p>
+              <p className="text-[11px] text-gray-500 mt-2">
+                Usuario: {alerta.usuario || "No aplica"} | Empresa: {alerta.empresa || "No aplica"}
+              </p>
+            </button>
+          );
+        })}
+        {alertas.length === 0 && (
+          <div className="rounded-xl border border-white/10 bg-[#0f172a]/70 p-6 text-sm text-gray-500">
+            Sin eventos para esta vista. Cambia filtros o selecciona otro contador.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PanelDetalleAlerta({
+  alerta,
+  estado,
+  onCambiarEstado,
+  onIrModulo,
+}: {
+  alerta: AlertaDiagnostico | null;
+  estado: EstadoAlerta | null;
+  onCambiarEstado: (alerta: AlertaDiagnostico, estado: EstadoAlerta) => void;
+  onIrModulo: (alerta: AlertaDiagnostico) => void;
+}) {
+  if (!alerta || !estado) {
+    return (
+      <div className="panel">
+        <h2 className="panel-title">
+          <Eye size={16} className="text-cyan-300" />
+          Detalle de alerta
+        </h2>
+        <p className="text-sm text-gray-500">Selecciona un elemento con datos para ver detalle accionable.</p>
+      </div>
+    );
+  }
+
+  return (
+    <aside className="panel xl:sticky xl:top-6 h-fit">
       <h2 className="panel-title">
-        <AlertTriangle size={16} className="text-amber-300" />
-        {titulo}
+        <Eye size={16} className="text-cyan-300" />
+        Detalle de alerta
       </h2>
-      <div className="space-y-3 max-h-[430px] overflow-y-auto pr-1">
-        {eventos.map((evento) => (
-          <div key={evento.id} className="bg-[#0f172a]/70 border border-white/10 rounded-xl p-4">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <Clock size={13} />
-              {fechaHora(evento.creado_at)}
-            </div>
-            <p className="font-black text-white mt-2 capitalize">
-              {etiqueta(evento.modulo)} / {etiqueta(evento.accion)}
-            </p>
-            <p className="text-sm text-gray-300 mt-1">
-              {evento.descripcion || evento.motivo || etiqueta(evento.entidad_tipo)}
-            </p>
-            {evento.sensible && (
-              <span className="inline-block mt-3 text-[11px] rounded-full border border-amber-400/30 bg-amber-400/10 text-amber-200 px-2 py-0.5">
-                Sensible
-              </span>
+      <div className="space-y-4">
+        <div>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <span className={`rounded-full border px-2 py-0.5 text-xs ${estiloSeveridad(alerta.severidad)}`}>
+              {alerta.severidad}
+            </span>
+            <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-xs text-cyan-100">
+              {estado}
+            </span>
+          </div>
+          <p className="text-xs text-gray-500">{fechaHora(alerta.fecha)}</p>
+          <h3 className="text-xl font-black mt-2">{etiqueta(alerta.modulo)}</h3>
+          <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <DatoTexto label="Acción" valor={etiqueta(alerta.accion)} />
+          <DatoTexto label="Fuente" valor={alerta.fuente} />
+          <DatoTexto label="Usuario" valor={alerta.usuario || "No aplica"} />
+          <DatoTexto label="Empresa" valor={alerta.empresa || "No aplica"} />
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Posible causa</p>
+          <p className="text-sm text-gray-300">{alerta.posibleCausa}</p>
+        </div>
+        <div>
+          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Acción recomendada</p>
+          <p className="text-sm text-gray-300">{alerta.accionRecomendada}</p>
+        </div>
+
+        <div>
+          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Metadatos relevantes</p>
+          <div className="space-y-2">
+            {Object.entries(alerta.metadatos).map(([clave, valor]) => (
+              <div key={clave} className="rounded-lg border border-white/10 bg-[#0f172a]/70 p-3">
+                <p className="text-[11px] text-gray-500">{clave}</p>
+                <p className="text-xs text-gray-300 break-words">{valor}</p>
+              </div>
+            ))}
+            {Object.keys(alerta.metadatos).length === 0 && (
+              <p className="text-sm text-gray-500">Sin metadatos visibles.</p>
             )}
           </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onIrModulo(alerta)}
+            className="rounded-xl bg-cyan-500/15 border border-cyan-400/30 px-4 py-2 text-sm font-bold text-cyan-100 hover:border-cyan-300/70"
+          >
+            Ir al módulo relacionado
+          </button>
+          <button type="button" onClick={() => onCambiarEstado(alerta, "En revisión")} className="rounded-xl bg-white/5 border border-white/10 px-4 py-2 text-sm font-bold hover:border-amber-300/60">
+            Marcar revisada
+          </button>
+          <button type="button" onClick={() => onCambiarEstado(alerta, "Resuelta")} className="rounded-xl bg-green-500/10 border border-green-400/30 px-4 py-2 text-sm font-bold text-green-100 hover:border-green-300/70">
+            Marcar resuelta
+          </button>
+          <button type="button" onClick={() => onCambiarEstado(alerta, "Archivada")} className="rounded-xl bg-slate-500/10 border border-slate-400/30 px-4 py-2 text-sm font-bold text-slate-100 hover:border-slate-300/70">
+            Archivar alerta
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function DatoTexto({ label, valor }: { label: string; valor: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#0f172a]/70 p-3 min-w-0">
+      <p className="text-[11px] uppercase font-black text-gray-500">{label}</p>
+      <p className="text-sm text-gray-200 mt-1 break-words">{valor}</p>
+    </div>
+  );
+}
+
+function PanelResumenCategoria({
+  titulo,
+  categoria,
+  alertas,
+  estados,
+  onVerCategoria,
+  onSeleccionar,
+}: {
+  titulo: string;
+  categoria: CategoriaDiagnostico;
+  alertas: AlertaDiagnostico[];
+  estados: Record<string, EstadoAlerta>;
+  onVerCategoria: (categoria: CategoriaDiagnostico) => void;
+  onSeleccionar: (alerta: AlertaDiagnostico) => void;
+}) {
+  return (
+    <div className="panel">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h2 className="panel-title mb-0">
+          <AlertTriangle size={16} className="text-amber-300" />
+          {titulo}
+        </h2>
+        <button
+          type="button"
+          onClick={() => onVerCategoria(categoria)}
+          className="text-xs font-bold text-cyan-200 hover:text-cyan-100"
+        >
+          Ver todo
+        </button>
+      </div>
+      <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+        {alertas.map((alerta) => (
+          <button
+            key={alerta.id}
+            type="button"
+            onClick={() => onSeleccionar(alerta)}
+            className="w-full text-left bg-[#0f172a]/70 border border-white/10 rounded-xl p-4 hover:border-amber-300/50 cursor-pointer"
+          >
+            <div className="flex items-center gap-2 text-xs text-gray-500">
+              <Clock size={13} />
+              {fechaHora(alerta.fecha)}
+            </div>
+            <p className="font-black text-white mt-2 capitalize">
+              {etiqueta(alerta.modulo)} / {etiqueta(alerta.accion)}
+            </p>
+            <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
+            <span className="inline-block mt-3 text-[11px] rounded-full border border-white/10 text-gray-300 px-2 py-0.5">
+              {estados[alerta.id] || estadoInicialAlerta(alerta)}
+            </span>
+          </button>
         ))}
-        {eventos.length === 0 && (
+        {alertas.length === 0 && (
           <p className="text-gray-500 text-sm">Sin eventos detectados en esta categoria.</p>
         )}
       </div>
