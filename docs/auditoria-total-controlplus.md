@@ -11,7 +11,7 @@ Se aplicaron dos correcciones seguras durante esta auditoria:
 - `app/usuarios/page.tsx`: se agrego `idempotency_key` al flujo legado de creacion de perfiles para cumplir el contrato actual de `/api/admin/perfiles`.
 - `app/api/admin/perfiles/route.ts`: si la RPC de rate limit persistente aun no esta instalada o falla, la ruta conserva el rate limit local en memoria y no rompe la creacion con error 500.
 
-Recomendacion general: listo para prueba controlada con contador si se acepta limitar `Tareas`, y se ejecutan/revisan los SQL pendientes. `Finanzas` fue reforzado para trabajar por empresa operativa y no mezclar monedas.
+Recomendacion general: listo para prueba controlada con contador si se ejecutan/revisan los SQL pendientes y se validan flujos funcionales con datos reales. `Finanzas` y `Tareas` fueron reforzados para trabajar por empresa operativa.
 
 ## 2. Estado general del sistema
 
@@ -42,7 +42,7 @@ Impacto: puede crear movimientos sin empresa y afectar reportes operativos si se
 
 Correccion posterior: `app/finanzas/page.tsx` ahora valida acceso antes de cargar, filtra empresas permitidas y operativas, consulta movimientos por `empresa_id`, exige empresa/moneda al crear, separa KPIs GTQ/USD, bloquea auditor solo lectura para mutaciones y anula con filtro `id + empresa_id`.
 
-### ALTO-2: Tareas usa bucket publico de evidencias y updates solo por id
+### ALTO-2: Tareas usa bucket publico de evidencias y updates solo por id - Corregido
 
 Archivo: `app/tareas/page.tsx`
 
@@ -52,9 +52,7 @@ Evidencia:
 - `completarTarea()` y `eliminarTarea()` actualizan por `.eq("id", id)` sin agregar `.eq("empresa_id", ...)`.
 - La pantalla filtra localmente por empresas permitidas, pero el update depende de RLS para blindaje definitivo.
 
-Impacto: evidencias de tareas pueden quedar publicas; updates por id tienen menor defensa en profundidad.
-
-Recomendacion: mover evidencias a `documentos-tramites` o bucket privado con signed URLs; agregar filtro `empresa_id` en updates y auditoria de completar/cancelar.
+Correccion posterior: `app/tareas/page.tsx` ahora filtra empresas permitidas/operativas, consulta por `empresa_id`, completa/cancela con `id + empresa_id`, sube evidencias a `documentos-tramites`, audita creacion/completado/cancelacion/bloqueos de auditor, y no usa estado invalido `Cancelada`.
 
 ### ALTO-3: Auditoria de bloqueos dentro de RPC puede revertirse si luego se hace `raise exception` - Corregido parcialmente
 
@@ -127,7 +125,7 @@ Usa `obtenerUrlDocumento`, que valida bucket/ruta/estado, pero no aplica el help
 ## 6. Hallazgos bajos
 
 - Hay mojibake en textos (`estÃ¡`, `auditorÃ­a`, etc.) en varios archivos; no bloquea seguridad pero afecta UX.
-- `app/tareas/page.tsx` conserva comentarios/formatos antiguos y nombres de acciones como `eliminarTarea` aunque realmente cancela.
+- `app/tareas/page.tsx` fue reescrito para usar cancelacion logica sin estado invalido; queda pendiente validar en Supabase que las columnas de cancelacion existan en todos los entornos.
 - Algunas pantallas muestran alert/toast genericos; conviene un sistema de mensajes uniforme.
 
 ## 7. Hallazgos por modulo
@@ -226,7 +224,7 @@ Estado: dry-run, confirmacion exacta, deteccion de empresa prueba/inactiva/archi
 
 Revisado: `app/tareas/page.tsx`, `app/finanzas/page.tsx`.
 
-Estado: `Tareas` sigue requiriendo hardening de evidencia/updates. `Finanzas` fue reforzado como capa operativa V1 segura por empresa; no crea asientos ni modifica Contabilidad V2 formal.
+Estado: `Tareas` fue reforzado con empresas operativas, evidencia privada, updates por `id + empresa_id`, auditoria y bloqueo de auditor solo lectura. `Finanzas` fue reforzado como capa operativa V1 segura por empresa; no crea asientos ni modifica Contabilidad V2 formal.
 
 ## 8. Archivos revisados
 
@@ -317,13 +315,12 @@ Resultado:
 
 ## 15. Lista final de pendientes
 
-1. Endurecer `app/tareas/page.tsx`: bucket privado, signed URL, filtros `empresa_id` en updates y auditoria.
-2. Ampliar patron `ok:false` a validaciones esperadas adicionales si se desea evitar excepciones de negocio en RPCs.
-3. Integrar rate limit de apertura en `components/DocumentosEntidad.tsx`.
-4. Ejecutar y verificar SQL pendientes en Supabase.
-5. Ejecutar pruebas funcionales con contador: crear empresa real, proveedor/cliente, OC, cheque, CxP/CxC, documento, reporte y cierre contable.
-6. Revisar RLS real en Supabase con `sql/auditoria_rls_control_plus.sql`.
-8. Reducir logs tecnicos crudos en navegador.
+1. Ampliar patron `ok:false` a validaciones esperadas adicionales si se desea evitar excepciones de negocio en RPCs.
+2. Integrar rate limit de apertura en `components/DocumentosEntidad.tsx`.
+3. Ejecutar y verificar SQL pendientes en Supabase.
+4. Ejecutar pruebas funcionales con contador: crear empresa real, proveedor/cliente, OC, cheque, CxP/CxC, documento, reporte, tarea y cierre contable.
+5. Revisar RLS real en Supabase con `sql/auditoria_rls_control_plus.sql`.
+6. Reducir logs tecnicos crudos en navegador.
 
 ## 16. Recomendacion listo/no listo
 
@@ -332,6 +329,6 @@ No listo para carga real completa.
 Listo para prueba controlada con contador si:
 
 - Se usa `Finanzas` solo como capa operativa V1 reforzada, por empresa y sin mezclar monedas.
-- Se limita `Tareas` o se acepta su riesgo temporal.
+- Se validan los flujos reforzados de `Tareas` con evidencia privada y movimiento operativo opcional.
 - Se ejecutan los SQL pendientes.
 - Se prueba el flujo completo con una empresa real nueva y datos acotados.
