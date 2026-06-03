@@ -11,7 +11,7 @@ Se aplicaron dos correcciones seguras durante esta auditoria:
 - `app/usuarios/page.tsx`: se agrego `idempotency_key` al flujo legado de creacion de perfiles para cumplir el contrato actual de `/api/admin/perfiles`.
 - `app/api/admin/perfiles/route.ts`: si la RPC de rate limit persistente aun no esta instalada o falla, la ruta conserva el rate limit local en memoria y no rompe la creacion con error 500.
 
-Recomendacion general: listo para prueba controlada con contador solo si se acepta excluir o limitar los modulos legacy `Finanzas` y `Tareas`, y se ejecutan/revisan los SQL pendientes. No lo marcaria listo para carga real completa sin atender los hallazgos ALTOS.
+Recomendacion general: listo para prueba controlada con contador si se acepta limitar `Tareas`, y se ejecutan/revisan los SQL pendientes. `Finanzas` fue reforzado para trabajar por empresa operativa y no mezclar monedas.
 
 ## 2. Estado general del sistema
 
@@ -28,7 +28,7 @@ No se confirmo un hallazgo CRITICO explotable en las superficies revisadas. No o
 
 ## 4. Hallazgos altos
 
-### ALTO-1: Modulo Finanzas legacy sin empresa_id obligatorio ni permisos por empresa
+### ALTO-1: Modulo Finanzas legacy sin empresa_id obligatorio ni permisos por empresa - Corregido
 
 Archivo: `app/finanzas/page.tsx`
 
@@ -40,7 +40,7 @@ Evidencia:
 
 Impacto: puede crear movimientos sin empresa y afectar reportes operativos si se usa en paralelo con Contabilidad/Reportes.
 
-Recomendacion: desactivar modulo `finanzas` para prueba real o migrarlo a `contabilidad`/movimientos con empresa obligatoria, permisos por empresa y moneda obligatoria.
+Correccion posterior: `app/finanzas/page.tsx` ahora valida acceso antes de cargar, filtra empresas permitidas y operativas, consulta movimientos por `empresa_id`, exige empresa/moneda al crear, separa KPIs GTQ/USD, bloquea auditor solo lectura para mutaciones y anula con filtro `id + empresa_id`.
 
 ### ALTO-2: Tareas usa bucket publico de evidencias y updates solo por id
 
@@ -226,7 +226,7 @@ Estado: dry-run, confirmacion exacta, deteccion de empresa prueba/inactiva/archi
 
 Revisado: `app/tareas/page.tsx`, `app/finanzas/page.tsx`.
 
-Estado: ambos funcionan como modulos legacy. `Tareas` requiere hardening de evidencia/updates; `Finanzas` debe desactivarse o migrarse antes de carga real.
+Estado: `Tareas` sigue requiriendo hardening de evidencia/updates. `Finanzas` fue reforzado como capa operativa V1 segura por empresa; no crea asientos ni modifica Contabilidad V2 formal.
 
 ## 8. Archivos revisados
 
@@ -317,13 +317,12 @@ Resultado:
 
 ## 15. Lista final de pendientes
 
-1. Desactivar o migrar `app/finanzas/page.tsx` antes de carga real.
-2. Endurecer `app/tareas/page.tsx`: bucket privado, signed URL, filtros `empresa_id` en updates y auditoria.
-3. Ampliar patron `ok:false` a validaciones esperadas adicionales si se desea evitar excepciones de negocio en RPCs.
-4. Integrar rate limit de apertura en `components/DocumentosEntidad.tsx`.
-5. Ejecutar y verificar SQL pendientes en Supabase.
-6. Ejecutar pruebas funcionales con contador: crear empresa real, proveedor/cliente, OC, cheque, CxP/CxC, documento, reporte y cierre contable.
-7. Revisar RLS real en Supabase con `sql/auditoria_rls_control_plus.sql`.
+1. Endurecer `app/tareas/page.tsx`: bucket privado, signed URL, filtros `empresa_id` en updates y auditoria.
+2. Ampliar patron `ok:false` a validaciones esperadas adicionales si se desea evitar excepciones de negocio en RPCs.
+3. Integrar rate limit de apertura en `components/DocumentosEntidad.tsx`.
+4. Ejecutar y verificar SQL pendientes en Supabase.
+5. Ejecutar pruebas funcionales con contador: crear empresa real, proveedor/cliente, OC, cheque, CxP/CxC, documento, reporte y cierre contable.
+6. Revisar RLS real en Supabase con `sql/auditoria_rls_control_plus.sql`.
 8. Reducir logs tecnicos crudos en navegador.
 
 ## 16. Recomendacion listo/no listo
@@ -332,7 +331,7 @@ No listo para carga real completa.
 
 Listo para prueba controlada con contador si:
 
-- Se evita usar `Finanzas`.
+- Se usa `Finanzas` solo como capa operativa V1 reforzada, por empresa y sin mezclar monedas.
 - Se limita `Tareas` o se acepta su riesgo temporal.
 - Se ejecutan los SQL pendientes.
 - Se prueba el flujo completo con una empresa real nueva y datos acotados.
