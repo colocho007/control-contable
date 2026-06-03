@@ -277,6 +277,93 @@ function coincide(evento: AuditoriaEvento, patrones: string[]) {
   return patrones.some((patron) => texto.includes(patron));
 }
 
+const ACCIONES_INFORMATIVAS_AUTORRESUELTAS = new Set([
+  "abrir_detalle_alerta",
+  "cierre_sesion_inactividad",
+  "consultar_historial",
+  "consultar_reporte",
+  "modulo_activo",
+]);
+
+const ACCIONES_SENSIBLES_PENDIENTES = [
+  "cambiar_rol",
+  "crear_perfil",
+  "crear_usuario",
+  "activar_usuario",
+  "desactivar_usuario",
+  "sincronizar_empresas_usuario",
+  "sincronizar_modulos_usuario",
+  "sincronizar_funciones_operativas_usuario",
+  "ejecutar_reinicio_controlado",
+  "rate_limit_excedido",
+  "intento_bloqueado",
+  "importacion_fallida",
+  "importacion_parcial",
+];
+
+function accionNormalizada(valor?: string | null) {
+  return normalizar(valor).replace(/\s+/g, "_");
+}
+
+function esAccionInformativaNormal(modulo?: string | null, accion?: string | null) {
+  const moduloNormalizado = accionNormalizada(modulo);
+  const accionNormalizadaValor = accionNormalizada(accion);
+
+  if (ACCIONES_INFORMATIVAS_AUTORRESUELTAS.has(accionNormalizadaValor)) return true;
+  if (moduloNormalizado === "historial" && accionNormalizadaValor.startsWith("consultar")) return true;
+  if (moduloNormalizado === "reportes" && accionNormalizadaValor.startsWith("consultar")) return true;
+
+  return false;
+}
+
+function esAccionPendienteReal(modulo?: string | null, accion?: string | null, texto = "") {
+  const moduloNormalizado = accionNormalizada(modulo);
+  const accionNormalizadaValor = accionNormalizada(accion);
+  const textoNormalizado = texto.toLowerCase();
+
+  return (
+    ACCIONES_SENSIBLES_PENDIENTES.some((patron) =>
+      accionNormalizadaValor.includes(patron)
+    ) ||
+    textoNormalizado.includes("fallida") ||
+    textoNormalizado.includes("fallido") ||
+    textoNormalizado.includes("bloqueado") ||
+    textoNormalizado.includes("denegado") ||
+    textoNormalizado.includes("rate_limit") ||
+    textoNormalizado.includes("intentos_bloqueados") ||
+    moduloNormalizado === "reinicio-controlado"
+  );
+}
+
+function esEventoInformativoNormal(evento: AuditoriaEvento) {
+  return esAccionInformativaNormal(evento.modulo, evento.accion);
+}
+
+function categoriaEventoAuditoria(evento: AuditoriaEvento): CategoriaDiagnostico | null {
+  const texto = textoEvento(evento);
+
+  if (esEventoInformativoNormal(evento)) {
+    return evento.sensible || coincide(evento, PATRONES_SEGURIDAD) ? "sensibles" : null;
+  }
+
+  if (
+    esAccionPendienteReal(evento.modulo, evento.accion, texto) ||
+    coincide(evento, PATRONES_ERROR)
+  ) {
+    return "errores";
+  }
+
+  if (evento.sensible || coincide(evento, PATRONES_SEGURIDAD)) {
+    return "sensibles";
+  }
+
+  if (coincide(evento, PATRONES_PARCIAL)) {
+    return "parciales";
+  }
+
+  return null;
+}
+
 function fechaHora(valor?: string | null) {
   if (!valor) return "Sin fecha";
 
@@ -331,6 +418,8 @@ function rutaModulo(modulo?: string | null, accion?: string | null) {
 function severidadEvento(evento: AuditoriaEvento): SeveridadAlerta {
   const texto = textoEvento(evento);
 
+  if (esEventoInformativoNormal(evento)) return "Informativa";
+  if (esAccionPendienteReal(evento.modulo, evento.accion, texto)) return "Alta";
   if (evento.sensible || texto.includes("denegado") || texto.includes("bloqueado")) {
     return "Alta";
   }
@@ -457,14 +546,9 @@ function alertaDesdeEvento(
   categoria: CategoriaDiagnostico
 ): AlertaDiagnostico {
   return {
-    id: `auditoria:${evento.id}:${categoria}`,
+    id: `auditoria:${evento.id}`,
     alertaClave: alertaClaveBase([
       "auditoria_eventos",
-      categoria,
-      evento.modulo,
-      evento.accion,
-      evento.entidad_tipo,
-      evento.entidad_id,
       evento.id,
     ]),
     categoria,
@@ -486,6 +570,7 @@ function alertaDesdeEvento(
       entidad: valorSeguro(evento.entidad_tipo),
       entidad_id: valorSeguro(evento.entidad_id),
       origen: valorSeguro(evento.origen),
+      categoria_clasificada: categoria,
     },
     posibleCausa: causaEvento(evento),
     accionRecomendada: accionEvento(evento),
@@ -535,7 +620,19 @@ function alertaDesdeLog(log: LogSistema, index: number): AlertaDiagnostico {
 }
 
 function estadoInicialAlerta(alerta: AlertaDiagnostico) {
+  const texto = [
+    alerta.modulo,
+    alerta.accion,
+    alerta.mensaje,
+    alerta.fuente,
+    alerta.categoria,
+  ].join(" ");
+
   if (alerta.categoria === "modulos_activos") return "Resuelta";
+  if (esAccionInformativaNormal(alerta.modulo, alerta.accion)) return "Resuelta";
+  if (alerta.severidad === "Informativa" && !esAccionPendienteReal(alerta.modulo, alerta.accion, texto)) {
+    return "Resuelta";
+  }
   return "Pendiente";
 }
 
@@ -561,7 +658,7 @@ export default function MonitoreoSistemaPage() {
   const [sincronizandoAlertas, setSincronizandoAlertas] = useState(false);
   const [persistenciaAlertasActiva, setPersistenciaAlertasActiva] = useState(false);
   const [filtroModulo, setFiltroModulo] = useState("todos");
-  const [filtroEstado, setFiltroEstado] = useState<EstadoAlerta | "todos">("todos");
+  const [filtroEstado, setFiltroEstado] = useState<EstadoAlerta | "todos">("Pendiente");
   const [filtroSeveridad, setFiltroSeveridad] = useState<SeveridadAlerta | "todos">("todos");
   const [filtroFuente, setFiltroFuente] = useState("todos");
 
@@ -802,7 +899,7 @@ export default function MonitoreoSistemaPage() {
     setCategoriaActiva(categoria);
     setAlertaSeleccionadaId(null);
     setFiltroModulo("todos");
-    setFiltroEstado("todos");
+    setFiltroEstado(categoria === "modulos_activos" ? "Resuelta" : "Pendiente");
     setFiltroSeveridad("todos");
     setFiltroFuente("todos");
   }
@@ -876,17 +973,17 @@ export default function MonitoreoSistemaPage() {
   );
 
   const eventosError = useMemo(
-    () => eventos.filter((evento) => coincide(evento, PATRONES_ERROR)),
+    () => eventos.filter((evento) => categoriaEventoAuditoria(evento) === "errores"),
     [eventos]
   );
 
   const alertasSeguridad = useMemo(
-    () => eventos.filter((evento) => evento.sensible || coincide(evento, PATRONES_SEGURIDAD)),
+    () => eventos.filter((evento) => categoriaEventoAuditoria(evento) === "sensibles"),
     [eventos]
   );
 
   const operacionesParciales = useMemo(
-    () => eventos.filter((evento) => coincide(evento, PATRONES_PARCIAL)),
+    () => eventos.filter((evento) => categoriaEventoAuditoria(evento) === "parciales"),
     [eventos]
   );
 
@@ -1210,7 +1307,9 @@ export default function MonitoreoSistemaPage() {
   const conteosCategoria = Object.fromEntries(
     Object.entries(alertasPorCategoria).map(([categoria, alertas]) => [
       categoria,
-      alertas.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").length,
+      alertas.filter((alerta) =>
+        ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))
+      ).length,
     ])
   ) as Record<CategoriaDiagnostico, number>;
   const alertasFiltradas = alertasCategoriaActual.filter((alerta) => {
@@ -1230,10 +1329,11 @@ export default function MonitoreoSistemaPage() {
 
   const salud = useMemo(() => {
     const modulosInactivos = modulos.filter((modulo) => !modulo.activo).length;
-    const erroresRecientes = eventosError.length + logs.length;
-    const operacionesPendientes = operacionesParciales.length + trabajosActivos.length;
+    const erroresRecientes = conteosCategoria.errores;
+    const alertasSensiblesPendientes = conteosCategoria.sensibles;
+    const operacionesPendientes = conteosCategoria.parciales + trabajosActivos.length;
 
-    if (erroresRecientes > 0 || alertasSeguridad.length > 0) {
+    if (erroresRecientes > 0 || alertasSensiblesPendientes > 0) {
       return {
         estado: "Atencion requerida",
         detalle: "Hay errores, alertas sensibles o logs recientes por revisar.",
@@ -1257,7 +1357,7 @@ export default function MonitoreoSistemaPage() {
       clase: "text-green-300",
       icono: <CheckCircle2 size={24} />,
     };
-  }, [alertasSeguridad.length, eventosError.length, logs.length, modulos, operacionesParciales.length, trabajosActivos.length]);
+  }, [conteosCategoria.errores, conteosCategoria.parciales, conteosCategoria.sensibles, modulos, trabajosActivos.length]);
 
   const resumen = {
     modulosActivos: conteosCategoria.modulos_activos,
