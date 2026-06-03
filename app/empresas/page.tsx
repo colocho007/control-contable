@@ -95,15 +95,21 @@ const TABLAS_DEPENDENCIAS: Array<{
   descripcion: string;
   critica: boolean;
 }> = [
-  { tabla: "movimientos", descripcion: "Movimientos operativos", critica: true },
-  { tabla: "tareas", descripcion: "Tareas", critica: true },
   { tabla: "cheques", descripcion: "Cheques", critica: true },
-  { tabla: "ordenes_compra", descripcion: "Ordenes de compra", critica: true },
-  { tabla: "fondos_empresa", descripcion: "Fondos y cuentas", critica: true },
+  { tabla: "fondos_empresa", descripcion: "Fondos", critica: true },
   { tabla: "chequeras", descripcion: "Chequeras", critica: true },
   { tabla: "cheques_fisicos", descripcion: "Cheques fisicos", critica: true },
+  { tabla: "ordenes_compra", descripcion: "Ordenes de compra", critica: true },
+  { tabla: "tareas", descripcion: "Tareas", critica: true },
+  { tabla: "movimientos", descripcion: "Movimientos operativos", critica: true },
+  { tabla: "clientes", descripcion: "Clientes", critica: true },
   { tabla: "proveedores", descripcion: "Proveedores", critica: true },
+  { tabla: "cuentas_por_pagar", descripcion: "Cuentas por pagar", critica: true },
+  { tabla: "cuentas_por_cobrar", descripcion: "Cuentas por cobrar", critica: true },
+  { tabla: "pagos_cuentas_por_pagar", descripcion: "Pagos CxP", critica: true },
+  { tabla: "pagos_cuentas_por_cobrar", descripcion: "Pagos CxC", critica: true },
   { tabla: "documentos_tramites", descripcion: "Documentos", critica: true },
+  { tabla: "documentos_contables_revision", descripcion: "Documentos contables", critica: true },
   { tabla: "calendario_eventos", descripcion: "Calendario operativo", critica: true },
   { tabla: "catalogo_cuentas", descripcion: "Catalogo contable", critica: true },
   { tabla: "periodos_contables", descripcion: "Periodos contables", critica: true },
@@ -149,6 +155,27 @@ function empresaNit(empresa: Empresa) {
 
 function empresaDireccion(empresa: Empresa) {
   return texto(empresa.direccion_fiscal) || texto(empresa.direccion);
+}
+
+function motivosEmpresaPruebaOLimpieza(empresa: Empresa) {
+  const nombre = [empresaNombre(empresa), empresaRazonSocial(empresa), texto(empresa.nombre)]
+    .join(" ")
+    .toLowerCase();
+  const estado = estadoNormalizado(empresa.estado);
+  const motivos: string[] = [];
+
+  if (nombre.includes("control plus")) motivos.push("nombre_control_plus");
+  if (nombre.includes("prueba")) motivos.push("nombre_prueba");
+  if (nombre.includes("demo")) motivos.push("nombre_demo");
+  if (nombre.includes("testing")) motivos.push("nombre_testing");
+  if (estado === "Inactiva") motivos.push("estado_inactiva");
+  if (estado === "Archivada") motivos.push("estado_archivada");
+
+  return motivos;
+}
+
+function esEmpresaCandidataLimpieza(empresa: Empresa) {
+  return motivosEmpresaPruebaOLimpieza(empresa).length > 0;
 }
 
 function limpiarForm(form: FormEmpresa) {
@@ -595,9 +622,16 @@ export default function EmpresasPage() {
         descripcion: "Previsualizacion de limpieza segura de empresa",
         metadatos: {
           nombre: empresaNombre(empresa),
+          candidata_limpieza: esEmpresaCandidataLimpieza(empresa),
+          motivos_limpieza: motivosEmpresaPruebaOLimpieza(empresa),
           total_dependencias: total,
           dependencias_criticas: criticas,
-          dependencias: deps,
+          dependencias: deps.map((dep) => ({
+            tabla: dep.tabla,
+            descripcion: dep.descripcion,
+            conteo: dep.conteo,
+            critica: dep.critica,
+          })),
           recomendacion:
             total > 0
               ? "No eliminar fisicamente; usar inactivacion o archivado."
@@ -608,10 +642,107 @@ export default function EmpresasPage() {
       setMensaje(
         total > 0
           ? "La empresa tiene dependencias. No se debe eliminar fisicamente; usa inactivar o archivar."
-          : "No se detectaron dependencias visibles. La eliminacion fisica queda preparada solo para RPC administrativa con confirmacion externa."
+          : esEmpresaCandidataLimpieza(empresa)
+            ? "No se detectaron dependencias visibles. Puedes eliminarla definitivamente con doble confirmacion."
+            : "No se detectaron dependencias, pero no parece empresa de prueba/inactiva/archivada. No se permite eliminar fisicamente."
       );
     } catch (error) {
       console.error("Error previsualizando limpieza:", error);
+      alert(mensajeError(error));
+    } finally {
+      setProcesando(false);
+    }
+  }
+
+  async function eliminarEmpresaVacia(empresa: Empresa) {
+    if (perfilActual?.rol !== "admin") {
+      alert("Solo admin puede eliminar definitivamente una empresa vacia.");
+      return;
+    }
+
+    try {
+      validarEmpresaPermitida(empresa.id);
+    } catch (error) {
+      alert(mensajeError(error));
+      return;
+    }
+
+    const deps =
+      empresaPrevisualizada?.id === empresa.id && dependencias.length
+        ? dependencias
+        : await contarDependencias(empresa.id);
+    const total = deps.reduce((acc, dep) => acc + dep.conteo, 0);
+    const candidata = esEmpresaCandidataLimpieza(empresa);
+
+    if (!candidata || estadoNormalizado(empresa.estado) === "Activa") {
+      await auditarEmpresa({
+        empresaId: empresa.id,
+        accion: "bloquear_eliminacion_empresa",
+        estadoAnterior: estadoNormalizado(empresa.estado),
+        descripcion: "Eliminacion fisica bloqueada por empresa no candidata",
+        metadatos: {
+          nombre: empresaNombre(empresa),
+          motivos_limpieza: motivosEmpresaPruebaOLimpieza(empresa),
+          total_dependencias: total,
+        },
+      });
+      alert("No se permite eliminar fisicamente empresas reales activas.");
+      return;
+    }
+
+    if (total > 0) {
+      await auditarEmpresa({
+        empresaId: empresa.id,
+        accion: "bloquear_eliminacion_empresa",
+        estadoAnterior: estadoNormalizado(empresa.estado),
+        descripcion: "Eliminacion fisica bloqueada por dependencias",
+        metadatos: {
+          nombre: empresaNombre(empresa),
+          total_dependencias: total,
+          dependencias: deps.map((dep) => ({
+            tabla: dep.tabla,
+            descripcion: dep.descripcion,
+            conteo: dep.conteo,
+            critica: dep.critica,
+          })),
+          instruccion: "Archivar o inactivar; no eliminar fisicamente.",
+        },
+      });
+      alert("La empresa tiene dependencias. Solo se permite archivarla o inactivarla.");
+      return;
+    }
+
+    const primera = window.confirm(
+      `Vas a eliminar definitivamente "${empresaNombre(empresa)}". Esta accion solo es segura para empresas vacias. Deseas continuar?`
+    );
+    if (!primera) return;
+
+    const confirmacion = window.prompt(
+      'Escribe exactamente "ELIMINAR EMPRESA" para confirmar la eliminacion fisica:'
+    );
+    if (confirmacion !== "ELIMINAR EMPRESA") {
+      alert("Confirmacion incorrecta. No se elimino la empresa.");
+      return;
+    }
+
+    setProcesando(true);
+    setMensaje("");
+
+    try {
+      const { data, error } = await supabase.rpc("eliminar_empresa_vacia_segura", {
+        p_empresa_id: empresa.id,
+        p_confirmacion: confirmacion,
+      });
+
+      if (error) throw error;
+
+      setMensaje("Empresa vacia eliminada definitivamente de forma segura.");
+      setEmpresaPrevisualizada(null);
+      setDependencias([]);
+      await obtenerEmpresas();
+      console.info("Eliminacion segura de empresa:", data);
+    } catch (error) {
+      console.error("Error eliminando empresa vacia:", error);
       alert(mensajeError(error));
     } finally {
       setProcesando(false);
@@ -626,6 +757,7 @@ export default function EmpresasPage() {
       const coincideEstado =
         filtroEstado === "todas" ||
         (filtroEstado === "operativas" && estado !== "Archivada") ||
+        (filtroEstado === "limpieza" && esEmpresaCandidataLimpieza(empresa)) ||
         estado.toLowerCase() === filtroEstado;
 
       if (!coincideEstado) return false;
@@ -846,12 +978,28 @@ export default function EmpresasPage() {
               <option value="pendiente">Pendientes</option>
               <option value="inactiva">Inactivas</option>
               <option value="archivada">Archivadas</option>
+              <option value="limpieza">Candidatas a limpieza</option>
               <option value="todas">Todas</option>
             </select>
           </section>
 
           {empresaPrevisualizada && (
             <section className="mb-8 bg-orange-500/10 border border-orange-500/20 rounded-3xl p-6">
+              {(() => {
+                const totalDependencias = dependencias.reduce(
+                  (acc, dep) => acc + dep.conteo,
+                  0
+                );
+                const candidata = esEmpresaCandidataLimpieza(empresaPrevisualizada);
+                const estado = estadoNormalizado(empresaPrevisualizada.estado);
+                const puedeEliminarFisicamente =
+                  perfilActual?.rol === "admin" &&
+                  candidata &&
+                  estado !== "Activa" &&
+                  totalDependencias === 0;
+
+                return (
+                  <>
               <h2 className="text-orange-200 font-black mb-2">
                 Previsualizacion de limpieza: {empresaNombre(empresaPrevisualizada)}
               </h2>
@@ -859,6 +1007,28 @@ export default function EmpresasPage() {
                 Si existe cualquier dependencia, la limpieza permitida es inactivar o
                 archivar. Auditoria, documentos, usuarios y permisos no se tocan.
               </p>
+              <div className="mb-4 grid md:grid-cols-3 gap-3 text-sm">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-gray-500 text-xs uppercase font-black">Candidata</p>
+                  <p className="font-bold">
+                    {candidata ? "Si, prueba/inactiva/archivada" : "No, parece real/activa"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-gray-500 text-xs uppercase font-black">Dependencias</p>
+                  <p className="font-bold">{totalDependencias}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-gray-500 text-xs uppercase font-black">Accion segura</p>
+                  <p className="font-bold">
+                    {totalDependencias > 0
+                      ? "Archivar / inactivar"
+                      : puedeEliminarFisicamente
+                        ? "Eliminar con doble confirmacion"
+                        : "No eliminar fisicamente"}
+                  </p>
+                </div>
+              </div>
               <div className="grid md:grid-cols-3 gap-3">
                 {dependencias.map((dep) => (
                   <div
@@ -875,15 +1045,40 @@ export default function EmpresasPage() {
                   </div>
                 ))}
               </div>
+              <div className="mt-5 flex flex-wrap gap-3">
+                {estado !== "Archivada" && (
+                  <button
+                    onClick={() =>
+                      cambiarEstadoEmpresa(
+                        empresaPrevisualizada,
+                        "Archivada",
+                        "archivar_empresa_limpieza"
+                      )
+                    }
+                    disabled={procesando || !puedeArchivar}
+                    className="rounded-2xl bg-orange-500 px-5 py-3 font-black text-black disabled:opacity-50"
+                  >
+                    Archivar empresa
+                  </button>
+                )}
+                <button
+                  onClick={() => eliminarEmpresaVacia(empresaPrevisualizada)}
+                  disabled={procesando || !puedeEliminarFisicamente}
+                  className="rounded-2xl border border-red-500/40 bg-red-500/10 px-5 py-3 font-black text-red-200 disabled:opacity-40"
+                >
+                  Eliminar definitivamente
+                </button>
+              </div>
+                  </>
+                );
+              })()}
             </section>
           )}
 
           <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-6">
             {empresasFiltradas.map((empresa) => {
               const estado = estadoNormalizado(empresa.estado);
-              const esControlPlus =
-                empresaNombre(empresa).toLowerCase().includes("control plus") ||
-                empresaRazonSocial(empresa).toLowerCase().includes("control plus");
+              const candidataLimpieza = esEmpresaCandidataLimpieza(empresa);
 
               return (
                 <div
@@ -919,9 +1114,9 @@ export default function EmpresasPage() {
                       </p>
                       <div className="flex flex-wrap gap-2 mt-4">
                         <EstadoPill estado={estado} />
-                        {esControlPlus && (
+                        {candidataLimpieza && (
                           <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-xs font-black uppercase text-orange-300">
-                            Posible prueba
+                            Candidata limpieza
                           </span>
                         )}
                       </div>
