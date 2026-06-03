@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -67,6 +67,7 @@ interface FiltrosReportes {
 
 const LIMITE_REPORTES = 100;
 const LIMITE_FILAS_EXPORTACION_REPORTES = 1000;
+const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 
 function fechaLocalISO(fecha = new Date()) {
   const copia = new Date(fecha);
@@ -162,6 +163,9 @@ export default function ReportesPage() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
+  const [usuarioActualId, setUsuarioActualId] = useState<string | null>(null);
+  const exportacionEnProcesoRef = useRef(false);
+  const ultimaExportacionAtRef = useRef(0);
 
   useEffect(() => {
     let activo = true;
@@ -195,6 +199,7 @@ export default function ReportesPage() {
 
         if (!activo) return;
 
+        setUsuarioActualId(acceso.user!.id);
         setEmpresasPermitidasIds(idsOperativos);
         setFuncionesOperativas(funciones);
         setAutorizado(true);
@@ -274,6 +279,14 @@ export default function ReportesPage() {
         setReporte(null);
         setEstadosFinancieros(null);
         setErrorCarga("La empresa seleccionada no esta autorizada.");
+        void auditarReporte("bloquear_consulta_reporte", {
+          filtros: filtrosAplicados,
+          motivo: "empresa_no_permitida",
+        });
+        void registrarIntentoBloqueadoReporte("empresa_no_permitida", {
+          accion: "consultar_reporte",
+          filtros: filtrosAplicados,
+        });
         return;
       }
 
@@ -650,18 +663,8 @@ export default function ReportesPage() {
       return;
     }
 
-    const totalFilas = secciones.reduce(
-      (total, seccion) => total + seccion.filas.length,
-      0
-    );
-    if (totalFilas > LIMITE_FILAS_EXPORTACION_REPORTES) {
-      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
-      void auditarReporte("bloquear_exportacion_reporte", {
-        formato: "csv",
-        filtros,
-        filas: totalFilas,
-        limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
-      });
+    const totalFilas = totalFilasSecciones(secciones);
+    if (!validarExportacionReporte("csv", totalFilas)) {
       return;
     }
 
@@ -669,8 +672,14 @@ export default function ReportesPage() {
       formato: "csv",
       filtros,
       secciones: secciones.length,
+      filas_aproximadas: totalFilas,
+      rango_fechas: { desde: filtros.fechaDesde, hasta: filtros.fechaHasta },
     });
-    descargarCsvSecciones(`reportes-${fechaLocalISO()}.csv`, secciones);
+    try {
+      descargarCsvSecciones(`reportes-${fechaLocalISO()}.csv`, secciones);
+    } finally {
+      liberarExportacionReporte();
+    }
   }
 
   function imprimirPdf() {
@@ -680,16 +689,104 @@ export default function ReportesPage() {
       return;
     }
 
+    const totalFilas = totalFilasSecciones(secciones);
+    if (!validarExportacionReporte("pdf_vista_imprimible", totalFilas)) {
+      return;
+    }
+
     void auditarReporte("imprimir_reporte", {
       formato: "pdf_vista_imprimible",
       filtros,
       secciones: secciones.length,
+      filas_aproximadas: totalFilas,
+      rango_fechas: { desde: filtros.fechaDesde, hasta: filtros.fechaHasta },
     });
-    abrirVistaImprimibleSecciones(
-      "Reportes",
-      "Resumen financiero y operativo por empresa",
-      secciones
-    );
+    try {
+      abrirVistaImprimibleSecciones(
+        "Reportes",
+        "Resumen financiero y operativo por empresa",
+        secciones
+      );
+    } finally {
+      liberarExportacionReporte();
+    }
+  }
+
+  function totalFilasSecciones(secciones: SeccionExportacion[]) {
+    return secciones.reduce((total, seccion) => total + seccion.filas.length, 0);
+  }
+
+  function validarExportacionReporte(formato: string, totalFilas: number) {
+    const ahora = Date.now();
+    const empresaFiltrada = filtros.empresaId ? Number(filtros.empresaId) : null;
+
+    if (
+      empresaFiltrada !== null &&
+      (!Number.isInteger(empresaFiltrada) || !empresasPermitidasIds.includes(empresaFiltrada))
+    ) {
+      window.alert("La empresa seleccionada no esta autorizada para exportar.");
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato,
+        filtros,
+        motivo: "empresa_no_permitida",
+        filas_aproximadas: totalFilas,
+      });
+      void registrarIntentoBloqueadoReporte("empresa_no_permitida", {
+        accion: "exportar_reporte",
+        formato,
+        filtros,
+        filas_aproximadas: totalFilas,
+      });
+      return false;
+    }
+
+    const repetida =
+      exportacionEnProcesoRef.current ||
+      ahora - ultimaExportacionAtRef.current < VENTANA_EXPORTACION_REPETIDA_MS;
+
+    if (repetida) {
+      window.alert("Ya hay una exportacion de reportes en proceso. Espera un momento.");
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato,
+        filtros,
+        motivo: "exportacion_repetida",
+        filas_aproximadas: totalFilas,
+      });
+      void registrarIntentoBloqueadoReporte("exportacion_repetida", {
+        formato,
+        filtros,
+        filas_aproximadas: totalFilas,
+      });
+      return false;
+    }
+
+    if (totalFilas > LIMITE_FILAS_EXPORTACION_REPORTES) {
+      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato,
+        filtros,
+        motivo: "limite_filas",
+        filas_aproximadas: totalFilas,
+        limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
+      });
+      void registrarIntentoBloqueadoReporte("limite_filas_exportacion", {
+        formato,
+        filtros,
+        filas_aproximadas: totalFilas,
+        limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
+      });
+      return false;
+    }
+
+    exportacionEnProcesoRef.current = true;
+    ultimaExportacionAtRef.current = ahora;
+    return true;
+  }
+
+  function liberarExportacionReporte() {
+    window.setTimeout(() => {
+      exportacionEnProcesoRef.current = false;
+    }, 800);
   }
 
   async function auditarReporte(accion: string, metadatos: Record<string, unknown>) {
@@ -709,6 +806,40 @@ export default function ReportesPage() {
       });
     } catch (error) {
       console.warn("No se pudo auditar reporte:", error);
+    }
+  }
+
+  async function registrarIntentoBloqueadoReporte(
+    motivo: string,
+    metadatos: Record<string, unknown>
+  ) {
+    if (!usuarioActualId) return;
+
+    const empresaId =
+      motivo === "empresa_no_permitida"
+        ? null
+        : filtros.empresaId
+          ? Number(filtros.empresaId)
+          : null;
+
+    try {
+      await supabase.from("intentos_bloqueados").insert({
+        usuario_id: usuarioActualId,
+        empresa_id: empresaId && Number.isFinite(empresaId) ? empresaId : null,
+        modulo: "reportes",
+        accion:
+          typeof metadatos.accion === "string" ? metadatos.accion : "exportar_reporte",
+        motivo,
+        severidad: motivo.includes("limite") ? "alta" : "media",
+        entidad_tipo: "reporte",
+        mensaje: "Exportacion de reportes bloqueada por control operativo.",
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+      });
+    } catch (error) {
+      console.warn("No se pudo registrar intento bloqueado de reportes:", error);
     }
   }
 

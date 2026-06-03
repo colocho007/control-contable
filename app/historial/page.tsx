@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../../components/Sidebar";
 import { supabase } from "../../lib/supabase";
@@ -79,6 +79,8 @@ interface FiltrosHistorial {
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
 const LIMITE_EVENTOS = 200;
+const LIMITE_FILAS_EXPORTACION_HISTORIAL = 1000;
+const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 const COLUMNAS_AUDITORIA =
   "id,creado_at,usuario_id,usuario_nombre_snapshot,empresa_id,modulo,accion,entidad_tipo,entidad_id,estado_anterior,estado_nuevo,motivo,descripcion,metadatos,sensible,visible_usuario,visible_calendario,origen";
 const FILTROS_INICIALES: FiltrosHistorial = {
@@ -119,6 +121,9 @@ export default function HistorialPage() {
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [avisoCarga, setAvisoCarga] = useState<string | null>(null);
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
+  const [usuarioActualId, setUsuarioActualId] = useState<string | null>(null);
+  const exportacionEnProcesoRef = useRef(false);
+  const ultimaExportacionAtRef = useRef(0);
 
   useEffect(() => {
     let activo = true;
@@ -158,6 +163,7 @@ export default function HistorialPage() {
 
         if (!activo) return;
 
+        setUsuarioActualId(acceso.user!.id);
         setEmpresasPermitidasIds(idsPermitidos);
         setFuncionesOperativas(funciones);
         setAutorizado(true);
@@ -227,6 +233,14 @@ export default function HistorialPage() {
           !idsPermitidos.includes(empresaId)
         ) {
           setEventos([]);
+          void auditarConsultaHistorial("bloquear_consulta_historial", {
+            motivo: "empresa_no_permitida",
+            filtros: filtrosAplicados,
+          });
+          void registrarIntentoBloqueadoHistorial("empresa_no_permitida", {
+            accion: "consultar_historial",
+            filtros: filtrosAplicados,
+          });
           return;
         }
 
@@ -412,12 +426,21 @@ export default function HistorialPage() {
       return;
     }
 
+    if (!validarExportacionHistorial("csv", filas.length)) {
+      return;
+    }
+
     void auditarConsultaHistorial("exportar_historial", {
       formato: "csv",
       cantidad: filas.length,
+      limite_filas: LIMITE_FILAS_EXPORTACION_HISTORIAL,
       filtros,
     });
-    descargarCsv("historial-general.csv", columnasExportacion, filas);
+    try {
+      descargarCsv("historial-general.csv", columnasExportacion, filas);
+    } finally {
+      liberarExportacionHistorial();
+    }
   }
 
   function imprimirPdf() {
@@ -427,23 +450,106 @@ export default function HistorialPage() {
       return;
     }
 
+    if (!validarExportacionHistorial("pdf_vista_imprimible", filas.length)) {
+      return;
+    }
+
     void auditarConsultaHistorial("imprimir_historial", {
       formato: "pdf_vista_imprimible",
       cantidad: filas.length,
+      limite_filas: LIMITE_FILAS_EXPORTACION_HISTORIAL,
       filtros,
     });
-    abrirVistaImprimible(
-      "Historial general",
-      "Bitacora central de operaciones del sistema",
-      columnasExportacion,
-      filas,
-      {
-        "Eventos mostrados": resumen.total,
-        Sensibles: resumen.sensibles,
-        "En calendario": resumen.calendario,
-        "Modulos activos": resumen.modulos,
-      }
-    );
+    try {
+      abrirVistaImprimible(
+        "Historial general",
+        "Bitacora central de operaciones del sistema",
+        columnasExportacion,
+        filas,
+        {
+          "Eventos mostrados": resumen.total,
+          Sensibles: resumen.sensibles,
+          "En calendario": resumen.calendario,
+          "Modulos activos": resumen.modulos,
+        }
+      );
+    } finally {
+      liberarExportacionHistorial();
+    }
+  }
+
+  function validarExportacionHistorial(formato: string, cantidad: number) {
+    const ahora = Date.now();
+    const empresaFiltrada =
+      filtros.empresaId && filtros.empresaId !== "general" ? Number(filtros.empresaId) : null;
+
+    if (
+      empresaFiltrada !== null &&
+      (!Number.isInteger(empresaFiltrada) || !empresasPermitidasIds.includes(empresaFiltrada))
+    ) {
+      window.alert("La empresa seleccionada no esta autorizada para exportar.");
+      void auditarConsultaHistorial("bloquear_exportacion_historial", {
+        formato,
+        motivo: "empresa_no_permitida",
+        cantidad,
+        filtros,
+      });
+      void registrarIntentoBloqueadoHistorial("empresa_no_permitida", {
+        accion: "exportar_historial",
+        formato,
+        cantidad,
+        filtros,
+      });
+      return false;
+    }
+
+    const repetida =
+      exportacionEnProcesoRef.current ||
+      ahora - ultimaExportacionAtRef.current < VENTANA_EXPORTACION_REPETIDA_MS;
+
+    if (repetida) {
+      window.alert("Ya hay una exportacion de historial en proceso. Espera un momento.");
+      void auditarConsultaHistorial("bloquear_exportacion_historial", {
+        formato,
+        motivo: "exportacion_repetida",
+        cantidad,
+        filtros,
+      });
+      void registrarIntentoBloqueadoHistorial("exportacion_repetida", {
+        formato,
+        cantidad,
+        filtros,
+      });
+      return false;
+    }
+
+    if (cantidad > LIMITE_FILAS_EXPORTACION_HISTORIAL) {
+      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
+      void auditarConsultaHistorial("bloquear_exportacion_historial", {
+        formato,
+        motivo: "limite_filas",
+        cantidad,
+        limite_filas: LIMITE_FILAS_EXPORTACION_HISTORIAL,
+        filtros,
+      });
+      void registrarIntentoBloqueadoHistorial("limite_filas_exportacion", {
+        formato,
+        cantidad,
+        limite_filas: LIMITE_FILAS_EXPORTACION_HISTORIAL,
+        filtros,
+      });
+      return false;
+    }
+
+    exportacionEnProcesoRef.current = true;
+    ultimaExportacionAtRef.current = ahora;
+    return true;
+  }
+
+  function liberarExportacionHistorial() {
+    window.setTimeout(() => {
+      exportacionEnProcesoRef.current = false;
+    }, 800);
   }
 
   async function auditarConsultaHistorial(accion: string, metadatos: Record<string, unknown>) {
@@ -462,6 +568,40 @@ export default function HistorialPage() {
       });
     } catch (error) {
       console.warn("No se pudo auditar consulta de historial:", error);
+    }
+  }
+
+  async function registrarIntentoBloqueadoHistorial(
+    motivo: string,
+    metadatos: Record<string, unknown>
+  ) {
+    if (!usuarioActualId) return;
+
+    const empresaId =
+      motivo === "empresa_no_permitida" || filtros.empresaId === "general"
+        ? null
+        : filtros.empresaId
+          ? Number(filtros.empresaId)
+          : null;
+
+    try {
+      await supabase.from("intentos_bloqueados").insert({
+        usuario_id: usuarioActualId,
+        empresa_id: empresaId && Number.isFinite(empresaId) ? empresaId : null,
+        modulo: "historial",
+        accion:
+          typeof metadatos.accion === "string" ? metadatos.accion : "exportar_historial",
+        motivo,
+        severidad: motivo.includes("limite") ? "alta" : "media",
+        entidad_tipo: "auditoria_eventos",
+        mensaje: "Exportacion de historial bloqueada por control operativo.",
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+      });
+    } catch (error) {
+      console.warn("No se pudo registrar intento bloqueado de historial:", error);
     }
   }
 

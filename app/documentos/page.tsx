@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Archive,
@@ -57,6 +57,8 @@ interface FiltrosDocumentos {
 }
 
 const LIMITE_DOCUMENTOS = 200;
+const LIMITE_FILAS_EXPORTACION_DOCUMENTOS = 1000;
+const VENTANA_EXPORTACION_REPETIDA_MS = 2000;
 const FILTROS_INICIALES: FiltrosDocumentos = {
   empresaId: "",
   fechaDesde: "",
@@ -121,6 +123,9 @@ export default function DocumentosPage() {
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
+  const [usuarioActualId, setUsuarioActualId] = useState<string | null>(null);
+  const exportacionEnProcesoRef = useRef(false);
+  const ultimaExportacionAtRef = useRef(0);
 
   useEffect(() => {
     let activo = true;
@@ -154,6 +159,7 @@ export default function DocumentosPage() {
 
         if (!activo) return;
 
+        setUsuarioActualId(acceso.user!.id);
         setEmpresasPermitidasIds(idsPermitidos);
         setFuncionesOperativas(funciones);
         setAutorizado(true);
@@ -228,6 +234,14 @@ export default function DocumentosPage() {
         ) {
           setDocumentos([]);
           setErrorCarga("La empresa seleccionada no esta autorizada.");
+          void auditarLectura("bloquear_consulta_documentos", {
+            motivo: "empresa_no_permitida",
+            filtros: filtrosAplicados,
+          }, empresaId);
+          void registrarIntentoBloqueadoDocumentos("empresa_no_permitida", {
+            accion: "consultar_documentos",
+            filtros: filtrosAplicados,
+          }, empresaId);
           return;
         }
 
@@ -309,6 +323,18 @@ export default function DocumentosPage() {
       documento.estado !== "activo" ||
       !empresasPermitidasIds.includes(Number(documento.empresa_id))
     ) {
+      void registrarIntentoBloqueadoDocumentos(
+        documento.estado !== "activo" ? "documento_inactivo" : "empresa_no_permitida",
+        {
+          accion: "abrir_documento",
+          documento_id: documento.id,
+          modulo_origen: documento.modulo,
+          tipo_documento: documento.tipo_documento,
+          estado: documento.estado,
+        },
+        documento.empresa_id,
+        documento.id
+      );
       window.alert("Este documento ya no esta disponible para consulta.");
       return;
     }
@@ -334,7 +360,19 @@ export default function DocumentosPage() {
       console.error("Error abriendo documento:", error);
       const mensaje =
         error instanceof Error ? error.message : "No se pudo abrir el documento.";
-      window.alert(mensaje);
+      void registrarIntentoBloqueadoDocumentos(
+        "apertura_documento_fallida",
+        {
+          accion: "abrir_documento",
+          documento_id: documento.id,
+          modulo_origen: documento.modulo,
+          tipo_documento: documento.tipo_documento,
+          error_resumen: mensaje.slice(0, 180),
+        },
+        documento.empresa_id,
+        documento.id
+      );
+      window.alert("No se pudo abrir el documento de forma segura.");
 
       if (
         mensaje === "El documento ya no está activo o fue desactivado." ||
@@ -467,12 +505,21 @@ export default function DocumentosPage() {
       return;
     }
 
+    if (!validarExportacionDocumentos("csv", filas.length)) {
+      return;
+    }
+
     void auditarLectura("exportar_documentos", {
       formato: "csv",
       cantidad: filas.length,
+      limite_filas: LIMITE_FILAS_EXPORTACION_DOCUMENTOS,
       filtros,
     });
-    descargarCsv("documentos.csv", columnasExportacion, filas);
+    try {
+      descargarCsv("documentos.csv", columnasExportacion, filas);
+    } finally {
+      liberarExportacionDocumentos();
+    }
   }
 
   function imprimirPdf() {
@@ -482,23 +529,107 @@ export default function DocumentosPage() {
       return;
     }
 
+    if (!validarExportacionDocumentos("pdf_vista_imprimible", filas.length)) {
+      return;
+    }
+
     void auditarLectura("imprimir_documentos", {
       formato: "pdf_vista_imprimible",
       cantidad: filas.length,
+      limite_filas: LIMITE_FILAS_EXPORTACION_DOCUMENTOS,
       filtros,
     });
-    abrirVistaImprimible(
-      "Documentos",
-      "Busqueda y respaldo de documentos de tramites",
-      columnasExportacion,
-      filas,
-      {
-        "Total documentos": resumen.total,
-        Sensibles: resumen.sensibles,
-        Facturas: resumen.facturas,
-        "Cheques / vouchers": resumen.cheques,
-      }
-    );
+    try {
+      abrirVistaImprimible(
+        "Documentos",
+        "Busqueda y respaldo de documentos de tramites",
+        columnasExportacion,
+        filas,
+        {
+          "Total documentos": resumen.total,
+          Sensibles: resumen.sensibles,
+          Facturas: resumen.facturas,
+          "Cheques / vouchers": resumen.cheques,
+        }
+      );
+    } finally {
+      liberarExportacionDocumentos();
+    }
+  }
+
+  function validarExportacionDocumentos(formato: string, cantidad: number) {
+    const ahora = Date.now();
+    const empresaFiltrada = filtros.empresaId ? Number(filtros.empresaId) : null;
+
+    if (
+      empresaFiltrada !== null &&
+      (!Number.isInteger(empresaFiltrada) || !empresasPermitidasIds.includes(empresaFiltrada))
+    ) {
+      window.alert("La empresa seleccionada no esta autorizada para exportar.");
+      void auditarLectura("bloquear_exportacion_documentos", {
+        formato,
+        motivo: "empresa_no_permitida",
+        cantidad,
+        filtros,
+      });
+      void registrarIntentoBloqueadoDocumentos("empresa_no_permitida", {
+        accion: "exportar_documentos",
+        formato,
+        cantidad,
+        filtros,
+      });
+      return false;
+    }
+
+    const repetida =
+      exportacionEnProcesoRef.current ||
+      ahora - ultimaExportacionAtRef.current < VENTANA_EXPORTACION_REPETIDA_MS;
+
+    if (repetida) {
+      window.alert("Ya hay una exportacion de documentos en proceso. Espera un momento.");
+      void auditarLectura("bloquear_exportacion_documentos", {
+        formato,
+        motivo: "exportacion_repetida",
+        cantidad,
+        filtros,
+      });
+      void registrarIntentoBloqueadoDocumentos("exportacion_repetida", {
+        accion: "exportar_documentos",
+        formato,
+        cantidad,
+        filtros,
+      });
+      return false;
+    }
+
+    if (cantidad > LIMITE_FILAS_EXPORTACION_DOCUMENTOS) {
+      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
+      void auditarLectura("bloquear_exportacion_documentos", {
+        formato,
+        motivo: "limite_filas",
+        cantidad,
+        limite_filas: LIMITE_FILAS_EXPORTACION_DOCUMENTOS,
+        filtros,
+      });
+      void registrarIntentoBloqueadoDocumentos("limite_filas_exportacion", {
+        accion: "exportar_documentos",
+        formato,
+        cantidad,
+        limite_filas: LIMITE_FILAS_EXPORTACION_DOCUMENTOS,
+        filtros,
+      });
+      return false;
+    }
+
+    exportacionEnProcesoRef.current = true;
+    ultimaExportacionAtRef.current = ahora;
+    return true;
+  }
+
+  function liberarExportacionDocumentos() {
+    window.setTimeout(() => {
+      exportacionEnProcesoRef.current = false;
+    }, 800);
   }
 
   async function auditarLectura(
@@ -526,6 +657,48 @@ export default function DocumentosPage() {
       });
     } catch (error) {
       console.warn("No se pudo auditar consulta de documentos:", error);
+    }
+  }
+
+  async function registrarIntentoBloqueadoDocumentos(
+    motivo: string,
+    metadatos: Record<string, unknown>,
+    empresaId?: number | string | null,
+    entidadId?: number | string | null
+  ) {
+    if (!usuarioActualId) return;
+
+    const empresaNormalizada =
+      motivo === "empresa_no_permitida"
+        ? null
+        : empresaId !== undefined && empresaId !== null
+          ? Number(empresaId)
+          : null;
+
+    try {
+      await supabase.from("intentos_bloqueados").insert({
+        usuario_id: usuarioActualId,
+        empresa_id:
+          empresaNormalizada !== null && Number.isFinite(empresaNormalizada)
+            ? empresaNormalizada
+            : null,
+        modulo: "documentos",
+        accion:
+          typeof metadatos.accion === "string"
+            ? metadatos.accion
+            : "consultar_documentos",
+        motivo,
+        severidad: motivo.includes("limite") || motivo.includes("permiso") ? "alta" : "media",
+        entidad_tipo: "documento_tramite",
+        entidad_id: entidadId !== undefined && entidadId !== null ? String(entidadId) : null,
+        mensaje: "Intento de documentos bloqueado por control operativo.",
+        metadatos: {
+          ...metadatos,
+          auditor_solo_lectura: esAuditorSoloLecturaLocal(funcionesOperativas),
+        },
+      });
+    } catch (error) {
+      console.warn("No se pudo registrar intento bloqueado de documentos:", error);
     }
   }
 
