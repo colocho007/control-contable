@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
@@ -177,7 +177,7 @@ const TIPOS_DOCUMENTO_CHEQUES = [
   "Voucher",
   "Comprobante de pago",
   "Transferencia",
-  "Depósito",
+  "DepÃ³sito",
   "Recibo",
   "Otro",
 ];
@@ -577,7 +577,7 @@ async function iniciar() {
         acceso.motivo === "usuario_inactivo"
       ) {
         if (acceso.motivo === "usuario_inactivo") {
-          toast.error("Tu usuario está inactivo. Contacta al administrador.");
+          toast.error("Tu usuario estÃ¡ inactivo. Contacta al administrador.");
         }
 
         window.location.href = "/login";
@@ -588,9 +588,9 @@ async function iniciar() {
         acceso.motivo === "modulo_inactivo" ||
         acceso.motivo === "modulo_no_encontrado"
       ) {
-        toast.error("El módulo de Cheques está desactivado.");
+        toast.error("El mÃ³dulo de Cheques estÃ¡ desactivado.");
       } else {
-        toast.error("No tienes acceso al módulo de Cheques.");
+        toast.error("No tienes acceso al mÃ³dulo de Cheques.");
       }
 
       window.location.href = "/dashboard";
@@ -630,7 +630,7 @@ async function iniciar() {
 
   } catch (error) {
     console.error(error);
-    toast.error("Error cargando módulo de cheques");
+    toast.error("Error cargando mÃ³dulo de cheques");
   } finally {
     setCargandoCheques(false);
   }
@@ -1473,7 +1473,7 @@ async function crearFondo() {
   }
 
   if (!userId || !perfilActual) {
-    toast.error("Sesión no válida");
+    toast.error("SesiÃ³n no vÃ¡lida");
     return;
   }
 
@@ -1537,7 +1537,7 @@ async function crearChequera() {
   }
 
   if (!userId || !perfilActual) {
-    toast.error("Sesión no válida");
+    toast.error("SesiÃ³n no vÃ¡lida");
     return;
   }
 
@@ -1545,7 +1545,7 @@ async function crearChequera() {
   const numeroFinal = Number(formChequera.numeroFinal);
 
   if (numeroFinal < numeroInicial) {
-    toast.error("El número final no puede ser menor al inicial");
+    toast.error("El nÃºmero final no puede ser menor al inicial");
     return;
   }
 
@@ -1789,9 +1789,9 @@ async function crearChequera() {
     return;
   }
 
-  const idempotency = await iniciarOperacionIdempotente({
-    alcance: [
-      "crear_cheque",
+  const idempotency = obtenerIdempotencyKeyCheque(
+    [
+      "crear_cheque_rpc",
       userId,
       form.empresaId,
       form.fondoEmpresaId,
@@ -1800,36 +1800,18 @@ async function crearChequera() {
       form.monto,
       form.fechaPago,
       referenciaTemporalChequeRef.current,
-    ].join(":"),
-    accion: "crear_cheque",
-    empresaId: Number(form.empresaId),
-    entidadTipo: "cheque",
-    entidadId: null,
-    requestHash: [
-      form.empresaId,
-      form.fondoEmpresaId,
-      form.chequeFisicoId,
-      form.beneficiario,
-      form.concepto,
-      form.monto,
-      form.fechaPago,
-    ].join("|"),
-  });
-
-  if (!idempotency.ok) {
-    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
-    return;
-  }
+    ].join(":")
+  );
 
   suspenderAutoguardado();
   setProcesandoId(-1);
   const toastId = toast.loading("Creando cheque...");
   let chequeFinalizado = false;
-  let auditoriaCentralRegistrada = true;
-  let historialCreacionRegistrado = true;
   let etapaCreacion = "insertar_cheque";
   let borradorParaCheque: BorradorTrabajo | null = null;
   let borradorIdParaCheque: string | number | null = null;
+  let rpcEjecutada = false;
+  let rpcCreoCheque = false;
 
   try {
     await esperarAutoguardadoEnCurso();
@@ -1887,6 +1869,7 @@ async function crearChequera() {
         toast.error("Este cheque ya fue creado desde este borrador.", {
           id: toastId,
         });
+        liberarIdempotencyKeyCheque(idempotency.storageKey);
         return;
       }
     }
@@ -1896,141 +1879,55 @@ async function crearChequera() {
       form.moneda === "GTQ" ? 1 : Number(form.tipoCambio || 1);
     const esPagoConCheque = form.formaPago === "Cheque";
 
-    const { data: chequeCreado, error: chequeError } = await supabase
-      .from("cheques")
-      .insert([
-        {
-          borrador_id:
-            borradorIdParaCheque !== null ? String(borradorIdParaCheque) : null,
-          empresa_id: Number(form.empresaId),
-          empresa: empresaSeleccionada.nombre,
-          fondo_empresa_id: Number(form.fondoEmpresaId),
-          chequera_id:
-            esPagoConCheque && form.chequeraId ? Number(form.chequeraId) : null,
-          cheque_fisico_id: esPagoConCheque && form.chequeFisicoId
+    etapaCreacion = "crear_cheque_transaccional";
+    rpcEjecutada = true;
+    const { data: resultadoRpc, error: rpcError } = await supabase.rpc(
+      "crear_cheque_transaccional",
+      {
+        p_empresa_id: Number(form.empresaId),
+        p_fondo_empresa_id: Number(form.fondoEmpresaId),
+        p_fecha_pago: form.fechaPago,
+        p_beneficiario: form.beneficiario,
+        p_concepto: form.concepto,
+        p_monto: montoCheque,
+        p_moneda: form.moneda,
+        p_tipo_cambio: tipoCambioFinal,
+        p_tipo_pago: form.tipoPago,
+        p_forma_pago: form.formaPago,
+        p_prioridad: form.prioridad,
+        p_creado_por: userId,
+        p_chequera_id:
+          esPagoConCheque && form.chequeraId ? Number(form.chequeraId) : null,
+        p_cheque_fisico_id:
+          esPagoConCheque && form.chequeFisicoId
             ? Number(form.chequeFisicoId)
             : null,
-          numero_cheque: esPagoConCheque ? form.numeroCheque || null : null,
-          banco: form.banco || null,
-          cuenta_bancaria: form.cuentaBancaria || null,
-          beneficiario: form.beneficiario,
-          concepto: form.concepto,
-          monto: montoCheque,
-          tipo_cambio: tipoCambioFinal,
-          monto_gtq: montoCheque * tipoCambioFinal,
-          tipo_pago: form.tipoPago,
-          forma_pago: form.formaPago,
-          moneda: form.moneda,
-          prioridad: form.prioridad,
-          fecha_pago: form.fechaPago,
-          fecha_limite_autorizacion: limite,
-          estado: "Pendiente de autorización",
-          estado_fondo: "sin_comprometer",
-          creado_por: userId,
-          responsable_actual: form.responsableActual || null,
-          enviado_at: new Date().toISOString(),
-          movimiento_generado: false,
-        },
-      ])
-      .select()
-      .single();
-
-    if (chequeError) {
-      if (
-        borradorIdParaCheque !== null &&
-        esErrorDeBorradorDuplicado(chequeError)
-      ) {
-        let chequeExistente: { id: number } | null = null;
-
-        try {
-          chequeExistente = await obtenerChequeCreadoDesdeBorrador(
-            borradorIdParaCheque
-          );
-        } catch (error) {
-          console.error(
-            "Error verificando el cheque ya creado desde el borrador:",
-            error
-          );
-        }
-
-        try {
-          await marcarBorradorCompletado(borradorIdParaCheque);
-        } catch (error) {
-          console.error("Error completando borrador duplicado:", error);
-
-          if (chequeExistente) {
-            try {
-              await marcarBorradorRequiereRevision(
-                Number(chequeExistente.id),
-                "Se intento reutilizar un borrador que ya genero un cheque.",
-                borradorParaCheque || undefined
-              );
-            } catch (errorRevision) {
-              console.error(
-                "Error cerrando borrador duplicado:",
-                errorRevision
-              );
-            }
-          }
-        }
-
-        bloquearBorradorConsumido(
-          "Este cheque ya fue creado desde este borrador."
-        );
-        toast.error("Este cheque ya fue creado desde este borrador.", {
-          id: toastId,
-        });
-        return;
+        p_borrador_id:
+          borradorIdParaCheque !== null ? String(borradorIdParaCheque) : null,
+        p_empresa_nombre: empresaSeleccionada.nombre,
+        p_fecha_limite_autorizacion: limite,
+        p_responsable_actual: form.responsableActual || null,
+        p_idempotency_key: idempotency.key,
       }
+    );
 
-      throw chequeError;
+    if (rpcError) throw rpcError;
+
+    const resultadoCheque = resultadoRpc as
+      | { ok?: boolean; mensaje?: string; cheque?: Cheque; idempotency_replay?: boolean }
+      | null;
+
+    if (!resultadoCheque?.ok || !resultadoCheque.cheque) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
+      throw new Error(
+        resultadoCheque?.mensaje || "No se pudo crear el cheque de forma segura."
+      );
     }
 
+    const chequeCreado = resultadoCheque.cheque;
     chequeCreadoIdRef.current = Number(chequeCreado.id);
-    etapaCreacion = "reservar_cheque_fisico";
+    rpcCreoCheque = true;
 
-    if (form.formaPago === "Cheque" && form.chequeFisicoId) {
-      const { error: chequeFisicoError } = await supabase
-        .from("cheques_fisicos")
-        .update({
-          estado: "Reservado",
-          cheque_pago_id: chequeCreado.id,
-        })
-        .eq("id", Number(form.chequeFisicoId));
-
-      if (chequeFisicoError) throw chequeFisicoError;
-    }
-
-    etapaCreacion = "registrar_historial_cheque";
-    historialCreacionRegistrado = await registrarHistorial(
-      chequeCreado.id,
-      "Creado y enviado a autorización",
-      null,
-      "Pendiente de autorización",
-      form.formaPago === "Cheque"
-        ? `Cheque No. ${form.numeroCheque} reservado para ${form.beneficiario}`
-        : `${form.formaPago} creado para ${form.beneficiario}`
-    );
-
-    auditoriaCentralRegistrada = await registrarAuditoriaCheque(
-      {
-        empresa_id: chequeCreado.empresa_id,
-        modulo: "cheques",
-        accion: "crear_cheque",
-        entidad_tipo: "cheque",
-        entidad_id: chequeCreado.id,
-        estado_nuevo: chequeCreado.estado,
-        descripcion: "Cheque creado",
-        sensible: true,
-        visible_calendario: Boolean(chequeCreado.fecha_pago),
-        origen: "modulo_cheques",
-        metadatos: {
-          ...metadatosAuditoriaCheque(chequeCreado as Cheque),
-          historial_especifico_registrado: historialCreacionRegistrado,
-        },
-      },
-      "creacion del cheque"
-    );
 
     const borradorCerrado = await completarBorradorChequeCreado(
       chequeCreadoIdRef.current,
@@ -2049,6 +1946,7 @@ async function crearChequera() {
         "El cheque fue creado, pero el borrador requiere revision. No se debe reutilizar para crear otro cheque.",
         { id: toastId }
       );
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
       return;
     }
 
@@ -2058,17 +1956,7 @@ async function crearChequera() {
     setForm(formularioVacio);
     chequeFinalizado = true;
 
-    await completarOperacionIdempotente(
-      idempotency.persistidaId,
-      idempotency.storageKey,
-      "cheque",
-      chequeCreado.id,
-      {
-        cheque_id: chequeCreado.id,
-        estado: chequeCreado.estado,
-        accion: "crear_cheque",
-      }
-    );
+    liberarIdempotencyKeyCheque(idempotency.storageKey);
 
     try {
       await refrescarModuloCheques();
@@ -2077,23 +1965,11 @@ async function crearChequera() {
       toast.error("El cheque fue creado, pero no se pudo actualizar el listado.");
     }
 
-    if (!historialCreacionRegistrado) {
-      toast.error(
-        "Cheque creado, pero no se pudo registrar su historial especifico.",
-        { id: toastId }
-      );
-    } else if (auditoriaCentralRegistrada) {
-      toast.success("Cheque enviado a autorizacion", { id: toastId });
-    } else {
-      toast.error(
-        "Cheque creado, pero no se pudo registrar la auditoria central.",
-        { id: toastId }
-      );
-    }
+    toast.success("Cheque enviado a autorizacion", { id: toastId });
   } catch (error: any) {
     console.error(error);
 
-    if (chequeCreadoIdRef.current !== null) {
+    if (chequeCreadoIdRef.current !== null && !rpcCreoCheque) {
       await registrarAuditoriaCheque(
         {
           empresa_id: Number(form.empresaId),
@@ -2130,12 +2006,8 @@ async function crearChequera() {
       toast.error(error.message || "Error al crear cheque", { id: toastId });
     }
 
-    if (!chequeFinalizado) {
-      await fallarOperacionIdempotente(
-        idempotency.persistidaId,
-        idempotency.storageKey,
-        error
-      );
+    if (!chequeFinalizado && !rpcEjecutada) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
     }
   } finally {
     setProcesandoId(null);
@@ -2609,7 +2481,7 @@ async function archivarCheque(cheque: Cheque) {
 
   if (!userId) return;
 
-const motivo = window.prompt("Indica el motivo de anulación:");
+const motivo = window.prompt("Indica el motivo de anulaciÃ³n:");
 
   if (!motivo) {
     toast.error("Debes indicar un motivo");
@@ -2867,7 +2739,7 @@ async function marcarPagado(cheque: Cheque) {
         "recibo",
         "voucher",
         "transferencia",
-        "depósito",
+        "depÃ³sito",
         "deposito",
         "comprobante",
         "documento soporte",
@@ -3110,7 +2982,7 @@ if (userId && perfilActual) {
 
     if (!cheque.fecha_limite_autorizacion) {
       return {
-        texto: "Sin límite",
+        texto: "Sin lÃ­mite",
         color: "text-gray-400",
         borde: "border-white/10",
         fondo: "bg-white/5",
@@ -3211,7 +3083,7 @@ if (userId && perfilActual) {
 
 const stats = useMemo(() => {
   const pendientes = chequesFiltrados.filter(
-    (c) => c.estado === "Pendiente de autorización"
+    (c) => c.estado === "Pendiente de autorizaciÃ³n"
   ).length;
 
   const autorizados = chequesFiltrados.filter(
@@ -3232,7 +3104,7 @@ const stats = useMemo(() => {
 
   const vencidos = chequesFiltrados.filter((c) => {
     if (!c.fecha_limite_autorizacion) return false;
-    if (c.estado !== "Pendiente de autorización") return false;
+    if (c.estado !== "Pendiente de autorizaciÃ³n") return false;
     return new Date(c.fecha_limite_autorizacion) < now;
   }).length;
 
@@ -3350,7 +3222,7 @@ useEffect(() => {
               <h1 className="text-5xl font-black tracking-tight">Cheques</h1>
 
               <p className="text-gray-400 mt-2">
-                Control de autorización, tiempos, atrasos y pagos
+                Control de autorizaciÃ³n, tiempos, atrasos y pagos
               </p>
             </div>
 
@@ -3429,7 +3301,7 @@ useEffect(() => {
           {!mensajeBorradorBloqueado && borradorActivo && !borradorRevisado && (
             <section className="bg-cyan-500/10 border border-cyan-500/30 rounded-[2rem] p-6 mb-8">
               <h2 className="font-bold text-cyan-200 mb-2">
-                Tienes un cheque pendiente. ¿Deseas continuar donde quedaste?
+                Tienes un cheque pendiente. Â¿Deseas continuar donde quedaste?
               </h2>
               <p className="text-sm text-gray-400 mb-5">
                 Puedes recuperar el formulario guardado o descartarlo para comenzar de nuevo.
@@ -3459,7 +3331,7 @@ useEffect(() => {
           <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
             <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
               <Plus size={16} className="text-cyan-500" />
-              Crear cheque y enviar a autorización
+              Crear cheque y enviar a autorizaciÃ³n
             </h2>
 
             <button
@@ -3519,7 +3391,7 @@ useEffect(() => {
 
               <input
                 type="text"
-                placeholder="Concepto / descripción"
+                placeholder="Concepto / descripciÃ³n"
                 value={form.concepto}
                 onChange={(e) =>
                   setForm({ ...form, concepto: e.target.value })
@@ -3569,7 +3441,7 @@ useEffect(() => {
                 className="input-custom"
               >
                 <option value="Cheque">Cheque</option>
-                <option value="Depósito">Depósito</option>
+                <option value="DepÃ³sito">DepÃ³sito</option>
                 <option value="Efectivo">Efectivo</option>
                 <option value="Transferencia">Transferencia</option>
               </select>
@@ -3591,7 +3463,7 @@ useEffect(() => {
   className="input-custom"
 >
   <option value="GTQ">Quetzales (GTQ)</option>
-  <option value="USD">Dólares (USD)</option>
+  <option value="USD">DÃ³lares (USD)</option>
 </select>
 
 <select
@@ -3617,8 +3489,8 @@ useEffect(() => {
   <option value="">Cuenta / fondo...</option>
   {fondosDisponibles.map((fondo) => (
     <option key={fondo.id} value={String(fondo.id)}>
-      {fondo.banco || "Banco"} — {fondo.cuenta_bancaria || "Sin cuenta"} —{" "}
-      {fondo.moneda} — Disp: {money(Number(fondo.saldo_disponible || 0), fondo.moneda)}
+      {fondo.banco || "Banco"} â€” {fondo.cuenta_bancaria || "Sin cuenta"} â€”{" "}
+      {fondo.moneda} â€” Disp: {money(Number(fondo.saldo_disponible || 0), fondo.moneda)}
     </option>
   ))}
 </select>
@@ -3646,8 +3518,8 @@ useEffect(() => {
 </option>
 {chequerasDisponibles.map((chequera) => (
     <option key={chequera.id} value={String(chequera.id)}>
-      {chequera.banco || "Banco"} — {chequera.cuenta_bancaria || "Sin cuenta"} —{" "}
-      {chequera.numero_inicial} a {chequera.numero_final} — {chequera.moneda}
+      {chequera.banco || "Banco"} â€” {chequera.cuenta_bancaria || "Sin cuenta"} â€”{" "}
+      {chequera.numero_inicial} a {chequera.numero_final} â€” {chequera.moneda}
     </option>
   ))}
 </select>
@@ -3671,13 +3543,13 @@ useEffect(() => {
 <option value="">
   {form.chequeraId
     ? chequesFisicosDisponibles.length > 0
-      ? "Número de cheque..."
+      ? "NÃºmero de cheque..."
       : "No hay cheques disponibles"
     : "Primero selecciona chequera"}
 </option>
 {chequesFisicosDisponibles.map((cf) => (
     <option key={cf.id} value={String(cf.id)}>
-      Cheque No. {cf.numero_cheque} — {cf.moneda}
+      Cheque No. {cf.numero_cheque} â€” {cf.moneda}
     </option>
   ))}
 </select>
@@ -3712,7 +3584,7 @@ useEffect(() => {
                 }
                 className="input-custom"
               >
-                <option value="">Responsable autorización...</option>
+                <option value="">Responsable autorizaciÃ³n...</option>
                 {usuarios
                   .filter((u) =>
                     u.activo !== false &&
@@ -3720,7 +3592,7 @@ useEffect(() => {
                   )
                   .map((u) => (
                     <option key={u.id} value={u.id}>
-                      {u.nombre} — {u.rol}
+                      {u.nombre} â€” {u.rol}
                     </option>
                   ))}
               </select>
@@ -3730,7 +3602,7 @@ useEffect(() => {
                 className="md:col-span-4 bg-cyan-500 hover:bg-cyan-400 text-black font-black rounded-xl transition-all h-[3.5rem] uppercase text-xs flex items-center justify-center gap-2"
               >
                 <Plus size={16} />
-                Enviar cheque a autorización
+                Enviar cheque a autorizaciÃ³n
               </button>
             </div>
             )}
@@ -3804,7 +3676,7 @@ useEffect(() => {
       className="input-custom"
     >
       <option value="GTQ">Quetzales GTQ</option>
-      <option value="USD">Dólares USD</option>
+      <option value="USD">DÃ³lares USD</option>
     </select>
 
     <input
@@ -3864,8 +3736,8 @@ useEffect(() => {
       <option value="">Cuenta / fondo...</option>
       {fondosVisibles.map((fondo) => (
         <option key={fondo.id} value={String(fondo.id)}>
-          {fondo.empresa} — {fondo.banco || "Banco"} —{" "}
-          {fondo.cuenta_bancaria || "Sin cuenta"} — {fondo.moneda}
+          {fondo.empresa} â€” {fondo.banco || "Banco"} â€”{" "}
+          {fondo.cuenta_bancaria || "Sin cuenta"} â€” {fondo.moneda}
         </option>
       ))}
     </select>
@@ -3927,7 +3799,7 @@ useEffect(() => {
       className="md:col-span-6 bg-yellow-500 hover:bg-yellow-400 text-black font-black rounded-xl transition-all h-[3.5rem] uppercase text-xs flex items-center justify-center gap-2"
     >
       <Plus size={16} />
-      Crear chequera y generar números
+      Crear chequera y generar nÃºmeros
     </button>
   </div>
   )}
@@ -4079,8 +3951,8 @@ useEffect(() => {
               className="input-custom md:w-72"
             >
               <option value="Todos">Todos los estados</option>
-              <option value="Pendiente de autorización">
-                Pendiente de autorización
+              <option value="Pendiente de autorizaciÃ³n">
+                Pendiente de autorizaciÃ³n
               </option>
               <option value="Autorizado">Autorizado</option>
              <option value="Anulado">Anulado</option>
@@ -4313,7 +4185,7 @@ const historial = historialCheques.filter((h) => {
 
             <span className="flex items-center gap-1">
               <Clock size={14} className="text-yellow-500" />
-              Límite:{" "}
+              LÃ­mite:{" "}
               {cheque.fecha_limite_autorizacion
                 ? new Date(cheque.fecha_limite_autorizacion).toLocaleString()
                 : "N/A"}
@@ -4381,7 +4253,7 @@ const historial = historialCheques.filter((h) => {
 
 {cheque.motivo_anulacion && (
   <p className="text-yellow-400 text-xs mt-3">
-    Motivo anulación: {cheque.motivo_anulacion}
+    Motivo anulaciÃ³n: {cheque.motivo_anulacion}
   </p>
 )}
 
@@ -4416,7 +4288,7 @@ const historial = historialCheques.filter((h) => {
 </div>
 
           <p className="text-[10px] text-gray-500 mt-1">
-  Estado: {item.estado_anterior || "Inicio"} → {item.estado_nuevo || "Sin estado"}
+  Estado: {item.estado_anterior || "Inicio"} â†’ {item.estado_nuevo || "Sin estado"}
 </p>
 
           <p className="text-[11px] text-gray-400 mt-1">
@@ -4443,7 +4315,7 @@ const historial = historialCheques.filter((h) => {
 
         {puedeAprobar && (
           <div className="flex flex-wrap xl:flex-col gap-2 min-w-[180px]">
-            {cheque.estado === "Pendiente de autorización" && (
+            {cheque.estado === "Pendiente de autorizaciÃ³n" && (
               <>
                 <button
                   onClick={onAutorizar}
