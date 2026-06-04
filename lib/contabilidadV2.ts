@@ -178,6 +178,7 @@ export interface CrearAsientoContableParams {
   moneda_base?: string;
   metadatos?: ValorJsonAuditoria | null;
   detalles: MovimientoDetalleInput[];
+  idempotency_key?: string | null;
 }
 
 export interface ListarCatalogoCuentasParams {
@@ -415,6 +416,7 @@ const LIMITE_PREDETERMINADO = 200;
 const LIMITE_MAXIMO = 1000;
 const TOLERANCIA_BALANCE = 0.005;
 const MONEDAS_PERMITIDAS = ["GTQ", "USD"];
+const IDEMPOTENCY_PREFIX_ASIENTOS = "controlplus_idempotency_contabilidad";
 const ESTADOS_DOCUMENTO_CONTABLE: EstadoDocumentoContable[] = [
   "Pendiente",
   "En revision",
@@ -487,6 +489,74 @@ function resolverLimite(limite?: number) {
     throw new Error("El limite debe ser un numero entero positivo.");
   }
   return Math.min(limite, LIMITE_MAXIMO);
+}
+
+function generarUuidSeguro() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function hashSimple(valor: string) {
+  let hash = 0;
+
+  for (let index = 0; index < valor.length; index += 1) {
+    hash = (hash * 31 + valor.charCodeAt(index)) >>> 0;
+  }
+
+  return hash.toString(36);
+}
+
+function obtenerIdempotencyKeyAsiento(
+  params: CrearAsientoContableParams,
+  periodoId: string | number,
+  lineas: ReturnType<typeof validarDetalle>["lineas"]
+) {
+  if (params.idempotency_key?.trim()) return params.idempotency_key.trim();
+
+  const scope = [
+    params.empresa_id,
+    periodoId,
+    params.fecha,
+    params.descripcion,
+    params.moneda_base || "GTQ",
+    params.origen_modulo || "contabilidad",
+    params.entidad_tipo || "asiento_manual",
+    JSON.stringify(
+      lineas.map((linea) => ({
+        cuenta_id: String(linea.cuenta_id),
+        descripcion: linea.descripcion || "",
+        debe: linea.debe,
+        haber: linea.haber,
+        moneda: linea.moneda,
+        tipo_cambio: linea.tipo_cambio,
+        monto_base: linea.monto_base,
+      }))
+    ),
+  ].join("|");
+
+  const storageKey = `${IDEMPOTENCY_PREFIX_ASIENTOS}:registrar_asiento_completo:${hashSimple(scope)}`;
+
+  if (typeof window === "undefined") {
+    return `${storageKey}:${generarUuidSeguro()}`;
+  }
+
+  const existente = window.localStorage.getItem(storageKey);
+  if (existente) return existente;
+
+  const nueva = `${storageKey}:${generarUuidSeguro()}`;
+  window.localStorage.setItem(storageKey, nueva);
+  return nueva;
+}
+
+function liberarIdempotencyKeyAsiento(key: string) {
+  if (typeof window === "undefined") return;
+  const partes = key.split(":");
+  if (partes.length < 4) return;
+  const storageKey = partes.slice(0, -1).join(":");
+  window.localStorage.removeItem(storageKey);
 }
 
 function validarNaturaleza(naturaleza: string) {
@@ -1057,123 +1127,49 @@ export async function crearAsientoContable(
   }
 
   const userId = await obtenerUsuarioIdActual();
-  let asientoId: string | number | null = null;
+  const idempotencyKey = obtenerIdempotencyKeyAsiento(params, periodo.id, lineas);
+  const tipoAsiento = texto(params.entidad_tipo) || "asiento_manual";
 
-  try {
-    const { data: asientoCreado, error: asientoError } = await supabase
-      .from("asientos_contables")
-      .insert({
-        empresa_id: empresaId,
-        periodo_id: periodo.id,
-        fecha,
-        descripcion,
-        origen_modulo: texto(params.origen_modulo),
-        entidad_tipo: texto(params.entidad_tipo),
-        entidad_id: params.entidad_id ?? null,
-        estado: "registrado",
-        moneda_base: monedaBase,
-        total_debe: totalDebe,
-        total_haber: totalHaber,
-        creado_por: userId,
-        metadatos: params.metadatos ?? null,
-        actualizado_at: new Date().toISOString(),
-      })
-      .select(COLUMNAS_ASIENTO)
-      .single();
+  const { data, error } = await supabase.rpc("registrar_asiento_completo", {
+    p_empresa_id: empresaId,
+    p_periodo_id: periodo.id,
+    p_fecha: fecha,
+    p_descripcion: descripcion,
+    p_moneda: monedaBase,
+    p_tipo: tipoAsiento,
+    p_lineas: lineas,
+    p_creado_por: userId,
+    p_idempotency_key: idempotencyKey,
+  });
 
-    if (asientoError) {
-      throw errorSupabase("No se pudo crear el asiento contable", asientoError);
-    }
-
-    const asiento = normalizarAsiento(asientoCreado);
-    asientoId = asiento.id;
-
-    const detallesInsert = lineas.map((linea) => ({
-      asiento_id: asiento.id,
-      cuenta_id: linea.cuenta_id,
-      descripcion: linea.descripcion,
-      debe: linea.debe,
-      haber: linea.haber,
-      moneda: linea.moneda,
-      tipo_cambio: linea.tipo_cambio,
-      monto_base: linea.monto_base,
-    }));
-
-    const { data: detallesCreados, error: detalleError } = await supabase
-      .from("movimientos_contables_detalle")
-      .insert(detallesInsert)
-      .select(COLUMNAS_DETALLE);
-
-    if (detalleError) {
-      await supabase
-        .from("asientos_contables")
-        .update({
-          estado: "requiere_revision",
-          actualizado_at: new Date().toISOString(),
-          metadatos: {
-            ...(params.metadatos && typeof params.metadatos === "object" && !Array.isArray(params.metadatos)
-              ? params.metadatos
-              : {}),
-            etapa_fallida: "insertar_detalle",
-            motivo_error: detalleError.message,
-          },
-        })
-        .eq("id", asiento.id);
-
-      await auditarSinBloquear({
-        empresa_id: empresaId,
-        modulo: "contabilidad_v2",
-        accion: "asiento_contable_parcial",
-        entidad_tipo: "asiento_contable",
-        entidad_id: asiento.id,
-        estado_anterior: "registrado",
-        estado_nuevo: "requiere_revision",
-        descripcion: "Asiento contable quedo parcialmente creado",
-        sensible: true,
-        metadatos: {
-          etapa_fallida: "insertar_detalle",
-          motivo_error: detalleError.message,
-          total_debe: totalDebe,
-          total_haber: totalHaber,
-        },
-      });
-
-      throw errorSupabase("No se pudo insertar el detalle del asiento contable", detalleError);
-    }
-
-    await auditarSinBloquear({
-      empresa_id: empresaId,
-      modulo: "contabilidad_v2",
-      accion: "crear_asiento_contable",
-      entidad_tipo: "asiento_contable",
-      entidad_id: asiento.id,
-      estado_nuevo: asiento.estado,
-      descripcion: "Asiento contable creado",
-      sensible: true,
-      visible_calendario: true,
-      metadatos: {
-        fecha,
-        periodo_id: periodo.id,
-        total_debe: totalDebe,
-        total_haber: totalHaber,
-        lineas: lineas.length,
-        origen_modulo: params.origen_modulo ?? null,
-        entidad_tipo: params.entidad_tipo ?? null,
-        entidad_id: params.entidad_id ?? null,
-      },
-    });
-
-    return {
-      ...asiento,
-      movimientos_contables_detalle: (detallesCreados || []) as MovimientoContableDetalle[],
-    };
-  } catch (error) {
-    if (asientoId !== null) {
-      console.error("Fallo la creacion completa del asiento contable:", error);
-    }
-
-    throw error;
+  if (error) {
+    throw errorSupabase("No se pudo registrar el asiento contable completo", error);
   }
+
+  const resultado = data as
+    | {
+        ok?: boolean;
+        mensaje?: string;
+        asiento?: AsientoContable;
+        movimientos_contables_detalle?: MovimientoContableDetalle[];
+        idempotency_replay?: boolean;
+      }
+    | null;
+
+  if (!resultado || resultado.ok === false) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    throw new Error(
+      resultado?.mensaje || "No se pudo registrar el asiento contable completo."
+    );
+  }
+
+  if (!resultado.asiento) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    throw new Error("La RPC no devolvio el asiento contable creado.");
+  }
+
+  liberarIdempotencyKeyAsiento(idempotencyKey);
+  return normalizarAsiento(resultado.asiento);
 }
 
 export async function listarAsientosContables(
