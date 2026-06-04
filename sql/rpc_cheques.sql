@@ -1,7 +1,8 @@
 -- RPCs transaccionales para operaciones criticas de Cheques.
 -- Ejecutar en Supabase SQL Editor despues de revisar.
 -- Crea cheque, reserva cheque fisico, registra historial y auditoria en una sola operacion atomica.
--- No borra datos, no usa movimientos operativos y no crea asientos contables.
+-- No borra datos ni crea asientos contables.
+-- El pago de cheque mantiene el movimiento operativo V1 que ya existia en el frontend.
 -- Requiere sql/seguridad_operativa.sql para idempotency_keys_operativas.
 -- Permisos actuales de creacion:
 -- - admin, jefe o supervisor pueden crear.
@@ -649,7 +650,7 @@ begin
       returning * into v_cheque_fisico;
     end if;
 
-    if v_cheque.fondo_empresa_id is not null and to_regproc('public.recalcular_fondo_empresa') is not null then
+    if v_cheque.fondo_empresa_id is not null and to_regprocedure('public.recalcular_fondo_empresa(bigint)') is not null then
       execute 'select public.recalcular_fondo_empresa($1)' using v_cheque.fondo_empresa_id;
     end if;
 
@@ -847,7 +848,7 @@ begin
       returning * into v_cheque_fisico;
     end if;
 
-    if v_cheque.fondo_empresa_id is not null and to_regproc('public.recalcular_fondo_empresa') is not null then
+    if v_cheque.fondo_empresa_id is not null and to_regprocedure('public.recalcular_fondo_empresa(bigint)') is not null then
       execute 'select public.recalcular_fondo_empresa($1)' using v_cheque.fondo_empresa_id;
     end if;
 
@@ -1046,7 +1047,7 @@ begin
       returning * into v_cheque_fisico;
     end if;
 
-    if v_cheque.fondo_empresa_id is not null and to_regproc('public.recalcular_fondo_empresa') is not null then
+    if v_cheque.fondo_empresa_id is not null and to_regprocedure('public.recalcular_fondo_empresa(bigint)') is not null then
       execute 'select public.recalcular_fondo_empresa($1)' using v_cheque.fondo_empresa_id;
     end if;
 
@@ -1109,6 +1110,313 @@ begin
 end;
 $$;
 
+create or replace function public.pagar_cheque_transaccional(
+  p_cheque_id bigint,
+  p_empresa_id bigint,
+  p_pagado_por uuid,
+  p_idempotency_key text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_usuario_id uuid := auth.uid();
+  v_perfil perfiles%rowtype;
+  v_empresa empresas%rowtype;
+  v_fondo fondos_empresa%rowtype;
+  v_cheque cheques%rowtype;
+  v_cheque_anterior cheques%rowtype;
+  v_cheque_fisico cheques_fisicos%rowtype;
+  v_movimiento movimientos%rowtype;
+  v_movimiento_id text := null;
+  v_idempotency idempotency_keys_operativas%rowtype;
+  v_idempotency_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
+  v_ahora timestamp with time zone := now();
+  v_fecha_movimiento date := current_date;
+  v_comprometido_calculado numeric := 0;
+  v_resultado jsonb;
+begin
+  if v_usuario_id is null or v_usuario_id <> p_pagado_por then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'sesion_no_valida', 'mensaje', 'Sesion no valida para pagar el cheque.');
+  end if;
+
+  select * into v_perfil from perfiles where id = v_usuario_id and activo = true;
+  if not found then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'usuario_inactivo', 'mensaje', 'Usuario no activo para pagar cheques.');
+  end if;
+
+  if v_idempotency_key is not null then
+    select * into v_idempotency from idempotency_keys_operativas where idempotency_key = v_idempotency_key for update;
+
+    if found then
+      if v_idempotency.usuario_id <> p_pagado_por then
+        return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'idempotency_usuario_distinto', 'mensaje', 'La llave de idempotencia pertenece a otro usuario.');
+      end if;
+      if v_idempotency.empresa_id is not null and v_idempotency.empresa_id <> p_empresa_id then
+        return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'idempotency_empresa_distinta', 'mensaje', 'La llave de idempotencia pertenece a otra empresa.');
+      end if;
+      if v_idempotency.modulo <> 'cheques' or v_idempotency.accion <> 'pagar_cheque_transaccional' then
+        return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'idempotency_operacion_distinta', 'mensaje', 'La llave de idempotencia pertenece a otra operacion.');
+      end if;
+      if v_idempotency.estado = 'completada' and v_idempotency.resultado_resumen is not null then
+        return v_idempotency.resultado_resumen || jsonb_build_object('idempotency_replay', true);
+      end if;
+      if v_idempotency.estado = 'en_proceso' then
+        return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'operacion_en_proceso', 'mensaje', 'La operacion ya esta en proceso. Espera antes de reintentar.');
+      end if;
+      return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'idempotency_key_usada', 'mensaje', 'La llave de idempotencia ya fue usada con otro estado. Genera una nueva operacion.', 'estado', v_idempotency.estado);
+    end if;
+
+    insert into idempotency_keys_operativas (
+      expira_at, idempotency_key, usuario_id, empresa_id, modulo, accion, estado, request_hash, entidad_tipo, entidad_id
+    )
+    values (
+      now() + interval '24 hours', v_idempotency_key, p_pagado_por, p_empresa_id, 'cheques',
+      'pagar_cheque_transaccional', 'en_proceso',
+      md5(concat_ws('|', p_cheque_id, p_empresa_id, p_pagado_por)), 'cheque', p_cheque_id::text
+    )
+    returning * into v_idempotency;
+  end if;
+
+  begin
+    select * into v_empresa from empresas where id = p_empresa_id;
+    if not found then raise exception 'La empresa no existe.'; end if;
+
+    if lower(coalesce(v_empresa.estado, '')) in ('inactiva', 'inactivo', 'archivada', 'archivado', 'prueba', 'demo', 'testing') then
+      raise exception 'La empresa no esta operativa para pagar cheques.';
+    end if;
+
+    if lower(coalesce(v_perfil.rol, '')) not in ('admin', 'supervisor', 'jefe')
+      and not exists (
+        select 1 from usuario_empresas ue
+        where ue.usuario_id = v_usuario_id
+          and ue.empresa_id = p_empresa_id
+          and ue.activo = true
+      )
+    then
+      raise exception 'No tienes permiso para operar esta empresa.';
+    end if;
+
+    if lower(coalesce(v_perfil.rol, '')) not in ('admin', 'supervisor', 'jefe')
+      and exists (
+        select 1 from usuario_funciones_operativas ufo
+        where ufo.usuario_id = v_usuario_id
+          and ufo.empresa_id = p_empresa_id
+          and ufo.activo = true
+          and ufo.funcion = 'auditor_solo_lectura'
+      )
+    then
+      raise exception 'El auditor solo lectura no puede pagar cheques.';
+    end if;
+
+    select * into v_cheque
+    from cheques
+    where id = p_cheque_id
+      and empresa_id = p_empresa_id
+    for update;
+
+    if not found then raise exception 'Cheque no encontrado para la empresa indicada.'; end if;
+    v_cheque_anterior := v_cheque;
+
+    if v_cheque.estado = 'Pagado' then
+      raise exception 'El cheque ya esta pagado.';
+    end if;
+
+    if v_cheque.estado in ('Rechazado', 'Anulado', 'Archivado') then
+      raise exception 'El cheque no puede pagarse en su estado actual.';
+    end if;
+
+    if v_cheque.estado <> 'Autorizado' then
+      raise exception 'Solo se pueden pagar cheques autorizados.';
+    end if;
+
+    if coalesce(v_cheque.monto, 0) <= 0 then
+      raise exception 'El monto del cheque debe ser mayor a cero.';
+    end if;
+
+    if v_cheque.fondo_empresa_id is not null then
+      select * into v_fondo
+      from fondos_empresa
+      where id = v_cheque.fondo_empresa_id
+        and empresa_id = p_empresa_id
+      for update;
+
+      if not found then raise exception 'El fondo del cheque no existe para la empresa indicada.'; end if;
+
+      if upper(coalesce(v_fondo.moneda, '')) <> upper(coalesce(v_cheque.moneda, 'GTQ')) then
+        raise exception 'La moneda del fondo no coincide con el cheque.';
+      end if;
+
+      if lower(coalesce(v_fondo.estado, 'activa')) in ('inactiva', 'inactivo', 'archivada', 'archivado', 'anulada', 'anulado') then
+        raise exception 'El fondo no esta activo.';
+      end if;
+    end if;
+
+    if v_cheque.cheque_fisico_id is not null then
+      select * into v_cheque_fisico
+      from cheques_fisicos
+      where id = v_cheque.cheque_fisico_id
+        and empresa_id = p_empresa_id
+      for update;
+
+      if not found then raise exception 'El cheque fisico no existe para la empresa indicada.'; end if;
+
+      if v_cheque_fisico.estado in ('Pagado', 'Rechazado', 'Anulado') then
+        raise exception 'El cheque fisico no acepta pago en su estado actual.';
+      end if;
+    end if;
+
+    if coalesce(v_cheque.movimiento_generado, false) is not true then
+      insert into movimientos (
+        tipo,
+        descripcion,
+        monto,
+        tipo_cambio,
+        monto_gtq,
+        empresa,
+        empresa_id,
+        moneda,
+        fecha
+      )
+      values (
+        'Egreso',
+        trim(concat_ws(
+          ' ',
+          coalesce(v_cheque.forma_pago, 'Cheque'),
+          case when v_cheque.numero_cheque is not null then 'No. ' || v_cheque.numero_cheque else null end,
+          coalesce(v_cheque.moneda, 'GTQ'),
+          '-',
+          coalesce(v_cheque.tipo_pago, ''),
+          ':',
+          coalesce(v_cheque.concepto, ''),
+          '-',
+          coalesce(v_cheque.beneficiario, '')
+        )),
+        v_cheque.monto,
+        v_cheque.tipo_cambio,
+        coalesce(v_cheque.monto_gtq, v_cheque.monto),
+        v_cheque.empresa,
+        v_cheque.empresa_id,
+        coalesce(v_cheque.moneda, 'GTQ'),
+        v_fecha_movimiento
+      )
+      returning * into v_movimiento;
+
+      v_movimiento_id := v_movimiento.id::text;
+    end if;
+
+    update cheques
+    set estado = 'Pagado',
+        estado_fondo = 'pagado',
+        pagado_at = v_ahora,
+        movimiento_generado = true
+    where id = v_cheque.id
+      and empresa_id = p_empresa_id
+    returning * into v_cheque;
+
+    if v_cheque.cheque_fisico_id is not null then
+      update cheques_fisicos
+      set estado = 'Pagado',
+          cheque_pago_id = v_cheque.id
+      where id = v_cheque.cheque_fisico_id
+        and empresa_id = p_empresa_id
+      returning * into v_cheque_fisico;
+    end if;
+
+    if v_cheque.fondo_empresa_id is not null then
+      if to_regprocedure('public.recalcular_fondo_empresa(bigint)') is not null then
+        execute 'select public.recalcular_fondo_empresa($1)' using v_cheque.fondo_empresa_id;
+      else
+        select coalesce(sum(monto), 0)
+          into v_comprometido_calculado
+        from cheques
+        where fondo_empresa_id = v_cheque.fondo_empresa_id
+          and empresa_id = p_empresa_id
+          and estado_fondo = 'comprometido'
+          and estado not in ('Pagado', 'Rechazado', 'Anulado', 'Archivado');
+
+        update fondos_empresa
+        set saldo_comprometido = round(v_comprometido_calculado, 2),
+            saldo_disponible = round((coalesce(saldo_base, 0) - v_comprometido_calculado)::numeric, 2)
+        where id = v_cheque.fondo_empresa_id
+          and empresa_id = p_empresa_id
+        returning * into v_fondo;
+
+        if coalesce(v_fondo.saldo_disponible, 0) < 0 then
+          raise exception 'El pago dejaria el fondo con saldo disponible negativo.';
+        end if;
+      end if;
+    end if;
+
+    insert into cheques_historial (
+      cheque_id, modulo, accion, estado_anterior, estado_nuevo, comentario, usuario_id, sensible
+    )
+    values (
+      v_cheque.id, 'cheques', 'Pagado', v_cheque_anterior.estado, 'Pagado',
+      'Cheque pagado y cargado a contabilidad', p_pagado_por, true
+    );
+
+    insert into auditoria_eventos (
+      usuario_id, usuario_nombre_snapshot, empresa_id, modulo, accion, entidad_tipo, entidad_id,
+      estado_anterior, estado_nuevo, descripcion, sensible, visible_calendario, metadatos, origen
+    )
+    values (
+      p_pagado_por, v_perfil.nombre, p_empresa_id, 'cheques', 'pagar_cheque', 'cheque', v_cheque.id::text,
+      v_cheque_anterior.estado, 'Pagado', 'Cheque pagado por RPC transaccional.', true,
+      v_cheque.fecha_pago is not null,
+      jsonb_build_object(
+        'beneficiario', v_cheque.beneficiario,
+        'monto', v_cheque.monto,
+        'moneda', v_cheque.moneda,
+        'forma_pago', v_cheque.forma_pago,
+        'numero_cheque', v_cheque.numero_cheque,
+        'fondo_id', v_cheque.fondo_empresa_id,
+        'chequera_id', v_cheque.chequera_id,
+        'cheque_fisico_id', v_cheque.cheque_fisico_id,
+        'movimiento_id', v_movimiento_id,
+        'movimiento_generado', true,
+        'historial_especifico_registrado', true,
+        'rpc_transaccional', true,
+        'idempotency_key', v_idempotency_key,
+        'asiento_automatico_creado', false
+      ),
+      'rpc_cheques'
+    );
+
+    v_resultado := jsonb_build_object(
+      'ok', true,
+      'cheque', to_jsonb(v_cheque),
+      'cheque_fisico', case when v_cheque.cheque_fisico_id is not null then to_jsonb(v_cheque_fisico) else null end,
+      'movimiento', case when v_movimiento_id is not null then to_jsonb(v_movimiento) else null end,
+      'movimiento_id', v_movimiento_id
+    );
+
+    if v_idempotency_key is not null then
+      update idempotency_keys_operativas
+      set estado = 'completada',
+          entidad_tipo = 'cheque',
+          entidad_id = v_cheque.id::text,
+          resultado_resumen = v_resultado,
+          error_resumen = null
+      where id = v_idempotency.id;
+    end if;
+
+    return v_resultado;
+  exception when others then
+    if v_idempotency_key is not null and v_idempotency.id is not null then
+      update idempotency_keys_operativas
+      set estado = 'fallida',
+          error_resumen = left(sqlerrm, 500)
+      where id = v_idempotency.id;
+    end if;
+
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'pagar_cheque_transaccional_fallido', 'mensaje', left(sqlerrm, 500), 'detalle_resumido', left(sqlerrm, 500), 'idempotency_key', v_idempotency_key);
+  end;
+end;
+$$;
+
 grant execute on function public.crear_cheque_transaccional(
   bigint,
   bigint,
@@ -1134,3 +1442,4 @@ grant execute on function public.crear_cheque_transaccional(
 grant execute on function public.autorizar_cheque_transaccional(bigint, bigint, uuid, text) to authenticated;
 grant execute on function public.rechazar_cheque_transaccional(bigint, bigint, uuid, text, text) to authenticated;
 grant execute on function public.anular_cheque_transaccional(bigint, bigint, uuid, text, text) to authenticated;
+grant execute on function public.pagar_cheque_transaccional(bigint, bigint, uuid, text) to authenticated;
