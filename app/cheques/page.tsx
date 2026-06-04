@@ -2075,185 +2075,53 @@ async function autorizarCheque(cheque: Cheque) {
     return;
   }
 
-  const idempotency = await iniciarOperacionIdempotente({
-    alcance: ["autorizar_cheque", userId, cheque.id, cheque.estado].join(":"),
-    accion: "autorizar_cheque",
-    empresaId: cheque.empresa_id,
-    entidadTipo: "cheque",
-    entidadId: cheque.id,
-    requestHash: [cheque.id, cheque.estado, cheque.monto, cheque.fondo_empresa_id].join("|"),
-  });
-
-  if (!idempotency.ok) {
-    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
-    return;
-  }
+  const idempotency = obtenerIdempotencyKeyCheque(
+    ["autorizar_cheque_rpc", userId, cheque.id, cheque.estado].join(":")
+  );
 
   setProcesandoId(cheque.id);
   const toastId = toast.loading("Autorizando cheque...");
-  let chequeActualizado = false;
-  let operacionCompletada = false;
-  let etapaFallida = "actualizar_cheque";
+  let rpcEjecutada = false;
 
   try {
-    const ahora = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("cheques")
-      .update({
-        estado: "Autorizado",
-        estado_fondo: "comprometido",
-        autorizado_por: userId,
-        autorizado_at: ahora,
-        comprometido_at: ahora,
-      })
-      .eq("id", cheque.id);
-
-    if (error) throw error;
-    chequeActualizado = true;
-    etapaFallida = "actualizar_cheque_fisico";
-
-    if (cheque.cheque_fisico_id) {
-      const { error: chequeFisicoError } = await supabase
-        .from("cheques_fisicos")
-        .update({
-          estado: "Firmado",
-        })
-        .eq("id", cheque.cheque_fisico_id);
-
-      if (chequeFisicoError) throw chequeFisicoError;
-    }
-
-    etapaFallida = "recalcular_fondo";
-    if (cheque.fondo_empresa_id) {
-      const { error: recalculoError } = await supabase.rpc(
-        "recalcular_fondo_empresa",
-        {
-          p_fondo_empresa_id: cheque.fondo_empresa_id,
-        }
-      );
-
-      if (recalculoError) throw recalculoError;
-    }
-
-    const historialRegistrado = await registrarHistorial(
-      cheque.id,
-      "Autorizado",
-      cheque.estado,
-      "Autorizado",
-      "Cheque autorizado y fondos comprometidos"
-    );
-
-    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+    rpcEjecutada = true;
+    const { data, error } = await supabase.rpc(
+      "autorizar_cheque_transaccional",
       {
-        empresa_id: cheque.empresa_id,
-        modulo: "cheques",
-        accion: "autorizar_cheque",
-        entidad_tipo: "cheque",
-        entidad_id: cheque.id,
-        estado_anterior: cheque.estado,
-        estado_nuevo: "Autorizado",
-        descripcion: "Cheque autorizado",
-        sensible: true,
-        visible_calendario: Boolean(cheque.fecha_pago),
-        origen: "modulo_cheques",
-        metadatos: {
-          ...metadatosAuditoriaCheque(cheque),
-          comentario: "Cheque autorizado y fondos comprometidos",
-          historial_especifico_registrado: historialRegistrado,
-        },
-      },
-      "autorizacion del cheque"
-    );
-    operacionCompletada = true;
-
-    await completarOperacionIdempotente(
-      idempotency.persistidaId,
-      idempotency.storageKey,
-      "cheque",
-      cheque.id,
-      {
-        cheque_id: cheque.id,
-        accion: "autorizar_cheque",
-        estado: "Autorizado",
+        p_cheque_id: cheque.id,
+        p_empresa_id: cheque.empresa_id,
+        p_autorizado_por: userId,
+        p_idempotency_key: idempotency.key,
       }
     );
 
-    setCheques((prev) =>
-      prev.map((c) =>
-        c.id === cheque.id
-          ? {
-              ...c,
-              estado: "Autorizado",
-              estado_fondo: "comprometido",
-              autorizado_por: userId,
-              autorizado_at: ahora,
-              comprometido_at: ahora,
-            }
-          : c
-      )
-    );
+    if (error) throw error;
 
-  if (userId && perfilActual) {
-  await obtenerFondos(empresasPermitidasIds);
-  await obtenerChequesFisicos(empresasPermitidasIds);
-  await obtenerResumenChequeras(empresasPermitidasIds);
-}
+    const resultado = data as { ok?: boolean; mensaje?: string; cheque?: Cheque } | null;
 
-    if (!historialRegistrado) {
-      toast.error(
-        "Cheque autorizado, pero no se pudo registrar su historial especifico.",
-        { id: toastId }
-      );
-    } else if (auditoriaCentralRegistrada) {
-      toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
-    } else {
-      toast.error(
-        "Cheque autorizado, pero no se pudo registrar la auditoria central.",
-        { id: toastId }
-      );
+    if (!resultado?.ok || !resultado.cheque) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
+      throw new Error(resultado?.mensaje || "No se pudo autorizar el cheque.");
     }
-  } catch (error: any) {
-    if (chequeActualizado && !operacionCompletada) {
-      await registrarAuditoriaCheque(
-        {
-          empresa_id: cheque.empresa_id,
-          modulo: "cheques",
-          accion: "autorizacion_cheque_parcial",
-          entidad_tipo: "cheque",
-          entidad_id: cheque.id,
-          estado_anterior: cheque.estado,
-          estado_nuevo: "Autorizado",
-          descripcion: "Autorizacion de cheque quedo parcialmente aplicada",
-          sensible: true,
-          visible_calendario: Boolean(cheque.fecha_pago),
-          origen: "modulo_cheques",
-          metadatos: {
-            ...metadatosAuditoriaCheque(cheque),
-            etapa_fallida: etapaFallida,
-            motivo_error: error.message || "Error no identificado",
-          },
-        },
-        "autorizacion parcial del cheque"
-      );
-      toast.error(
-        "El cheque fue autorizado parcialmente y requiere revision.",
-        { id: toastId }
-      );
-    } else if (operacionCompletada) {
+
+    liberarIdempotencyKeyCheque(idempotency.storageKey);
+
+    try {
+      await refrescarModuloCheques();
+    } catch (refreshError) {
+      console.error("Error actualizando listado despues de autorizar cheque:", refreshError);
       toast.error("Cheque autorizado, pero no se pudo actualizar el listado.", {
         id: toastId,
       });
-    } else {
-      toast.error(error.message || "Error al autorizar", { id: toastId });
+      return;
     }
 
-    if (!operacionCompletada) {
-      await fallarOperacionIdempotente(
-        idempotency.persistidaId,
-        idempotency.storageKey,
-        error
-      );
+    toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
+  } catch (error: any) {
+    toast.error(error.message || "Error al autorizar", { id: toastId });
+
+    if (!rpcEjecutada) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
     }
   } finally {
     setProcesandoId(null);
@@ -2280,188 +2148,54 @@ async function rechazarCheque(cheque: Cheque) {
     return;
   }
 
-  const idempotency = await iniciarOperacionIdempotente({
-    alcance: ["rechazar_cheque", userId, cheque.id, cheque.estado, motivo.trim()].join(":"),
-    accion: "rechazar_cheque",
-    empresaId: cheque.empresa_id,
-    entidadTipo: "cheque",
-    entidadId: cheque.id,
-    requestHash: [cheque.id, cheque.estado, motivo.trim()].join("|"),
-  });
-
-  if (!idempotency.ok) {
-    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
-    return;
-  }
+  const idempotency = obtenerIdempotencyKeyCheque(
+    ["rechazar_cheque_rpc", userId, cheque.id, cheque.estado, motivo.trim()].join(":")
+  );
 
   setProcesandoId(cheque.id);
   const toastId = toast.loading("Rechazando cheque...");
-  let chequeActualizado = false;
-  let operacionCompletada = false;
-  let etapaFallida = "actualizar_cheque";
+  let rpcEjecutada = false;
 
   try {
-    const ahora = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("cheques")
-      .update({
-        estado: "Rechazado",
-        estado_fondo: "liberado",
-        rechazado_por: userId,
-        rechazado_at: ahora,
-        liberado_at: ahora,
-        motivo_rechazo: motivo,
-      })
-      .eq("id", cheque.id);
-
-    if (error) throw error;
-    chequeActualizado = true;
-    etapaFallida = "actualizar_cheque_fisico";
-
-    if (cheque.cheque_fisico_id) {
-      const { error: chequeFisicoError } = await supabase
-        .from("cheques_fisicos")
-        .update({
-          estado: "Rechazado",
-        })
-        .eq("id", cheque.cheque_fisico_id);
-
-      if (chequeFisicoError) throw chequeFisicoError;
-    }
-
-    etapaFallida = "recalcular_fondo";
-    if (cheque.fondo_empresa_id) {
-      const { error: recalculoError } = await supabase.rpc(
-        "recalcular_fondo_empresa",
-        {
-          p_fondo_empresa_id: cheque.fondo_empresa_id,
-        }
-      );
-
-      if (recalculoError) throw recalculoError;
-    }
-
-    const historialRegistrado = await registrarHistorial(
-      cheque.id,
-      "Rechazado",
-      cheque.estado,
-      "Rechazado",
-      motivo
-    );
-
-    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+    rpcEjecutada = true;
+    const { data, error } = await supabase.rpc(
+      "rechazar_cheque_transaccional",
       {
-        empresa_id: cheque.empresa_id,
-        modulo: "cheques",
-        accion: "rechazar_cheque",
-        entidad_tipo: "cheque",
-        entidad_id: cheque.id,
-        estado_anterior: cheque.estado,
-        estado_nuevo: "Rechazado",
-        motivo,
-        descripcion: "Cheque rechazado",
-        sensible: true,
-        visible_calendario: Boolean(cheque.fecha_pago),
-        origen: "modulo_cheques",
-        metadatos: {
-          ...metadatosAuditoriaCheque(cheque),
-          historial_especifico_registrado: historialRegistrado,
-        },
-      },
-      "rechazo del cheque"
-    );
-    operacionCompletada = true;
-
-    await completarOperacionIdempotente(
-      idempotency.persistidaId,
-      idempotency.storageKey,
-      "cheque",
-      cheque.id,
-      {
-        cheque_id: cheque.id,
-        accion: "rechazar_cheque",
-        estado: "Rechazado",
+        p_cheque_id: cheque.id,
+        p_empresa_id: cheque.empresa_id,
+        p_rechazado_por: userId,
+        p_motivo_rechazo: motivo.trim(),
+        p_idempotency_key: idempotency.key,
       }
     );
 
-    setCheques((prev) =>
-      prev.map((c) =>
-        c.id === cheque.id
-          ? {
-              ...c,
-              estado: "Rechazado",
-              estado_fondo: "liberado",
-              rechazado_por: userId,
-              rechazado_at: ahora,
-              liberado_at: ahora,
-              motivo_rechazo: motivo,
-            }
-          : c
-      )
-    );
+    if (error) throw error;
 
-if (userId && perfilActual) {
-  await obtenerFondos(empresasPermitidasIds);
-  await obtenerChequesFisicos(empresasPermitidasIds);
-  await obtenerResumenChequeras(empresasPermitidasIds);
-}
+    const resultado = data as { ok?: boolean; mensaje?: string; cheque?: Cheque } | null;
 
-    if (!historialRegistrado) {
-      toast.error(
-        "Cheque rechazado, pero no se pudo registrar su historial especifico.",
-        { id: toastId }
-      );
-    } else if (auditoriaCentralRegistrada) {
-      toast.success("Cheque rechazado y fondos liberados", { id: toastId });
-    } else {
-      toast.error(
-        "Cheque rechazado, pero no se pudo registrar la auditoria central.",
-        { id: toastId }
-      );
+    if (!resultado?.ok || !resultado.cheque) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
+      throw new Error(resultado?.mensaje || "No se pudo rechazar el cheque.");
     }
-  } catch (error: any) {
-    if (chequeActualizado && !operacionCompletada) {
-      await registrarAuditoriaCheque(
-        {
-          empresa_id: cheque.empresa_id,
-          modulo: "cheques",
-          accion: "rechazo_cheque_parcial",
-          entidad_tipo: "cheque",
-          entidad_id: cheque.id,
-          estado_anterior: cheque.estado,
-          estado_nuevo: "Rechazado",
-          motivo,
-          descripcion: "Rechazo de cheque quedo parcialmente aplicado",
-          sensible: true,
-          visible_calendario: Boolean(cheque.fecha_pago),
-          origen: "modulo_cheques",
-          metadatos: {
-            ...metadatosAuditoriaCheque(cheque),
-            etapa_fallida: etapaFallida,
-            motivo_error: error.message || "Error no identificado",
-          },
-        },
-        "rechazo parcial del cheque"
-      );
-      toast.error(
-        "El cheque fue rechazado parcialmente y requiere revision.",
-        { id: toastId }
-      );
-    } else if (operacionCompletada) {
+
+    liberarIdempotencyKeyCheque(idempotency.storageKey);
+
+    try {
+      await refrescarModuloCheques();
+    } catch (refreshError) {
+      console.error("Error actualizando listado despues de rechazar cheque:", refreshError);
       toast.error("Cheque rechazado, pero no se pudo actualizar el listado.", {
         id: toastId,
       });
-    } else {
-      toast.error(error.message || "Error al rechazar", { id: toastId });
+      return;
     }
 
-    if (!operacionCompletada) {
-      await fallarOperacionIdempotente(
-        idempotency.persistidaId,
-        idempotency.storageKey,
-        error
-      );
+    toast.success("Cheque rechazado y fondos liberados", { id: toastId });
+  } catch (error: any) {
+    toast.error(error.message || "Error al rechazar", { id: toastId });
+
+    if (!rpcEjecutada) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
     }
   } finally {
     setProcesandoId(null);
@@ -2488,189 +2222,54 @@ const motivo = window.prompt("Indica el motivo de anulaciÃ³n:");
     return;
   }
 
-  const idempotency = await iniciarOperacionIdempotente({
-    alcance: ["anular_cheque", userId, cheque.id, cheque.estado, motivo.trim()].join(":"),
-    accion: "anular_cheque",
-    empresaId: cheque.empresa_id,
-    entidadTipo: "cheque",
-    entidadId: cheque.id,
-    requestHash: [cheque.id, cheque.estado, motivo.trim()].join("|"),
-  });
-
-  if (!idempotency.ok) {
-    toast.error(idempotency.mensaje || "No se puede repetir esta operacion.");
-    return;
-  }
+  const idempotency = obtenerIdempotencyKeyCheque(
+    ["anular_cheque_rpc", userId, cheque.id, cheque.estado, motivo.trim()].join(":")
+  );
 
   setProcesandoId(cheque.id);
   const toastId = toast.loading("Anulando cheque...");
-  let chequeActualizado = false;
-  let operacionCompletada = false;
-  let etapaFallida = "actualizar_cheque";
+  let rpcEjecutada = false;
 
   try {
-    const ahora = new Date().toISOString();
-
-    const { error } = await supabase
-      .from("cheques")
-      .update({
-        estado: "Anulado",
-        estado_fondo: "liberado",
-        archivado_por: userId,
-        archivado_at: ahora,
-        liberado_at: ahora,
-        motivo_archivo: motivo,
-        motivo_anulacion: motivo,
-      })
-      .eq("id", cheque.id);
-
-    if (error) throw error;
-    chequeActualizado = true;
-    etapaFallida = "actualizar_cheque_fisico";
-
-    if (cheque.cheque_fisico_id) {
-      const { error: chequeFisicoError } = await supabase
-        .from("cheques_fisicos")
-        .update({
-          estado: "Anulado",
-        })
-        .eq("id", cheque.cheque_fisico_id);
-
-      if (chequeFisicoError) throw chequeFisicoError;
-    }
-
-    etapaFallida = "recalcular_fondo";
-    if (cheque.fondo_empresa_id) {
-      const { error: recalculoError } = await supabase.rpc(
-        "recalcular_fondo_empresa",
-        {
-          p_fondo_empresa_id: cheque.fondo_empresa_id,
-        }
-      );
-
-      if (recalculoError) throw recalculoError;
-    }
-
-    const historialRegistrado = await registrarHistorial(
-      cheque.id,
-      "Anulado",
-      cheque.estado,
-      "Anulado",
-      motivo
-    );
-
-    const auditoriaCentralRegistrada = await registrarAuditoriaCheque(
+    rpcEjecutada = true;
+    const { data, error } = await supabase.rpc(
+      "anular_cheque_transaccional",
       {
-        empresa_id: cheque.empresa_id,
-        modulo: "cheques",
-        accion: "anular_cheque",
-        entidad_tipo: "cheque",
-        entidad_id: cheque.id,
-        estado_anterior: cheque.estado,
-        estado_nuevo: "Anulado",
-        motivo,
-        descripcion: "Cheque anulado",
-        sensible: true,
-        visible_calendario: Boolean(cheque.fecha_pago),
-        origen: "modulo_cheques",
-        metadatos: {
-          ...metadatosAuditoriaCheque(cheque),
-          historial_especifico_registrado: historialRegistrado,
-        },
-      },
-      "anulacion del cheque"
-    );
-    operacionCompletada = true;
-
-    await completarOperacionIdempotente(
-      idempotency.persistidaId,
-      idempotency.storageKey,
-      "cheque",
-      cheque.id,
-      {
-        cheque_id: cheque.id,
-        accion: "anular_cheque",
-        estado: "Anulado",
+        p_cheque_id: cheque.id,
+        p_empresa_id: cheque.empresa_id,
+        p_anulado_por: userId,
+        p_motivo_anulacion: motivo.trim(),
+        p_idempotency_key: idempotency.key,
       }
     );
 
-    setCheques((prev) =>
-      prev.map((c) =>
-        c.id === cheque.id
-          ? {
-              ...c,
-              estado: "Anulado",
-              estado_fondo: "liberado",
-              archivado_por: userId,
-              archivado_at: ahora,
-              liberado_at: ahora,
-              motivo_archivo: motivo,
-              motivo_anulacion: motivo,
-            }
-          : c
-      )
-    );
+    if (error) throw error;
 
-if (userId && perfilActual) {
-  await obtenerFondos(empresasPermitidasIds);
-  await obtenerChequesFisicos(empresasPermitidasIds);
-  await obtenerResumenChequeras(empresasPermitidasIds);
-}
-    if (!historialRegistrado) {
-      toast.error(
-        "Cheque anulado, pero no se pudo registrar su historial especifico.",
-        { id: toastId }
-      );
-    } else if (auditoriaCentralRegistrada) {
-      toast.success("Cheque anulado y fondos liberados", { id: toastId });
-    } else {
-      toast.error(
-        "Cheque anulado, pero no se pudo registrar la auditoria central.",
-        { id: toastId }
-      );
+    const resultado = data as { ok?: boolean; mensaje?: string; cheque?: Cheque } | null;
+
+    if (!resultado?.ok || !resultado.cheque) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
+      throw new Error(resultado?.mensaje || "No se pudo anular el cheque.");
     }
-  } catch (error: any) {
-    if (chequeActualizado && !operacionCompletada) {
-      await registrarAuditoriaCheque(
-        {
-          empresa_id: cheque.empresa_id,
-          modulo: "cheques",
-          accion: "anulacion_cheque_parcial",
-          entidad_tipo: "cheque",
-          entidad_id: cheque.id,
-          estado_anterior: cheque.estado,
-          estado_nuevo: "Anulado",
-          motivo,
-          descripcion: "Anulacion de cheque quedo parcialmente aplicada",
-          sensible: true,
-          visible_calendario: Boolean(cheque.fecha_pago),
-          origen: "modulo_cheques",
-          metadatos: {
-            ...metadatosAuditoriaCheque(cheque),
-            etapa_fallida: etapaFallida,
-            motivo_error: error.message || "Error no identificado",
-          },
-        },
-        "anulacion parcial del cheque"
-      );
-      toast.error(
-        "El cheque fue anulado parcialmente y requiere revision.",
-        { id: toastId }
-      );
-    } else if (operacionCompletada) {
+
+    liberarIdempotencyKeyCheque(idempotency.storageKey);
+
+    try {
+      await refrescarModuloCheques();
+    } catch (refreshError) {
+      console.error("Error actualizando listado despues de anular cheque:", refreshError);
       toast.error("Cheque anulado, pero no se pudo actualizar el listado.", {
         id: toastId,
       });
-    } else {
-      toast.error(error.message || "Error al anular cheque", { id: toastId });
+      return;
     }
 
-    if (!operacionCompletada) {
-      await fallarOperacionIdempotente(
-        idempotency.persistidaId,
-        idempotency.storageKey,
-        error
-      );
+    toast.success("Cheque anulado y fondos liberados", { id: toastId });
+  } catch (error: any) {
+    toast.error(error.message || "Error al anular cheque", { id: toastId });
+
+    if (!rpcEjecutada) {
+      liberarIdempotencyKeyCheque(idempotency.storageKey);
     }
   } finally {
     setProcesandoId(null);
