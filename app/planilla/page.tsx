@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasOperativasDesdeIds } from "../../lib/empresasOperativas";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
@@ -415,6 +416,22 @@ export default function PlanillaPage() {
     return empresasOperativasIds.some((empresaId) => puedeEscribir(empresaId));
   }
 
+  async function registrarAuditoriaPlanilla(
+    params: RegistrarAuditoriaEventoParams,
+    contexto: string
+  ) {
+    try {
+      await registrarAuditoriaEvento(params);
+      return true;
+    } catch (error) {
+      console.error(
+        `El alta de ${contexto} se guardo, pero no se pudo registrar la auditoria:`,
+        error
+      );
+      return false;
+    }
+  }
+
   async function guardarEmpleado() {
     setErrorCarga(null);
     setExito(null);
@@ -434,8 +451,16 @@ export default function PlanillaPage() {
         throw new Error("Nombres, apellidos y fecha de ingreso son obligatorios.");
       }
 
+      const salarioBase = numeroNoNegativo(formEmpleado.salarioBase, "Salario base");
+      const bonificacionIncentivo = numeroNoNegativo(
+        formEmpleado.bonificacionIncentivo,
+        "Bonificacion incentivo"
+      );
+
       setProcesando(true);
-      const { error } = await supabase.from("empleados_planilla").insert({
+      const { data: empleadoCreado, error } = await supabase
+        .from("empleados_planilla")
+        .insert({
         empresa_id: empresaId,
         codigo_empleado: textoOpcional(formEmpleado.codigoEmpleado),
         nombres: formEmpleado.nombres.trim(),
@@ -446,21 +471,53 @@ export default function PlanillaPage() {
         fecha_ingreso: formEmpleado.fechaIngreso,
         puesto: textoOpcional(formEmpleado.puesto),
         departamento: textoOpcional(formEmpleado.departamento),
-        salario_base: numeroNoNegativo(formEmpleado.salarioBase, "Salario base"),
-        bonificacion_incentivo: numeroNoNegativo(
-          formEmpleado.bonificacionIncentivo,
-          "Bonificacion incentivo"
-        ),
+        salario_base: salarioBase,
+        bonificacion_incentivo: bonificacionIncentivo,
         moneda: formEmpleado.moneda,
         observaciones: textoOpcional(formEmpleado.observaciones),
         creado_por: userId,
-      });
+      })
+        .select(COLUMNAS_EMPLEADOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !empleadoCreado) {
+        throw error || new Error("No se pudo crear el empleado.");
+      }
+
+      const auditoriaRegistrada = await registrarAuditoriaPlanilla(
+        {
+          empresa_id: empleadoCreado.empresa_id,
+          modulo: "planilla",
+          accion: "crear_empleado_planilla",
+          entidad_tipo: "empleados_planilla",
+          entidad_id: empleadoCreado.id,
+          estado_nuevo: empleadoCreado.estado,
+          descripcion: "Empleado de planilla creado desde modulo Planilla",
+          sensible: true,
+          origen: "modulo_planilla",
+          metadatos: {
+            empresa_id: empleadoCreado.empresa_id,
+            nombre_completo: `${empleadoCreado.nombres} ${empleadoCreado.apellidos}`,
+            codigo_empleado: empleadoCreado.codigo_empleado,
+            puesto: empleadoCreado.puesto,
+            departamento: empleadoCreado.departamento,
+            salario_base: Number(empleadoCreado.salario_base || 0),
+            bonificacion_incentivo: Number(empleadoCreado.bonificacion_incentivo || 0),
+            moneda: empleadoCreado.moneda,
+            estado: empleadoCreado.estado,
+            activo: Boolean(empleadoCreado.activo),
+          },
+        },
+        "empleado de planilla"
+      );
 
       setFormEmpleado(formularioEmpleadoInicial(String(empresaId)));
       await cargarDatos();
-      setExito("Empleado registrado.");
+      setExito(
+        auditoriaRegistrada
+          ? "Empleado registrado."
+          : "Empleado registrado, pero no se pudo registrar la auditoria central."
+      );
     } catch (error) {
       console.error("Error guardando empleado de planilla:", error);
       setErrorCarga(errorSeguro(error));
@@ -494,7 +551,9 @@ export default function PlanillaPage() {
       if (!Number.isInteger(mes) || mes < 1 || mes > 12) throw new Error("Mes no valido.");
 
       setProcesando(true);
-      const { error } = await supabase.from("planillas_periodos").insert({
+      const { data: periodoCreado, error } = await supabase
+        .from("planillas_periodos")
+        .insert({
         empresa_id: empresaId,
         anio,
         mes,
@@ -505,13 +564,48 @@ export default function PlanillaPage() {
         moneda: formPeriodo.moneda,
         observaciones: textoOpcional(formPeriodo.observaciones),
         creado_por: userId,
-      });
+      })
+        .select(COLUMNAS_PERIODOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !periodoCreado) {
+        throw error || new Error("No se pudo crear el periodo.");
+      }
+
+      const auditoriaRegistrada = await registrarAuditoriaPlanilla(
+        {
+          empresa_id: periodoCreado.empresa_id,
+          modulo: "planilla",
+          accion: "crear_periodo_planilla",
+          entidad_tipo: "planillas_periodos",
+          entidad_id: periodoCreado.id,
+          estado_nuevo: periodoCreado.estado,
+          descripcion: "Periodo de planilla creado desde modulo Planilla",
+          sensible: true,
+          visible_calendario: Boolean(periodoCreado.fecha_inicio || periodoCreado.fecha_fin),
+          origen: "modulo_planilla",
+          metadatos: {
+            empresa_id: periodoCreado.empresa_id,
+            anio: periodoCreado.anio,
+            mes: periodoCreado.mes,
+            tipo_planilla: periodoCreado.tipo_planilla,
+            fecha_inicio: periodoCreado.fecha_inicio,
+            fecha_fin: periodoCreado.fecha_fin,
+            fecha_pago: periodoCreado.fecha_pago,
+            estado: periodoCreado.estado,
+            moneda: periodoCreado.moneda,
+          },
+        },
+        "periodo de planilla"
+      );
 
       setFormPeriodo(formularioPeriodoInicial(String(empresaId)));
       await cargarDatos();
-      setExito("Periodo registrado sin calculo automatico.");
+      setExito(
+        auditoriaRegistrada
+          ? "Periodo registrado sin calculo automatico."
+          : "Periodo registrado, pero no se pudo registrar la auditoria central."
+      );
     } catch (error) {
       console.error("Error guardando periodo de planilla:", error);
       setErrorCarga(errorSeguro(error));
@@ -540,7 +634,9 @@ export default function PlanillaPage() {
       }
 
       setProcesando(true);
-      const { error } = await supabase.from("planilla_configuracion_tasas").insert({
+      const { data: tasaCreada, error } = await supabase
+        .from("planilla_configuracion_tasas")
+        .insert({
         empresa_id: empresaId,
         nombre: formTasa.nombre.trim(),
         tipo: formTasa.tipo,
@@ -551,13 +647,47 @@ export default function PlanillaPage() {
         vigente_hasta: textoOpcional(formTasa.vigenteHasta),
         observaciones: textoOpcional(formTasa.observaciones),
         creado_por: userId,
-      });
+      })
+        .select(COLUMNAS_TASAS)
+        .single();
 
-      if (error) throw error;
+      if (error || !tasaCreada) {
+        throw error || new Error("No se pudo crear la tasa.");
+      }
+
+      const auditoriaRegistrada = await registrarAuditoriaPlanilla(
+        {
+          empresa_id: tasaCreada.empresa_id,
+          modulo: "planilla",
+          accion: "crear_tasa_planilla",
+          entidad_tipo: "planilla_configuracion_tasas",
+          entidad_id: tasaCreada.id,
+          estado_nuevo: tasaCreada.activo ? "Activa" : "Inactiva",
+          descripcion: "Tasa de planilla creada desde modulo Planilla",
+          sensible: true,
+          origen: "modulo_planilla",
+          metadatos: {
+            empresa_id: tasaCreada.empresa_id,
+            nombre: tasaCreada.nombre,
+            tipo: tasaCreada.tipo,
+            porcentaje: Number(tasaCreada.porcentaje || 0),
+            aplica_empleado: Boolean(tasaCreada.aplica_empleado),
+            aplica_patrono: Boolean(tasaCreada.aplica_patrono),
+            vigente_desde: tasaCreada.vigente_desde,
+            vigente_hasta: tasaCreada.vigente_hasta,
+            activo: Boolean(tasaCreada.activo),
+          },
+        },
+        "tasa de planilla"
+      );
 
       setFormTasa(formularioTasaInicial(String(empresaId)));
       await cargarDatos();
-      setExito("Tasa registrada.");
+      setExito(
+        auditoriaRegistrada
+          ? "Tasa registrada."
+          : "Tasa registrada, pero no se pudo registrar la auditoria central."
+      );
     } catch (error) {
       console.error("Error guardando tasa de planilla:", error);
       setErrorCarga(errorSeguro(error));
@@ -589,26 +719,67 @@ export default function PlanillaPage() {
         throw new Error("La descripcion es obligatoria.");
       }
 
+      const montoOriginal = numeroNoNegativo(formDescuento.montoOriginal, "Monto original");
+      const saldoPendiente = numeroNoNegativo(formDescuento.saldoPendiente, "Saldo pendiente");
+      const cuotaPeriodo = numeroNoNegativo(formDescuento.cuotaPeriodo, "Cuota periodo");
+
       setProcesando(true);
-      const { error } = await supabase.from("planilla_prestamos_descuentos").insert({
+      const { data: descuentoCreado, error } = await supabase
+        .from("planilla_prestamos_descuentos")
+        .insert({
         empresa_id: empresaId,
         empleado_id: formDescuento.empleadoId,
         tipo: formDescuento.tipo,
         descripcion: formDescuento.descripcion.trim(),
-        monto_original: numeroNoNegativo(formDescuento.montoOriginal, "Monto original"),
-        saldo_pendiente: numeroNoNegativo(formDescuento.saldoPendiente, "Saldo pendiente"),
-        cuota_periodo: numeroNoNegativo(formDescuento.cuotaPeriodo, "Cuota periodo"),
+        monto_original: montoOriginal,
+        saldo_pendiente: saldoPendiente,
+        cuota_periodo: cuotaPeriodo,
         fecha_inicio: textoOpcional(formDescuento.fechaInicio),
         fecha_fin: textoOpcional(formDescuento.fechaFin),
         observaciones: textoOpcional(formDescuento.observaciones),
         creado_por: userId,
-      });
+      })
+        .select(COLUMNAS_DESCUENTOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !descuentoCreado) {
+        throw error || new Error("No se pudo crear el prestamo o descuento.");
+      }
+
+      const auditoriaRegistrada = await registrarAuditoriaPlanilla(
+        {
+          empresa_id: descuentoCreado.empresa_id,
+          modulo: "planilla",
+          accion: "crear_descuento_planilla",
+          entidad_tipo: "planilla_prestamos_descuentos",
+          entidad_id: descuentoCreado.id,
+          estado_nuevo: descuentoCreado.estado,
+          descripcion: "Prestamo o descuento de planilla creado desde modulo Planilla",
+          sensible: true,
+          origen: "modulo_planilla",
+          metadatos: {
+            empresa_id: descuentoCreado.empresa_id,
+            empleado_id: descuentoCreado.empleado_id,
+            tipo: descuentoCreado.tipo,
+            descripcion: descuentoCreado.descripcion,
+            monto_original: Number(descuentoCreado.monto_original || 0),
+            saldo_pendiente: Number(descuentoCreado.saldo_pendiente || 0),
+            cuota_periodo: Number(descuentoCreado.cuota_periodo || 0),
+            fecha_inicio: descuentoCreado.fecha_inicio,
+            fecha_fin: descuentoCreado.fecha_fin,
+            estado: descuentoCreado.estado,
+          },
+        },
+        "prestamo o descuento de planilla"
+      );
 
       setFormDescuento(formularioDescuentoInicial(String(empresaId)));
       await cargarDatos();
-      setExito("Prestamo o descuento registrado.");
+      setExito(
+        auditoriaRegistrada
+          ? "Prestamo o descuento registrado."
+          : "Prestamo o descuento registrado, pero no se pudo registrar la auditoria central."
+      );
     } catch (error) {
       console.error("Error guardando prestamo/descuento de planilla:", error);
       setErrorCarga(errorSeguro(error));
