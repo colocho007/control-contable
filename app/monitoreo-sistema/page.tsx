@@ -279,9 +279,16 @@ function coincide(evento: AuditoriaEvento, patrones: string[]) {
 
 const ACCIONES_INFORMATIVAS_AUTORRESUELTAS = new Set([
   "abrir_detalle_alerta",
+  "actualizar_alerta",
+  "archivar_alerta",
+  "cambiar_estado_alerta",
   "cierre_sesion_inactividad",
   "consultar_historial",
   "consultar_reporte",
+  "marcar_alerta_archivada",
+  "marcar_alerta_en_revisión",
+  "marcar_alerta_resuelta",
+  "marcar_alerta_revisada",
   "modulo_activo",
 ]);
 
@@ -310,6 +317,17 @@ function esAccionInformativaNormal(modulo?: string | null, accion?: string | nul
   const accionNormalizadaValor = accionNormalizada(accion);
 
   if (ACCIONES_INFORMATIVAS_AUTORRESUELTAS.has(accionNormalizadaValor)) return true;
+  if (
+    moduloNormalizado === "monitoreo-sistema" &&
+    (accionNormalizadaValor.startsWith("marcar_alerta_") ||
+      accionNormalizadaValor.includes("alerta_resuelta") ||
+      accionNormalizadaValor.includes("alerta_revisada") ||
+      accionNormalizadaValor.includes("archivar_alerta") ||
+      accionNormalizadaValor.includes("actualizar_alerta") ||
+      accionNormalizadaValor.includes("cambiar_estado_alerta"))
+  ) {
+    return true;
+  }
   if (moduloNormalizado === "historial" && accionNormalizadaValor.startsWith("consultar")) return true;
   if (moduloNormalizado === "reportes" && accionNormalizadaValor.startsWith("consultar")) return true;
 
@@ -343,7 +361,11 @@ function categoriaEventoAuditoria(evento: AuditoriaEvento): CategoriaDiagnostico
   const texto = textoEvento(evento);
 
   if (esEventoInformativoNormal(evento)) {
-    return evento.sensible || coincide(evento, PATRONES_SEGURIDAD) ? "sensibles" : null;
+    return accionNormalizada(evento.modulo) === "monitoreo-sistema" ||
+      evento.sensible ||
+      coincide(evento, PATRONES_SEGURIDAD)
+      ? "sensibles"
+      : null;
   }
 
   if (
@@ -374,7 +396,7 @@ function fechaHora(valor?: string | null) {
 }
 
 function etiqueta(valor?: string | null) {
-  return valor ? valor.replaceAll("_", " ") : "Sin dato";
+  return valor ? valor.replaceAll("_", " ").replaceAll("-", " ") : "Sin dato";
 }
 
 function obtenerCampoLog(log: LogSistema, campos: string[]) {
@@ -1554,9 +1576,9 @@ export default function MonitoreoSistemaPage() {
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
-                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
-                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
-                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.filter((alerta) => estadoActualAlerta(alerta) !== "Archivada").slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
@@ -1881,7 +1903,7 @@ function PanelDiagnostico({
                 </span>
                 <span className="text-gray-500">{fechaHora(alerta.fecha)}</span>
               </div>
-              <p className="font-black mt-2">
+              <p className="font-sans text-sm font-semibold text-gray-100 mt-2 leading-snug">
                 {etiqueta(alerta.modulo)} / {etiqueta(alerta.accion)}
               </p>
               <p className="text-sm text-gray-300 mt-1 line-clamp-2">{alerta.mensaje}</p>
@@ -1941,7 +1963,7 @@ function PanelDetalleAlerta({
             </span>
           </div>
           <p className="text-xs text-gray-500">{fechaHora(alerta.fecha)}</p>
-          <h3 className="text-xl font-black mt-2">{etiqueta(alerta.modulo)}</h3>
+          <h3 className="font-sans text-lg font-semibold text-gray-100 mt-2">{etiqueta(alerta.modulo)}</h3>
           <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
         </div>
 
@@ -2050,7 +2072,7 @@ function PanelResumenCategoria({
               <Clock size={13} />
               {fechaHora(alerta.fecha)}
             </div>
-            <p className="font-black text-white mt-2 capitalize">
+            <p className="font-sans text-sm font-semibold text-white mt-2 capitalize leading-snug">
               {etiqueta(alerta.modulo)} / {etiqueta(alerta.accion)}
             </p>
             <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
