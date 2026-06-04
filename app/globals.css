@@ -5,17 +5,28 @@
 [data-theme="dark"] {
   --background: #030712;
   --foreground: #f8fafc;
+  --foreground-soft: #e2e8f0;
   --card: rgba(255, 255, 255, 0.05);
   --card-strong: rgba(15, 23, 42, 0.82);
+  --surface: rgba(15, 23, 42, 0.9);
+  --surface-muted: rgba(30, 41, 59, 0.72);
   --card-border: rgba(255, 255, 255, 0.1);
-  --muted: #94a3b8;
-  --muted-strong: #64748b;
+  --muted: #cbd5e1;
+  --muted-strong: #94a3b8;
   --primary: #06b6d4;
   --primary-foreground: #031116;
   --danger: #ef4444;
   --success: #22c55e;
   --warning: #f59e0b;
   --input: rgba(15, 23, 42, 0.95);
+  --input-border: rgba(148, 163, 184, 0.28);
+  --input-placeholder: #94a3b8;
+  --badge-bg: rgba(255, 255, 255, 0.08);
+  --badge-text: #f1f5f9;
+  --hover: rgba(255, 255, 255, 0.09);
+  --panel: rgba(255, 255, 255, 0.045);
+  --table-header: rgba(255, 255, 255, 0.07);
+  --metadata-bg: rgba(2, 6, 23, 0.52);
   --sidebar: #020617;
   --sidebar-foreground: #f8fafc;
   --ring: rgba(6, 182, 212, 0.45);
@@ -25,17 +36,28 @@
 [data-theme="light"] {
   --background: #f6f8fb;
   --foreground: #0f172a;
+  --foreground-soft: #1e293b;
   --card: rgba(255, 255, 255, 0.9);
   --card-strong: rgba(255, 255, 255, 0.96);
+  --surface: #ffffff;
+  --surface-muted: #f1f5f9;
   --card-border: rgba(15, 23, 42, 0.12);
   --muted: #475569;
-  --muted-strong: #64748b;
+  --muted-strong: #334155;
   --primary: #0891b2;
   --primary-foreground: #ffffff;
   --danger: #dc2626;
   --success: #15803d;
   --warning: #b45309;
   --input: #ffffff;
+  --input-border: rgba(15, 23, 42, 0.18);
+  --input-placeholder: #64748b;
+  --badge-bg: #e2e8f0;
+  --badge-text: #0f172a;
+  --hover: rgba(15, 23, 42, 0.07);
+  --panel: rgba(255, 255, 255, 0.92);
+  --table-header: #e2e8f0;
+  --metadata-bg: #f1f5f9;
   --sidebar: #ffffff;
   --sidebar-foreground: #0f172a;
   --ring: rgba(8, 145, 178, 0.35);
@@ -49,6 +71,8 @@ body {
 
 body {
   transition: background-color 180ms ease, color 180ms ease;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
@@ -86,7 +110,7 @@ html[data-theme="light"] [class*="bg-[#0f172a]"],
 html[data-theme="light"] [class*="bg-slate-950"],
 html[data-theme="light"] [class*="bg-black/"],
 html[data-theme="light"] [class*="bg-white/"] {
-  background-color: var(--card) !important;
+  background-color: var(--surface) !important;
 }
 
 html.light [class*="border-white/"],
@@ -133,6 +157,66 @@ html[data-theme="light"] .text-slate-600 {
   color: var(--muted-strong);
 }
 
+html.light [class*="bg-blue-"][class~="text-white"],
+html.light [class*="bg-cyan-"][class~="text-white"],
+html.light [class*="bg-red-"][class~="text-white"],
+html.light [class*="bg-green-"][class~="text-white"],
+html.light [class*="bg-amber-"][class~="text-white"],
+html.light [class*="bg-purple-"][class~="text-white"],
+html.light [class*="bg-indigo-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-blue-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-cyan-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-red-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-green-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-amber-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-purple-"][class~="text-white"],
+html[data-theme="light"] [class*="bg-indigo-"][class~="text-white"] {
+  color: #ffffff !important;
+}
+
+html.dark .text-white\/40,
+html.dark .text-white\/50,
+html.dark .text-gray-500,
+html.dark .text-slate-500,
+html[data-theme="dark"] .text-white\/40,
+html[data-theme="dark"] .text-white\/50,
+html[data-theme="dark"] .text-gray-500,
+html[data-theme="dark"] .text-slate-500 {
+  color: var(--muted-strong) !important;
+}
+
+html.dark .text-gray-400,
+html.dark .text-slate-400,
+html.dark .text-gray-300,
+html.dark .text-slate-300,
+html[data-theme="dark"] .text-gray-400,
+html[data-theme="dark"] .text-slate-400,
+html[data-theme="dark"] .text-gray-300,
+html[data-theme="dark"] .text-slate-300 {
+  color: var(--muted) !important;
+}
+
+input,
+select,
+textarea,
+.input-custom {
+  background: var(--input);
+  border-color: var(--input-border);
+  color: var(--foreground);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--input-placeholder);
+  opacity: 1;
+}
+
+option,
+.input-custom option {
+  background: var(--input);
+  color: var(--foreground);
+}
+
 html.light input,
 html.light select,
 html.light textarea,
@@ -144,7 +228,7 @@ html[data-theme="light"] textarea,
 html[data-theme="light"] .input-custom,
 html[data-theme="light"] [class*="bg-slate-950"] input {
   background: var(--input) !important;
-  border-color: var(--card-border) !important;
+  border-color: var(--input-border) !important;
   color: var(--foreground) !important;
 }
 
@@ -170,6 +254,51 @@ html[data-theme="light"] table,
 html[data-theme="light"] thead,
 html[data-theme="light"] tbody {
   color: var(--foreground);
+}
+
+thead,
+[class*="bg-white/5"] thead,
+[class*="bg-white/"] thead {
+  background-color: var(--table-header);
+}
+
+pre,
+code,
+kbd,
+[class*="font-mono"],
+[class*="metadata"],
+[class*="metadatos"] {
+  color: var(--foreground-soft);
+}
+
+:where(.panel) {
+  background: var(--panel) !important;
+  border-color: var(--card-border) !important;
+  color: var(--foreground) !important;
+}
+
+:where(.panel-title) {
+  color: var(--muted-strong) !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+}
+
+[class*="rounded-full"][class*="bg-white/"],
+[class*="rounded-lg"][class*="bg-white/"],
+[class*="rounded-xl"][class*="bg-white/"] {
+  background-color: var(--badge-bg);
+  color: var(--badge-text);
+}
+
+[class*="bg-black/20"],
+[class*="bg-black/30"],
+[class*="bg-slate-950/50"],
+[class*="bg-slate-950/80"] {
+  background-color: var(--metadata-bg) !important;
+}
+
+[class*="hover:bg-white/"]:hover {
+  background-color: var(--hover) !important;
 }
 
 html.light table thead,
