@@ -102,25 +102,6 @@ interface AlertaProceso {
   semaforo: Semaforo;
 }
 
-const TIMEOUT_VALIDACION_ACCESO_MS = 15000;
-
-async function validarAccesoDashboardConTimeout() {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      validarAccesoModuloUsuario("dashboard"),
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error("Tiempo agotado validando acceso al Dashboard."));
-        }, TIMEOUT_VALIDACION_ACCESO_MS);
-      }),
-    ]);
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
 function estadoNormalizado(estado?: string | null) {
   return (estado || "").trim().toLowerCase();
 }
@@ -175,7 +156,6 @@ export default function DashboardPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [perfil, setPerfil] = useState({ nombre: "", rol: "" });
   const [autorizado, setAutorizado] = useState(false);
-  const [errorAcceso, setErrorAcceso] = useState<string | null>(null);
   const [empresasPermitidas, setEmpresasPermitidas] = useState<number[]>([]);
   const [esAdmin, setEsAdmin] = useState(false);
 
@@ -225,52 +205,48 @@ export default function DashboardPage() {
   async function inicializarDashboard() {
     setValidandoAcceso(true);
     setCargandoDashboard(false);
-    setErrorAcceso(null);
-    setAutorizado(false);
 
-    let acceso: Awaited<ReturnType<typeof validarAccesoModuloUsuario>> | null = null;
+    const acceso = await validarAccesoModuloUsuario("dashboard");
 
-    try {
-      acceso = await validarAccesoDashboardConTimeout();
-
-      if (!acceso.ok) {
-        if (acceso.motivo === "sin_sesion" || acceso.motivo === "usuario_inactivo") {
-          router.replace("/login");
-          return;
+    if (!acceso.ok) {
+      if (
+        acceso.motivo === "sin_sesion" ||
+        acceso.motivo === "sin_perfil" ||
+        acceso.motivo === "usuario_inactivo"
+      ) {
+        if (acceso.motivo === "usuario_inactivo") {
+          alert("Tu usuario está inactivo. Contacta al administrador.");
         }
-
-        setErrorAcceso(
-          acceso.motivo === "modulo_inactivo" || acceso.motivo === "modulo_no_encontrado"
-            ? "El modulo Dashboard no esta disponible."
-            : "No tiene acceso autorizado al Dashboard."
-        );
-        return;
+      } else if (
+        acceso.motivo === "modulo_inactivo" ||
+        acceso.motivo === "modulo_no_encontrado"
+      ) {
+        alert("El módulo Dashboard está desactivado.");
+      } else {
+        alert("No tienes acceso al módulo Dashboard.");
       }
 
-      const p = acceso.perfil!;
-
-      setPerfil({
-        nombre: p.nombre || "Usuario",
-        rol: p.rol || "sin rol",
-      });
-      setEsAdmin((p.rol || "").trim().toLowerCase() === "admin");
-      setAutorizado(true);
-    } catch (error) {
-      console.error("Error validando acceso al Dashboard:", error);
-      setErrorAcceso(
-        "No se pudo validar el acceso. Revise su conexion e intente nuevamente."
-      );
-      return;
-    } finally {
+      setAutorizado(false);
       setValidandoAcceso(false);
+      router.replace("/login");
+      return;
     }
-
-    if (!acceso?.ok) return;
 
     const user = acceso.user!;
     const p = acceso.perfil!;
 
+    // Admin normalizado para evitar errores si viene como Admin, ADMIN o con espacios
+    const admin = (p.rol || "").trim().toLowerCase() === "admin";
+
+    setPerfil({
+      nombre: p.nombre || "Usuario",
+      rol: p.rol || "sin rol",
+    });
+
+    setEsAdmin(admin);
     setCargandoDashboard(true);
+    setAutorizado(true);
+    setValidandoAcceso(false);
 
     try {
       const idsPermitidos = await obtenerEmpresasPermitidas(user.id, p.rol);
@@ -650,19 +626,8 @@ export default function DashboardPage() {
 
   if (!autorizado) {
     return (
-      <div className="h-screen w-full bg-[#020617] flex items-center justify-center px-4 text-white">
-        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center">
-          <p className="font-bold">
-            {errorAcceso || "Sin acceso autorizado."}
-          </p>
-          <button
-            type="button"
-            onClick={() => void inicializarDashboard()}
-            className="mt-5 rounded-xl bg-cyan-500 px-5 py-3 font-black text-black transition hover:bg-cyan-400"
-          >
-            Intentar nuevamente
-          </button>
-        </div>
+      <div className="h-screen w-full bg-[#020617] flex items-center justify-center text-white">
+        Sin acceso autorizado.
       </div>
     );
   }
