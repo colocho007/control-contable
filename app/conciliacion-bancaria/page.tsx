@@ -245,7 +245,66 @@ function validarRangoFechas(inicio: string, fin: string) {
 }
 
 function errorSeguro(error: unknown) {
-  if (error instanceof Error && error.message.length < 180) return error.message;
+  const texto = [
+    error instanceof Error ? error.message : "",
+    typeof error === "object" && error && "message" in error ? String(error.message) : "",
+    typeof error === "object" && error && "details" in error ? String(error.details) : "",
+    typeof error === "object" && error && "code" in error ? String(error.code) : "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    texto.includes("duplicate key") ||
+    texto.includes("unique constraint") ||
+    texto.includes("23505") ||
+    texto.includes("already exists")
+  ) {
+    return "Ya existe un registro con esos datos. Revise la informacion e intente nuevamente.";
+  }
+  if (
+    texto.includes("foreign key") ||
+    texto.includes("violates foreign key constraint") ||
+    texto.includes("23503") ||
+    texto.includes("not present in table")
+  ) {
+    return "Uno de los datos relacionados no es valido o no pertenece a la empresa seleccionada.";
+  }
+  if (
+    texto.includes("check constraint") ||
+    texto.includes("violates check constraint") ||
+    texto.includes("23514")
+  ) {
+    return "Los datos no cumplen las reglas de validacion. Revise montos, fechas, moneda y estado.";
+  }
+  if (
+    texto.includes("null value") ||
+    texto.includes("not-null constraint") ||
+    texto.includes("23502")
+  ) {
+    return "Faltan datos obligatorios para guardar el registro.";
+  }
+  if (
+    texto.includes("row-level security") ||
+    texto.includes("permission denied") ||
+    texto.includes("insufficient privilege") ||
+    texto.includes("42501") ||
+    texto.includes("403") ||
+    texto.includes("not authorized")
+  ) {
+    return "No tiene permisos para realizar esta accion o la empresa no esta autorizada.";
+  }
+  if (texto.includes("invalid input syntax for type uuid") || texto.includes("22p02")) {
+    return "Uno de los identificadores seleccionados no es valido.";
+  }
+  if (
+    texto.includes("failed to fetch") ||
+    texto.includes("network") ||
+    texto.includes("timeout")
+  ) {
+    return "No se pudo conectar con el servidor. Intente nuevamente.";
+  }
+
   return "No se pudo completar la operacion. Revisa los datos e intenta de nuevo.";
 }
 
