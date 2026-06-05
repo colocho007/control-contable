@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import Sidebar from "../../components/Sidebar";
+import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasOperativasDesdeIds } from "../../lib/empresasOperativas";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
@@ -474,9 +475,21 @@ export default function PlanillaPage() {
     return empresasOperativasIds.some((empresaId) => puedeEscribir(empresaId));
   }
 
+  async function auditar(params: RegistrarAuditoriaEventoParams) {
+    try {
+      await registrarAuditoriaEvento(params);
+      return true;
+    } catch (error) {
+      console.warn("No se pudo registrar auditoria de Planilla:", error);
+      setAviso("El registro se guardo, pero no se pudo registrar la auditoria central.");
+      return false;
+    }
+  }
+
   async function guardarEmpleado() {
     setErrorCarga(null);
     setExito(null);
+    setAviso(null);
 
     if (!userId) {
       setErrorCarga("Sesion no valida.");
@@ -494,28 +507,53 @@ export default function PlanillaPage() {
       }
 
       setProcesando(true);
-      const { error } = await supabase.from("empleados_planilla").insert({
-        empresa_id: empresaId,
-        codigo_empleado: textoOpcional(formEmpleado.codigoEmpleado),
-        nombres: formEmpleado.nombres.trim(),
-        apellidos: formEmpleado.apellidos.trim(),
-        dpi: textoOpcional(formEmpleado.dpi),
-        nit: textoOpcional(formEmpleado.nit),
-        igss_numero: textoOpcional(formEmpleado.igssNumero),
-        fecha_ingreso: formEmpleado.fechaIngreso,
-        puesto: textoOpcional(formEmpleado.puesto),
-        departamento: textoOpcional(formEmpleado.departamento),
-        salario_base: numeroNoNegativo(formEmpleado.salarioBase, "Salario base"),
-        bonificacion_incentivo: numeroNoNegativo(
-          formEmpleado.bonificacionIncentivo,
-          "Bonificacion incentivo"
-        ),
-        moneda: formEmpleado.moneda,
-        observaciones: textoOpcional(formEmpleado.observaciones),
-        creado_por: userId,
-      });
+      const { data: empleadoCreado, error } = await supabase
+        .from("empleados_planilla")
+        .insert({
+          empresa_id: empresaId,
+          codigo_empleado: textoOpcional(formEmpleado.codigoEmpleado),
+          nombres: formEmpleado.nombres.trim(),
+          apellidos: formEmpleado.apellidos.trim(),
+          dpi: textoOpcional(formEmpleado.dpi),
+          nit: textoOpcional(formEmpleado.nit),
+          igss_numero: textoOpcional(formEmpleado.igssNumero),
+          fecha_ingreso: formEmpleado.fechaIngreso,
+          puesto: textoOpcional(formEmpleado.puesto),
+          departamento: textoOpcional(formEmpleado.departamento),
+          salario_base: numeroNoNegativo(formEmpleado.salarioBase, "Salario base"),
+          bonificacion_incentivo: numeroNoNegativo(
+            formEmpleado.bonificacionIncentivo,
+            "Bonificacion incentivo"
+          ),
+          moneda: formEmpleado.moneda,
+          observaciones: textoOpcional(formEmpleado.observaciones),
+          creado_por: userId,
+        })
+        .select(COLUMNAS_EMPLEADOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !empleadoCreado) throw error || new Error("No se pudo crear el empleado.");
+
+      await auditar({
+        empresa_id: empleadoCreado.empresa_id,
+        modulo: "planilla",
+        accion: "crear_empleado_planilla",
+        entidad_tipo: "empleados_planilla",
+        entidad_id: empleadoCreado.id,
+        estado_nuevo: empleadoCreado.estado,
+        sensible: true,
+        origen: "app_planilla",
+        metadatos: {
+          empresa_id: empleadoCreado.empresa_id,
+          empleado_id: empleadoCreado.id,
+          codigo_empleado: empleadoCreado.codigo_empleado,
+          nombre: `${empleadoCreado.nombres} ${empleadoCreado.apellidos}`.trim(),
+          estado: empleadoCreado.estado,
+          fecha_ingreso: empleadoCreado.fecha_ingreso,
+          salario_base: Number(empleadoCreado.salario_base || 0),
+          moneda: empleadoCreado.moneda,
+        },
+      });
 
       setFormEmpleado(formularioEmpleadoInicial(String(empresaId)));
       await cargarDatos();
@@ -531,6 +569,7 @@ export default function PlanillaPage() {
   async function guardarPeriodo() {
     setErrorCarga(null);
     setExito(null);
+    setAviso(null);
 
     if (!userId) {
       setErrorCarga("Sesion no valida.");
@@ -553,20 +592,44 @@ export default function PlanillaPage() {
       if (!Number.isInteger(mes) || mes < 1 || mes > 12) throw new Error("Mes no valido.");
 
       setProcesando(true);
-      const { error } = await supabase.from("planillas_periodos").insert({
-        empresa_id: empresaId,
-        anio,
-        mes,
-        tipo_planilla: formPeriodo.tipoPlanilla.trim(),
-        fecha_inicio: formPeriodo.fechaInicio,
-        fecha_fin: formPeriodo.fechaFin,
-        fecha_pago: textoOpcional(formPeriodo.fechaPago),
-        moneda: formPeriodo.moneda,
-        observaciones: textoOpcional(formPeriodo.observaciones),
-        creado_por: userId,
-      });
+      const { data: periodoCreado, error } = await supabase
+        .from("planillas_periodos")
+        .insert({
+          empresa_id: empresaId,
+          anio,
+          mes,
+          tipo_planilla: formPeriodo.tipoPlanilla.trim(),
+          fecha_inicio: formPeriodo.fechaInicio,
+          fecha_fin: formPeriodo.fechaFin,
+          fecha_pago: textoOpcional(formPeriodo.fechaPago),
+          moneda: formPeriodo.moneda,
+          observaciones: textoOpcional(formPeriodo.observaciones),
+          creado_por: userId,
+        })
+        .select(COLUMNAS_PERIODOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !periodoCreado) throw error || new Error("No se pudo crear el periodo.");
+
+      await auditar({
+        empresa_id: periodoCreado.empresa_id,
+        modulo: "planilla",
+        accion: "crear_periodo_planilla",
+        entidad_tipo: "planillas_periodos",
+        entidad_id: periodoCreado.id,
+        estado_nuevo: periodoCreado.estado,
+        origen: "app_planilla",
+        metadatos: {
+          empresa_id: periodoCreado.empresa_id,
+          periodo_id: periodoCreado.id,
+          anio: periodoCreado.anio,
+          mes: periodoCreado.mes,
+          tipo_periodo: periodoCreado.tipo_planilla,
+          estado: periodoCreado.estado,
+          fecha_inicio: periodoCreado.fecha_inicio,
+          fecha_fin: periodoCreado.fecha_fin,
+        },
+      });
 
       setFormPeriodo(formularioPeriodoInicial(String(empresaId)));
       await cargarDatos();
@@ -582,6 +645,7 @@ export default function PlanillaPage() {
   async function guardarTasa() {
     setErrorCarga(null);
     setExito(null);
+    setAviso(null);
 
     if (!userId) {
       setErrorCarga("Sesion no valida.");
@@ -599,20 +663,42 @@ export default function PlanillaPage() {
       }
 
       setProcesando(true);
-      const { error } = await supabase.from("planilla_configuracion_tasas").insert({
-        empresa_id: empresaId,
-        nombre: formTasa.nombre.trim(),
-        tipo: formTasa.tipo,
-        porcentaje: numeroNoNegativo(formTasa.porcentaje, "Porcentaje"),
-        aplica_empleado: formTasa.aplicaEmpleado,
-        aplica_patrono: formTasa.aplicaPatrono,
-        vigente_desde: formTasa.vigenteDesde,
-        vigente_hasta: textoOpcional(formTasa.vigenteHasta),
-        observaciones: textoOpcional(formTasa.observaciones),
-        creado_por: userId,
-      });
+      const { data: tasaCreada, error } = await supabase
+        .from("planilla_configuracion_tasas")
+        .insert({
+          empresa_id: empresaId,
+          nombre: formTasa.nombre.trim(),
+          tipo: formTasa.tipo,
+          porcentaje: numeroNoNegativo(formTasa.porcentaje, "Porcentaje"),
+          aplica_empleado: formTasa.aplicaEmpleado,
+          aplica_patrono: formTasa.aplicaPatrono,
+          vigente_desde: formTasa.vigenteDesde,
+          vigente_hasta: textoOpcional(formTasa.vigenteHasta),
+          observaciones: textoOpcional(formTasa.observaciones),
+          creado_por: userId,
+        })
+        .select(COLUMNAS_TASAS)
+        .single();
 
-      if (error) throw error;
+      if (error || !tasaCreada) throw error || new Error("No se pudo crear la tasa.");
+
+      await auditar({
+        empresa_id: tasaCreada.empresa_id,
+        modulo: "planilla",
+        accion: "crear_tasa_planilla",
+        entidad_tipo: "planilla_configuracion_tasas",
+        entidad_id: tasaCreada.id,
+        estado_nuevo: tasaCreada.activo ? "Activo" : "Inactivo",
+        origen: "app_planilla",
+        metadatos: {
+          empresa_id: tasaCreada.empresa_id,
+          tasa_id: tasaCreada.id,
+          tipo: tasaCreada.tipo,
+          nombre: tasaCreada.nombre,
+          porcentaje: Number(tasaCreada.porcentaje || 0),
+          activo: Boolean(tasaCreada.activo),
+        },
+      });
 
       setFormTasa(formularioTasaInicial(String(empresaId)));
       await cargarDatos();
@@ -628,6 +714,7 @@ export default function PlanillaPage() {
   async function guardarDescuento() {
     setErrorCarga(null);
     setExito(null);
+    setAviso(null);
 
     if (!userId) {
       setErrorCarga("Sesion no valida.");
@@ -649,21 +736,48 @@ export default function PlanillaPage() {
       }
 
       setProcesando(true);
-      const { error } = await supabase.from("planilla_prestamos_descuentos").insert({
-        empresa_id: empresaId,
-        empleado_id: formDescuento.empleadoId,
-        tipo: formDescuento.tipo,
-        descripcion: formDescuento.descripcion.trim(),
-        monto_original: numeroNoNegativo(formDescuento.montoOriginal, "Monto original"),
-        saldo_pendiente: numeroNoNegativo(formDescuento.saldoPendiente, "Saldo pendiente"),
-        cuota_periodo: numeroNoNegativo(formDescuento.cuotaPeriodo, "Cuota periodo"),
-        fecha_inicio: textoOpcional(formDescuento.fechaInicio),
-        fecha_fin: textoOpcional(formDescuento.fechaFin),
-        observaciones: textoOpcional(formDescuento.observaciones),
-        creado_por: userId,
-      });
+      const { data: descuentoCreado, error } = await supabase
+        .from("planilla_prestamos_descuentos")
+        .insert({
+          empresa_id: empresaId,
+          empleado_id: formDescuento.empleadoId,
+          tipo: formDescuento.tipo,
+          descripcion: formDescuento.descripcion.trim(),
+          monto_original: numeroNoNegativo(formDescuento.montoOriginal, "Monto original"),
+          saldo_pendiente: numeroNoNegativo(formDescuento.saldoPendiente, "Saldo pendiente"),
+          cuota_periodo: numeroNoNegativo(formDescuento.cuotaPeriodo, "Cuota periodo"),
+          fecha_inicio: textoOpcional(formDescuento.fechaInicio),
+          fecha_fin: textoOpcional(formDescuento.fechaFin),
+          observaciones: textoOpcional(formDescuento.observaciones),
+          creado_por: userId,
+        })
+        .select(COLUMNAS_DESCUENTOS)
+        .single();
 
-      if (error) throw error;
+      if (error || !descuentoCreado) {
+        throw error || new Error("No se pudo crear el prestamo o descuento.");
+      }
+
+      await auditar({
+        empresa_id: descuentoCreado.empresa_id,
+        modulo: "planilla",
+        accion: "crear_descuento_planilla",
+        entidad_tipo: "planilla_prestamos_descuentos",
+        entidad_id: descuentoCreado.id,
+        estado_nuevo: descuentoCreado.estado,
+        sensible: true,
+        origen: "app_planilla",
+        metadatos: {
+          empresa_id: descuentoCreado.empresa_id,
+          descuento_id: descuentoCreado.id,
+          empleado_id: descuentoCreado.empleado_id,
+          tipo: descuentoCreado.tipo,
+          monto_total: Number(descuentoCreado.monto_original || 0),
+          saldo_pendiente: Number(descuentoCreado.saldo_pendiente || 0),
+          moneda: empleado.moneda,
+          estado: descuentoCreado.estado,
+        },
+      });
 
       setFormDescuento(formularioDescuentoInicial(String(empresaId)));
       await cargarDatos();
