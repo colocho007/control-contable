@@ -30,7 +30,7 @@ declare
   v_idempotency_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
   v_moneda text := upper(trim(coalesce(p_moneda, '')));
   v_tipo text := lower(trim(coalesce(p_tipo, 'asiento_manual')));
-  v_estado_asiento text := 'registrado';
+  v_estado_asiento text := 'borrador';
   v_total_debe numeric := 0;
   v_total_haber numeric := 0;
   v_linea record;
@@ -193,12 +193,22 @@ begin
       raise exception 'No tienes permiso para operar esta empresa.';
     end if;
 
-    if v_tipo in ('borrador', 'draft') then
-      v_estado_asiento := 'borrador';
-    elsif v_tipo in ('registrado', 'finalizar', 'finalizado') then
+    if v_tipo in ('registrado', 'finalizar', 'finalizado') then
       v_estado_asiento := 'registrado';
     else
-      v_estado_asiento := 'registrado';
+      v_estado_asiento := 'borrador';
+    end if;
+
+    if exists (
+      select 1
+      from usuario_funciones_operativas ufo
+      where ufo.usuario_id = v_usuario_id
+        and ufo.empresa_id = p_empresa_id
+        and ufo.activo = true
+        and ufo.funcion = 'auditor_solo_lectura'
+    )
+    then
+      raise exception 'El auditor de solo lectura no puede crear ni registrar asientos contables.';
     end if;
 
     if lower(coalesce(v_perfil.rol, '')) <> 'admin'
@@ -208,17 +218,13 @@ begin
         where ufo.usuario_id = v_usuario_id
           and ufo.empresa_id = p_empresa_id
           and ufo.activo = true
-          and (
-            ufo.funcion in ('auxiliar_contable', 'contador_revisor')
-            or (v_estado_asiento = 'registrado' and v_tipo in ('registrado', 'finalizar', 'finalizado') and ufo.funcion = 'contador_revisor')
-          )
+          and ufo.funcion in ('auxiliar_contable', 'contador_revisor')
       )
     then
-      raise exception 'No tienes funcion operativa contable para registrar asientos.';
+      raise exception 'No tienes funcion operativa contable para crear asientos.';
     end if;
 
     if v_estado_asiento = 'registrado'
-      and v_tipo in ('registrado', 'finalizar', 'finalizado')
       and lower(coalesce(v_perfil.rol, '')) <> 'admin'
       and not exists (
         select 1
