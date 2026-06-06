@@ -417,7 +417,7 @@ begin
       p_creado_por,
       v_perfil.nombre,
       p_empresa_id,
-      'contabilidad_v2',
+      'contabilidad',
       'crear_asiento_contable',
       'asiento_contable',
       v_asiento.id::text,

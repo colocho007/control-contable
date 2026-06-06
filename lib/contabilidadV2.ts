@@ -996,7 +996,7 @@ export async function crearCuentaContable(
 
   await auditarSinBloquear({
     empresa_id: cuenta.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "crear_cuenta_contable",
     entidad_tipo: "catalogo_cuenta",
     entidad_id: cuenta.id,
@@ -1087,7 +1087,7 @@ export async function obtenerOCrearPeriodoContable(
 
   await auditarSinBloquear({
     empresa_id: periodo.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "crear_periodo_contable",
     entidad_tipo: "periodo_contable",
     entidad_id: periodo.id,
@@ -1281,7 +1281,7 @@ export async function crearDocumentoContableRevision(
 
   await auditarSinBloquear({
     empresa_id: documento.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "registrar_documento_revision",
     entidad_tipo: "documento_contable_revision",
     entidad_id: documento.id,
@@ -1469,7 +1469,7 @@ export async function guardarDistribucionDocumentoContable(
 
   await auditarSinBloquear({
     empresa_id: empresaId,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: existentes?.length
       ? "corregir_distribucion_documento"
       : "crear_distribucion_documento",
@@ -1587,7 +1587,7 @@ export async function guardarImpuestoConfiguracion(
 
   await auditarSinBloquear({
     empresa_id: impuesto.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: esActualizacion
       ? "actualizar_impuesto_configuracion"
       : "crear_impuesto_configuracion",
@@ -1646,7 +1646,7 @@ export async function inactivarImpuestoConfiguracion(
 
   await auditarSinBloquear({
     empresa_id: impuesto.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "inactivar_impuesto_configuracion",
     entidad_tipo: "impuesto_configuracion",
     entidad_id: impuesto.id,
@@ -1801,7 +1801,7 @@ export async function cambiarEstadoDocumentoContable(
 
   await auditarSinBloquear({
     empresa_id: documento.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion:
       estadoNuevo === "Contabilizado"
         ? "marcar_documento_contabilizado"
@@ -1915,7 +1915,7 @@ export async function corregirDocumentoContableRevision(
 
   await auditarSinBloquear({
     empresa_id: documento.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "corregir_documento_revision",
     entidad_tipo: "documento_contable_revision",
     entidad_id: documento.id,
@@ -1991,7 +1991,7 @@ export async function anularAsientoContable(
 
   await auditarSinBloquear({
     empresa_id: asientoAnulado.empresa_id,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "anular_asiento_contable",
     entidad_tipo: "asiento_contable",
     entidad_id: asientoAnulado.id,
@@ -2264,7 +2264,7 @@ export async function previsualizarCierreMensualContable(
 
   await auditarSinBloquear({
     empresa_id: empresaId,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "previsualizar_cierre_mensual",
     entidad_tipo: "periodo_contable",
     entidad_id: periodo.id,
@@ -2342,7 +2342,7 @@ export async function cerrarPeriodoContable(
 
   await auditarSinBloquear({
     empresa_id: empresaId,
-    modulo: "contabilidad_v2",
+    modulo: "contabilidad",
     accion: "cerrar_periodo_contable",
     entidad_tipo: "periodo_contable",
     entidad_id: periodoCerrado.id,
