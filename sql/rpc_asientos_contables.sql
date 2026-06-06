@@ -96,7 +96,7 @@ begin
         );
       end if;
 
-      if v_idempotency.modulo <> 'contabilidad_v2'
+      if v_idempotency.modulo <> 'contabilidad'
         or v_idempotency.accion <> 'registrar_asiento_completo'
       then
         return jsonb_build_object(
@@ -154,7 +154,7 @@ begin
       v_idempotency_key,
       p_creado_por,
       p_empresa_id,
-      'contabilidad_v2',
+      'contabilidad',
       'registrar_asiento_completo',
       'en_proceso',
       md5(concat_ws('|', p_empresa_id, p_periodo_id, p_fecha, p_descripcion, v_moneda, v_tipo, p_lineas::text)),
