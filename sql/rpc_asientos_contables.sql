@@ -468,8 +468,8 @@ begin
       'ok', false,
       'permitido', false,
       'codigo', 'registrar_asiento_completo_fallido',
-      'mensaje', left(sqlerrm, 500),
-      'detalle_resumido', left(sqlerrm, 500),
+      'mensaje', 'No se pudo registrar el asiento contable. Revise los datos e intente de nuevo.',
+      'detalle_resumido', null,
       'idempotency_key', v_idempotency_key
     );
   end;

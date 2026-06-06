@@ -194,8 +194,80 @@ function nuevaLineaDistribucion(moneda = "GTQ"): LineaDistribucionForm {
   };
 }
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Ocurrio un error inesperado.";
+type TipoMensajeUsuario = "exito" | "error" | "advertencia" | "info";
+
+function errorSeguro(error: unknown) {
+  const detalle =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : error && typeof error === "object"
+          ? String(
+              ("mensaje" in error && error.mensaje) ||
+                ("message" in error && error.message) ||
+                ("codigo" in error && error.codigo) ||
+                ""
+            )
+          : "";
+  const normalizado = detalle.toLowerCase();
+
+  if (normalizado.includes("asiento desbalanceado") || normalizado.includes("no esta balanceado")) {
+    return "El asiento no esta balanceado. Revise debe y haber.";
+  }
+  if (
+    normalizado.includes("periodo cerrado") ||
+    normalizado.includes("periodo bloqueado") ||
+    normalizado.includes("periodo contable cerrado") ||
+    normalizado.includes("periodo contable bloqueado") ||
+    normalizado.includes("cerrado o bloqueado")
+  ) {
+    return "El periodo contable no permite nuevos asientos.";
+  }
+  if (normalizado.includes("fecha") && normalizado.includes("periodo")) {
+    return "La fecha no pertenece al periodo contable seleccionado.";
+  }
+  if (normalizado.includes("cuenta") && normalizado.includes("no permite movimientos")) {
+    return "Una de las cuentas seleccionadas no permite movimientos.";
+  }
+  if (normalizado.includes("moneda distinta") || normalizado.includes("misma moneda")) {
+    return "Todas las lineas deben usar la misma moneda del asiento.";
+  }
+  if (normalizado.includes("duplicate") || normalizado.includes("unique")) {
+    return "Ya existe un registro con esos datos.";
+  }
+  if (normalizado.includes("foreign key")) {
+    return "La relacion seleccionada no es valida.";
+  }
+  if (normalizado.includes("check constraint") || normalizado.includes("violates check")) {
+    return "Los datos no cumplen las reglas requeridas.";
+  }
+  if (normalizado.includes("not null")) {
+    return "Faltan datos obligatorios.";
+  }
+  if (
+    normalizado.includes("row-level security") ||
+    normalizado.includes("rls") ||
+    normalizado.includes("permission denied") ||
+    normalizado.includes("not authorized") ||
+    normalizado.includes("no tienes permiso") ||
+    normalizado.includes("no tiene permisos")
+  ) {
+    return "No tiene permisos para realizar esta accion.";
+  }
+  if (normalizado.includes("invalid input syntax for type uuid")) {
+    return "El identificador seleccionado no es valido.";
+  }
+  if (
+    normalizado.includes("network") ||
+    normalizado.includes("fetch") ||
+    normalizado.includes("timeout") ||
+    normalizado.includes("failed to fetch")
+  ) {
+    return "No se pudo conectar con el servidor. Intente de nuevo.";
+  }
+
+  return "No se pudo completar la operacion. Revise los datos e intente de nuevo.";
 }
 
 function numero(valor: string | number | null | undefined) {
@@ -229,7 +301,17 @@ export default function ContabilidadPage() {
   const [tabActiva, setTabActiva] = useState<TabContabilidad>("movimientos");
   const [cargandoV2, setCargandoV2] = useState(false);
   const [mensajeV2, setMensajeV2] = useState("");
+  const [mensajeUsuario, setMensajeUsuario] = useState("");
+  const [tipoMensaje, setTipoMensaje] = useState<TipoMensajeUsuario>("info");
   const [empresaContableId, setEmpresaContableId] = useState("");
+
+  function mostrarMensaje(
+    mensaje: string,
+    tipo: TipoMensajeUsuario = "error"
+  ) {
+    setMensajeUsuario(mensaje);
+    setTipoMensaje(tipo);
+  }
 
   const [catalogoCuentas, setCatalogoCuentas] = useState<CatalogoCuenta[]>([]);
   const [impuestosConfiguracion, setImpuestosConfiguracion] = useState<
@@ -354,7 +436,7 @@ export default function ContabilidadPage() {
           acceso.motivo === "usuario_inactivo"
         ) {
           if (acceso.motivo === "usuario_inactivo") {
-            alert("Tu usuario esta inactivo. Contacta al administrador.");
+            mostrarMensaje("Tu usuario esta inactivo. Contacta al administrador.");
           }
 
           router.replace("/login");
@@ -365,9 +447,9 @@ export default function ContabilidadPage() {
           acceso.motivo === "modulo_inactivo" ||
           acceso.motivo === "modulo_no_encontrado"
         ) {
-          alert("El modulo de Contabilidad esta desactivado.");
+          mostrarMensaje("El modulo de Contabilidad esta desactivado.");
         } else {
-          alert("No tienes acceso al modulo de Contabilidad.");
+          mostrarMensaje("No tienes acceso al modulo de Contabilidad.");
         }
 
         router.replace("/dashboard");
@@ -408,7 +490,7 @@ export default function ContabilidadPage() {
         ]);
       } catch (error) {
         console.error("Error cargando datos de Contabilidad:", error);
-        alert("Error al cargar datos de Contabilidad.");
+        mostrarMensaje("Error al cargar datos de Contabilidad.");
       } finally {
         setCargandoContabilidad(false);
       }
@@ -572,12 +654,12 @@ export default function ContabilidadPage() {
 
   async function crearMovimiento() {
     if (!userId) {
-      alert("Sesion no valida.");
+      mostrarMensaje("Sesion no valida.");
       return;
     }
 
     if (!form.descripcion || !form.monto || !form.empresa || !form.empresaId) {
-      alert("Por favor completa todos los campos obligatorios.");
+      mostrarMensaje("Por favor completa todos los campos obligatorios.");
       return;
     }
 
@@ -586,7 +668,7 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(form.empresaId, "crear movimientos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
@@ -654,11 +736,14 @@ export default function ContabilidadPage() {
       await obtenerMovimientos();
 
       if (!auditoriaRegistrada) {
-        alert("Movimiento creado, pero no se pudo registrar la auditoria central.");
+        mostrarMensaje(
+          "Movimiento creado, pero no se pudo registrar la auditoria central.",
+          "advertencia"
+        );
       }
     } catch (error) {
       console.error("Error creando movimiento:", error);
-      alert(`Error al registrar movimiento: ${getErrorMessage(error)}`);
+      mostrarMensaje(`Error al registrar movimiento: ${errorSeguro(error)}`);
     } finally {
       setLoading(false);
     }
@@ -666,33 +751,33 @@ export default function ContabilidadPage() {
 
   async function anularMovimiento(id: number) {
     if (!puedeAnularMovimiento) {
-      alert("No tienes permiso para anular movimientos.");
+      mostrarMensaje("No tienes permiso para anular movimientos.");
       return;
     }
 
     if (!userId) {
-      alert("Sesion no valida.");
+      mostrarMensaje("Sesion no valida.");
       return;
     }
 
     const movimientoAnulado = movimientos.find((movimiento) => movimiento.id === id);
 
     if (!movimientoAnulado?.empresa_id) {
-      alert("No se encontro un movimiento valido para anular.");
+      mostrarMensaje("No se encontro un movimiento valido para anular.");
       return;
     }
 
     try {
       validarEmpresaPermitida(movimientoAnulado.empresa_id, "anular movimientos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     const motivo = window.prompt("Indica el motivo de anulacion:");
 
     if (!motivo || motivo.trim().length < 5) {
-      alert("Debes escribir un motivo valido para anular.");
+      mostrarMensaje("Debes escribir un motivo valido para anular.");
       return;
     }
 
@@ -715,7 +800,7 @@ export default function ContabilidadPage() {
 
     if (error) {
       console.error("Error anulando movimiento:", error);
-      alert("Error al anular movimiento.");
+      mostrarMensaje("Error al anular movimiento.");
       return;
     }
 
@@ -774,8 +859,9 @@ export default function ContabilidadPage() {
     await obtenerMovimientos();
 
     if (!auditoriaRegistrada || !historialRegistrado) {
-      alert(
-        "Movimiento anulado, pero hubo un problema registrando auditoria o historial."
+      mostrarMensaje(
+        "Movimiento anulado, pero hubo un problema registrando auditoria o historial.",
+        "advertencia"
       );
     }
   }
@@ -792,7 +878,7 @@ export default function ContabilidadPage() {
       setCatalogoCuentas(cuentas);
     } catch (error) {
       console.error("Error cargando catalogo:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setCargandoV2(false);
     }
@@ -808,7 +894,7 @@ export default function ContabilidadPage() {
       setPrevisualizacionCierre(null);
     } catch (error) {
       console.error("Error cargando periodos:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setCargandoV2(false);
     }
@@ -831,7 +917,7 @@ export default function ContabilidadPage() {
       setAsientosContables(asientos);
     } catch (error) {
       console.error("Error cargando asientos:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setCargandoV2(false);
     }
@@ -859,7 +945,7 @@ export default function ContabilidadPage() {
       setCatalogoCuentas(cuentas);
     } catch (error) {
       console.error("Error cargando documentos para revision:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
       setDocumentosRevision([]);
       setDistribucionesDocumento([]);
     } finally {
@@ -883,7 +969,7 @@ export default function ContabilidadPage() {
       setCatalogoCuentas(cuentas);
     } catch (error) {
       console.error("Error cargando plan de impuestos:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
       setImpuestosConfiguracion([]);
     } finally {
       setCargandoV2(false);
@@ -947,7 +1033,7 @@ export default function ContabilidadPage() {
     const esGlobal = cuentaForm.empresaId === "global";
 
     if (esGlobal && !["admin", "jefe"].includes(rolActual)) {
-      alert("Solo admin o jefe pueden crear cuentas globales.");
+      mostrarMensaje("Solo admin o jefe pueden crear cuentas globales.");
       return;
     }
 
@@ -958,12 +1044,12 @@ export default function ContabilidadPage() {
         ? null
         : validarEmpresaPermitida(cuentaForm.empresaId, "crear cuentas");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!cuentaForm.codigo.trim() || !cuentaForm.nombre.trim() || !cuentaForm.tipo.trim()) {
-      alert("Codigo, nombre y tipo son obligatorios.");
+      mostrarMensaje("Codigo, nombre y tipo son obligatorios.");
       return;
     }
 
@@ -989,10 +1075,10 @@ export default function ContabilidadPage() {
       }));
 
       await cargarCatalogo(empresaContableId);
-      alert("Cuenta contable creada.");
+      mostrarMensaje("Cuenta contable creada.", "exito");
     } catch (error) {
       console.error("Error creando cuenta contable:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1045,12 +1131,12 @@ export default function ContabilidadPage() {
         "guardar plan de impuestos"
       );
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!impuestoForm.nombre.trim() || !impuestoForm.porcentaje) {
-      alert("Nombre y porcentaje son obligatorios.");
+      mostrarMensaje("Nombre y porcentaje son obligatorios.");
       return;
     }
 
@@ -1084,10 +1170,10 @@ export default function ContabilidadPage() {
 
       limpiarImpuestoForm(String(empresaId));
       await cargarImpuestos(String(empresaId));
-      alert("Configuracion fiscal guardada.");
+      mostrarMensaje("Configuracion fiscal guardada.", "exito");
     } catch (error) {
       console.error("Error guardando impuesto:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1097,13 +1183,13 @@ export default function ContabilidadPage() {
     try {
       validarEmpresaPermitida(impuesto.empresa_id, "inactivar impuestos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     const motivo = window.prompt("Motivo para inactivar el impuesto:");
     if (!motivo || motivo.trim().length < 5) {
-      alert("Debes indicar un motivo valido.");
+      mostrarMensaje("Debes indicar un motivo valido.");
       return;
     }
 
@@ -1115,10 +1201,10 @@ export default function ContabilidadPage() {
         motivo.trim()
       );
       await cargarImpuestos(String(impuesto.empresa_id));
-      alert("Impuesto inactivado.");
+      mostrarMensaje("Impuesto inactivado.", "exito");
     } catch (error) {
       console.error("Error inactivando impuesto:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1133,12 +1219,12 @@ export default function ContabilidadPage() {
         "registrar documentos para revision"
       );
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeAuxiliarContable(empresaId)) {
-      alert("No tienes funcion operativa contable para registrar documentos en esta empresa.");
+      mostrarMensaje("No tienes funcion operativa contable para registrar documentos en esta empresa.");
       return;
     }
 
@@ -1148,7 +1234,7 @@ export default function ContabilidadPage() {
       !documentoForm.fechaDocumento ||
       !documentoForm.total
     ) {
-      alert("Tipo, numero, fecha y total son obligatorios.");
+      mostrarMensaje("Tipo, numero, fecha y total son obligatorios.");
       return;
     }
 
@@ -1196,10 +1282,10 @@ export default function ContabilidadPage() {
       }));
 
       await cargarDocumentosRevision(String(empresaId));
-      alert("Documento registrado como Pendiente.");
+      mostrarMensaje("Documento registrado como Pendiente.", "exito");
     } catch (error) {
       console.error("Error registrando documento para revision:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1212,12 +1298,12 @@ export default function ContabilidadPage() {
     try {
       validarEmpresaPermitida(documento.empresa_id, "revisar documentos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeRevisorContable(documento.empresa_id)) {
-      alert("No tienes funcion operativa de contador revisor para esta empresa.");
+      mostrarMensaje("No tienes funcion operativa de contador revisor para esta empresa.");
       return;
     }
 
@@ -1225,7 +1311,7 @@ export default function ContabilidadPage() {
     if (estado === "Observado" || estado === "Rechazado") {
       observacion = window.prompt("Escribe la observacion del contador:") || "";
       if (observacion.trim().length < 5) {
-        alert("La observacion debe tener al menos 5 caracteres.");
+        mostrarMensaje("La observacion debe tener al menos 5 caracteres.");
         return;
       }
     }
@@ -1259,10 +1345,10 @@ export default function ContabilidadPage() {
         observacion,
       });
       await cargarDocumentosRevision(String(documento.empresa_id));
-      alert(`Documento actualizado a ${estado}.`);
+      mostrarMensaje(`Documento actualizado a ${estado}.`, "exito");
     } catch (error) {
       console.error("Error actualizando documento de revision:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1272,18 +1358,18 @@ export default function ContabilidadPage() {
     try {
       validarEmpresaPermitida(documento.empresa_id, "corregir documentos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeRevisorContable(documento.empresa_id)) {
-      alert("No tienes funcion operativa contador_revisor para corregir documentos en esta empresa.");
+      mostrarMensaje("No tienes funcion operativa contador_revisor para corregir documentos en esta empresa.");
       return;
     }
 
     const observacion = window.prompt("Motivo de la correccion:") || "";
     if (observacion.trim().length < 5) {
-      alert("El motivo debe tener al menos 5 caracteres.");
+      mostrarMensaje("El motivo debe tener al menos 5 caracteres.");
       return;
     }
 
@@ -1309,10 +1395,10 @@ export default function ContabilidadPage() {
         observacion,
       });
       await cargarDocumentosRevision(String(documento.empresa_id));
-      alert("Documento corregido y auditado.");
+      mostrarMensaje("Documento corregido y auditado.", "exito");
     } catch (error) {
       console.error("Error corrigiendo documento:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1351,12 +1437,12 @@ export default function ContabilidadPage() {
     try {
       validarEmpresaPermitida(documento.empresa_id, "guardar distribucion contable");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeAuxiliarContable(documento.empresa_id)) {
-      alert("No tienes funcion operativa contable para guardar distribuciones en esta empresa.");
+      mostrarMensaje("No tienes funcion operativa contable para guardar distribuciones en esta empresa.");
       return;
     }
 
@@ -1382,10 +1468,10 @@ export default function ContabilidadPage() {
       });
       await cargarDocumentosRevision(String(documento.empresa_id));
       abrirDistribucionDocumento(documento);
-      alert("Distribucion guardada y validada.");
+      mostrarMensaje("Distribucion guardada y validada.", "exito");
     } catch (error) {
       console.error("Error guardando distribucion:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1397,12 +1483,12 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(periodoForm.empresaId, "crear periodos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      alert("No tienes funcion operativa contador_revisor para preparar periodos contables en esta empresa.");
+      mostrarMensaje("No tienes funcion operativa contador_revisor para preparar periodos contables en esta empresa.");
       return;
     }
 
@@ -1413,10 +1499,10 @@ export default function ContabilidadPage() {
         fecha: periodoForm.fecha,
       });
       await cargarPeriodos(String(empresaId));
-      alert(`Periodo ${periodo.mes}/${periodo.anio} listo.`);
+      mostrarMensaje(`Periodo ${periodo.mes}/${periodo.anio} listo.`, "exito");
     } catch (error) {
       console.error("Error creando periodo contable:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1428,12 +1514,12 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(periodo.empresa_id, "previsualizar cierre mensual");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      alert("No tienes funcion de contador revisor para previsualizar cierres de esta empresa.");
+      mostrarMensaje("No tienes funcion de contador revisor para previsualizar cierres de esta empresa.");
       return;
     }
 
@@ -1446,14 +1532,15 @@ export default function ContabilidadPage() {
         empresas_permitidas: empresasPermitidasIds,
       });
       setPrevisualizacionCierre(resultado);
-      alert(
+      mostrarMensaje(
         resultado.puede_cerrar
           ? "Previsualizacion lista. El periodo no tiene bloqueos duros."
-          : "Previsualizacion lista. Revisa los bloqueos antes de cerrar."
+          : "Previsualizacion lista. Revisa los bloqueos antes de cerrar.",
+        resultado.puede_cerrar ? "info" : "advertencia"
       );
     } catch (error) {
       console.error("Error previsualizando cierre mensual:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1465,12 +1552,12 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(periodo.empresa_id, "cerrar periodo");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      alert("No tienes funcion de contador revisor para cerrar periodos de esta empresa.");
+      mostrarMensaje("No tienes funcion de contador revisor para cerrar periodos de esta empresa.");
       return;
     }
 
@@ -1490,7 +1577,10 @@ export default function ContabilidadPage() {
       setPrevisualizacionCierre(previa);
 
       if (!previa.puede_cerrar) {
-        alert("El periodo tiene bloqueos. Revisa la previsualizacion antes de cerrar.");
+        mostrarMensaje(
+          "El periodo tiene bloqueos. Revisa la previsualizacion antes de cerrar.",
+          "advertencia"
+        );
         return;
       }
 
@@ -1510,10 +1600,10 @@ export default function ContabilidadPage() {
         observaciones,
       });
       await Promise.all([cargarPeriodos(String(empresaId)), cargarAsientos(String(empresaId))]);
-      alert("Periodo cerrado correctamente.");
+      mostrarMensaje("Periodo cerrado correctamente.", "exito");
     } catch (error) {
       console.error("Error cerrando periodo contable:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1602,18 +1692,18 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(asientoForm.empresaId, "crear asientos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeCrearAsientoManual(empresaId)) {
-      alert("No tienes funcion operativa contable para crear asientos manuales en esta empresa.");
+      mostrarMensaje("No tienes funcion operativa contable para crear asientos manuales en esta empresa.");
       return;
     }
 
     const errores = erroresAsientoManual();
     if (errores.length) {
-      alert(errores.join("\n"));
+      mostrarMensaje(errores.join("\n"));
       return;
     }
 
@@ -1644,10 +1734,10 @@ export default function ContabilidadPage() {
       }));
       setLineasAsiento([nuevaLineaAsiento(), nuevaLineaAsiento()]);
       await Promise.all([cargarAsientos(String(empresaId)), cargarPeriodos(String(empresaId))]);
-      alert("Asiento contable creado.");
+      mostrarMensaje("Asiento contable creado.", "exito");
     } catch (error) {
       console.error("Error creando asiento contable:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1659,19 +1749,19 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(asiento.empresa_id, "anular asientos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
     if (!puedeAnularAsientoContableLocal(empresaId)) {
-      alert("Solo contador_revisor o un administrador autorizado puede anular asientos contables.");
+      mostrarMensaje("Solo contador_revisor o un administrador autorizado puede anular asientos contables.");
       return;
     }
 
     const motivo = window.prompt("Indica el motivo de anulacion del asiento:");
 
     if (!motivo || motivo.trim().length < 5) {
-      alert("Debes escribir un motivo valido para anular.");
+      mostrarMensaje("Debes escribir un motivo valido para anular.");
       return;
     }
 
@@ -1685,10 +1775,10 @@ export default function ContabilidadPage() {
       setLoading(true);
       await anularAsientoContable(asiento.id, motivo.trim());
       await cargarAsientos(String(asiento.empresa_id));
-      alert("Asiento anulado.");
+      mostrarMensaje("Asiento anulado.", "exito");
     } catch (error) {
       console.error("Error anulando asiento:", error);
-      alert(getErrorMessage(error));
+      mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
     }
@@ -1700,7 +1790,7 @@ export default function ContabilidadPage() {
     try {
       empresaId = validarEmpresaPermitida(empresaIdValor, "calcular balance");
     } catch (error) {
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
       return;
     }
 
@@ -1716,7 +1806,7 @@ export default function ContabilidadPage() {
       setBalanceComprobacion(resultado);
     } catch (error) {
       console.error("Error calculando balance de comprobacion:", error);
-      setMensajeV2(getErrorMessage(error));
+      setMensajeV2(errorSeguro(error));
     } finally {
       setCargandoV2(false);
     }
@@ -3891,6 +3981,31 @@ export default function ContabilidadPage() {
                   </button>
                 ))}
               </nav>
+
+              {mensajeUsuario && (
+                <div
+                  role="status"
+                  className={`mb-6 flex items-start justify-between gap-4 rounded-2xl border p-4 text-sm ${
+                    tipoMensaje === "exito"
+                      ? "border-green-500/20 bg-green-500/10 text-green-200"
+                      : tipoMensaje === "advertencia"
+                        ? "border-yellow-500/20 bg-yellow-500/10 text-yellow-100"
+                        : tipoMensaje === "info"
+                          ? "border-cyan-500/20 bg-cyan-500/10 text-cyan-100"
+                          : "border-red-500/20 bg-red-500/10 text-red-200"
+                  }`}
+                >
+                  <span className="whitespace-pre-line">{mensajeUsuario}</span>
+                  <button
+                    type="button"
+                    onClick={() => setMensajeUsuario("")}
+                    className="shrink-0 opacity-70 transition hover:opacity-100"
+                    aria-label="Cerrar mensaje"
+                  >
+                    <XCircle size={18} />
+                  </button>
+                </div>
+              )}
 
               {renderSelectorEmpresaV2()}
 
