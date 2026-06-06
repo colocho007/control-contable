@@ -559,6 +559,26 @@ function liberarIdempotencyKeyAsiento(key: string) {
   window.localStorage.removeItem(storageKey);
 }
 
+function obtenerIdempotencyKeyFinalizarAsiento(
+  asientoId: string | number,
+  empresaId: number
+) {
+  const storageKey = `${IDEMPOTENCY_PREFIX_ASIENTOS}:finalizar_asiento_contable:${hashSimple(
+    `${empresaId}|${asientoId}`
+  )}`;
+
+  if (typeof window === "undefined") {
+    return `${storageKey}:${generarUuidSeguro()}`;
+  }
+
+  const existente = window.localStorage.getItem(storageKey);
+  if (existente) return existente;
+
+  const nueva = `${storageKey}:${generarUuidSeguro()}`;
+  window.localStorage.setItem(storageKey, nueva);
+  return nueva;
+}
+
 function validarNaturaleza(naturaleza: string) {
   const normalizada = naturaleza.trim().toLowerCase();
   if (normalizada !== "deudora" && normalizada !== "acreedora") {
@@ -2009,6 +2029,46 @@ export async function anularAsientoContable(
   });
 
   return asientoAnulado;
+}
+
+export async function finalizarAsientoContable(
+  id: string | number,
+  empresaIdValor: number
+): Promise<AsientoContable> {
+  if (id === "" || id === null || id === undefined) {
+    throw new Error("Debe indicar el asiento contable que desea finalizar.");
+  }
+
+  const empresaId = validarEmpresaId(empresaIdValor);
+  const userId = await obtenerUsuarioIdActual();
+  const idempotencyKey = obtenerIdempotencyKeyFinalizarAsiento(id, empresaId);
+
+  const { data, error } = await supabase.rpc("finalizar_asiento_contable", {
+    p_asiento_id: id,
+    p_empresa_id: empresaId,
+    p_finalizado_por: userId,
+    p_idempotency_key: idempotencyKey,
+  });
+
+  if (error) {
+    throw errorSupabase("No se pudo finalizar el asiento contable", error);
+  }
+
+  const resultado = data as
+    | {
+        ok?: boolean;
+        mensaje?: string;
+        asiento?: AsientoContable;
+      }
+    | null;
+
+  if (!resultado || resultado.ok === false || !resultado.asiento) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    throw new Error(resultado?.mensaje || "No se pudo finalizar el asiento contable.");
+  }
+
+  liberarIdempotencyKeyAsiento(idempotencyKey);
+  return normalizarAsiento(resultado.asiento);
 }
 
 async function obtenerPeriodoParaCierre(

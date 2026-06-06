@@ -27,6 +27,7 @@ import {
   crearCuentaContable,
   crearDocumentoContableRevision,
   documentoContableRequiereAlerta24h,
+  finalizarAsientoContable,
   guardarDistribucionDocumentoContable,
   guardarImpuestoConfiguracion,
   inactivarImpuestoConfiguracion,
@@ -722,6 +723,13 @@ export default function ContabilidadPage() {
   ) {
     if (esAuditorSoloLecturaContable(empresaId)) return false;
     return tieneFuncionContable(empresaId, ["contador_revisor"]) || esAdminGlobalTemporal();
+  }
+
+  function puedeFinalizarAsientoContableLocal(
+    empresaId: string | number | null | undefined
+  ) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+    return tieneFuncionContable(empresaId, ["contador_revisor"]);
   }
 
   function puedeCerrarPeriodoContableLocal(
@@ -1858,7 +1866,7 @@ export default function ContabilidadPage() {
       }));
       setLineasAsiento([nuevaLineaAsiento(), nuevaLineaAsiento()]);
       await Promise.all([cargarAsientos(String(empresaId)), cargarPeriodos(String(empresaId))]);
-      mostrarMensaje("Asiento contable creado.", "exito");
+      mostrarMensaje("Borrador de asiento contable creado.", "exito");
     } catch (error) {
       console.error("Error creando asiento contable:", error);
       mostrarMensaje(errorSeguro(error));
@@ -1909,6 +1917,41 @@ export default function ContabilidadPage() {
       mostrarMensaje("Asiento anulado.", "exito");
     } catch (error) {
       console.error("Error anulando asiento:", error);
+      mostrarMensaje(errorSeguro(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function finalizarAsiento(asiento: AsientoContable) {
+    let empresaId: number;
+
+    try {
+      empresaId = validarEmpresaPermitida(asiento.empresa_id, "finalizar asientos");
+    } catch (error) {
+      mostrarMensaje(errorSeguro(error));
+      return;
+    }
+
+    if (!puedeFinalizarAsientoContableLocal(empresaId)) {
+      mostrarMensaje("Solo contador_revisor puede finalizar asientos.");
+      return;
+    }
+
+    const confirmar = await solicitarConfirmacion(
+      "Finalizar asiento contable",
+      "El asiento pasara de borrador a registrado y afectara los reportes contables formales."
+    );
+
+    if (!confirmar) return;
+
+    try {
+      setLoading(true);
+      await finalizarAsientoContable(asiento.id, empresaId);
+      await Promise.all([cargarAsientos(String(empresaId)), cargarPeriodos(String(empresaId))]);
+      mostrarMensaje("Asiento contable registrado correctamente.", "exito");
+    } catch (error) {
+      console.error("Error finalizando asiento:", error);
       mostrarMensaje(errorSeguro(error));
     } finally {
       setLoading(false);
@@ -3608,9 +3651,24 @@ export default function ContabilidadPage() {
                     >
                       Detalle
                     </button>
-                    {asiento.estado !== "anulado" && (
+                    {["borrador", "requiere_revision"].includes(
+                      String(asiento.estado || "").toLowerCase()
+                    ) &&
+                      puedeFinalizarAsientoContableLocal(asiento.empresa_id) && (
+                        <button
+                          type="button"
+                          onClick={() => finalizarAsiento(asiento)}
+                          disabled={loading}
+                          className="px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
+                        >
+                          Finalizar asiento
+                        </button>
+                      )}
+                    {asiento.estado !== "anulado" &&
+                      puedeAnularAsientoContableLocal(asiento.empresa_id) && (
                       <button
                         onClick={() => anularAsiento(asiento)}
+                        disabled={loading}
                         className="p-2 text-red-300 hover:bg-red-500/10 rounded-xl"
                         title="Anular asiento"
                       >
@@ -3852,13 +3910,15 @@ export default function ContabilidadPage() {
             </div>
           </div>
 
-          <button
-            onClick={crearAsientoManual}
-            disabled={loading}
-            className="mt-8 bg-white text-black font-black px-8 py-4 rounded-2xl hover:bg-cyan-400 transition disabled:opacity-60"
-          >
-            Crear asiento contable
-          </button>
+          {!esAuditorSoloLecturaContable(asientoForm.empresaId) && (
+            <button
+              onClick={crearAsientoManual}
+              disabled={loading}
+              className="mt-8 bg-white text-black font-black px-8 py-4 rounded-2xl hover:bg-cyan-400 transition disabled:opacity-60"
+            >
+              Crear borrador de asiento
+            </button>
+          )}
         </section>
       </div>
     );
