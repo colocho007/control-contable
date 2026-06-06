@@ -11,6 +11,7 @@ import {
   type RegistrarAuditoriaEventoParams,
 } from "../../lib/auditoria";
 import {
+  DESCRIPCIONES_FUNCIONES_OPERATIVAS,
   FUNCIONES_OPERATIVAS,
   type FuncionOperativa,
   type UsuarioFuncionOperativa,
@@ -113,7 +114,13 @@ const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 const FUNCIONES_POR_MODULO: Record<string, FuncionOperativa[]> = {
   Cheques: ["firmante_cheque", "autorizador_cheque", "pagador_cheque", "revisor_cheque"],
   Ordenes: ["creador_orden", "firmante_orden", "autorizador_compra"],
-  Contabilidad: ["auxiliar_contable", "contador_revisor"],
+  Contabilidad: [
+    "auxiliar_contable",
+    "contador_revisor",
+    "contabilidad_catalogo_admin",
+    "contabilidad_configuracion",
+    "contabilidad_cierre_periodo",
+  ],
   Auditoria: ["auditor_solo_lectura"],
 };
 
@@ -1820,6 +1827,11 @@ export default function AdminPage() {
                                       }`}
                                     >
                                       {funcion}
+                                      {DESCRIPCIONES_FUNCIONES_OPERATIVAS[funcion] && (
+                                        <span className="mt-1 block text-[10px] font-medium leading-snug opacity-75">
+                                          {DESCRIPCIONES_FUNCIONES_OPERATIVAS[funcion]}
+                                        </span>
+                                      )}
                                     </button>
                                   );
                                 })}

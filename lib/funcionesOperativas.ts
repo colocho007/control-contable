@@ -10,10 +10,22 @@ export const FUNCIONES_OPERATIVAS = [
   "autorizador_compra",
   "auxiliar_contable",
   "contador_revisor",
+  "contabilidad_catalogo_admin",
+  "contabilidad_configuracion",
+  "contabilidad_cierre_periodo",
   "auditor_solo_lectura",
 ] as const;
 
 export type FuncionOperativa = (typeof FUNCIONES_OPERATIVAS)[number];
+
+export const DESCRIPCIONES_FUNCIONES_OPERATIVAS: Partial<
+  Record<FuncionOperativa, string>
+> = {
+  contabilidad_catalogo_admin: "Administra el catalogo de cuentas contables.",
+  contabilidad_configuracion: "Administra configuracion contable y fiscal futura.",
+  contabilidad_cierre_periodo:
+    "Puede preparar, revisar, cerrar o gestionar cierres de periodos contables.",
+};
 
 export interface UsuarioFuncionOperativa {
   id: string | number;
