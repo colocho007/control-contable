@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BookOpen,
@@ -196,6 +196,22 @@ function nuevaLineaDistribucion(moneda = "GTQ"): LineaDistribucionForm {
 
 type TipoMensajeUsuario = "exito" | "error" | "advertencia" | "info";
 
+type ModalControlado =
+  | {
+      tipo: "confirmacion";
+      titulo: string;
+      mensaje: string;
+    }
+  | {
+      tipo: "texto";
+      titulo: string;
+      mensaje: string;
+      valorInicial: string;
+      obligatorio: boolean;
+      minLength: number;
+      inputType: "text" | "number";
+    };
+
 function errorSeguro(error: unknown) {
   const detalle =
     error instanceof Error
@@ -303,6 +319,10 @@ export default function ContabilidadPage() {
   const [mensajeV2, setMensajeV2] = useState("");
   const [mensajeUsuario, setMensajeUsuario] = useState("");
   const [tipoMensaje, setTipoMensaje] = useState<TipoMensajeUsuario>("info");
+  const [modalControlado, setModalControlado] = useState<ModalControlado | null>(null);
+  const [valorModal, setValorModal] = useState("");
+  const [errorModal, setErrorModal] = useState("");
+  const resolutorModal = useRef<((valor: boolean | string | null) => void) | null>(null);
   const [empresaContableId, setEmpresaContableId] = useState("");
 
   function mostrarMensaje(
@@ -311,6 +331,76 @@ export default function ContabilidadPage() {
   ) {
     setMensajeUsuario(mensaje);
     setTipoMensaje(tipo);
+  }
+
+  function solicitarConfirmacion(titulo: string, mensaje: string) {
+    return new Promise<boolean>((resolve) => {
+      resolutorModal.current = (valor) => resolve(valor === true);
+      setErrorModal("");
+      setModalControlado({ tipo: "confirmacion", titulo, mensaje });
+    });
+  }
+
+  function solicitarTexto({
+    titulo,
+    mensaje,
+    valorInicial = "",
+    obligatorio = false,
+    minLength = 0,
+    inputType = "text",
+  }: {
+    titulo: string;
+    mensaje: string;
+    valorInicial?: string;
+    obligatorio?: boolean;
+    minLength?: number;
+    inputType?: "text" | "number";
+  }) {
+    return new Promise<string | null>((resolve) => {
+      resolutorModal.current = (valor) =>
+        resolve(typeof valor === "string" ? valor : null);
+      setValorModal(valorInicial);
+      setErrorModal("");
+      setModalControlado({
+        tipo: "texto",
+        titulo,
+        mensaje,
+        valorInicial,
+        obligatorio,
+        minLength,
+        inputType,
+      });
+    });
+  }
+
+  function cerrarModalControlado() {
+    const resolutor = resolutorModal.current;
+    resolutorModal.current = null;
+    setModalControlado(null);
+    setErrorModal("");
+    resolutor?.(modalControlado?.tipo === "confirmacion" ? false : null);
+  }
+
+  function confirmarModalControlado() {
+    if (!modalControlado || !resolutorModal.current) return;
+
+    if (modalControlado.tipo === "texto") {
+      const texto = valorModal.trim();
+      if (modalControlado.obligatorio && !texto) {
+        setErrorModal("Este campo es obligatorio.");
+        return;
+      }
+      if (texto.length < modalControlado.minLength) {
+        setErrorModal(`Debe escribir al menos ${modalControlado.minLength} caracteres.`);
+        return;
+      }
+    }
+
+    const resolutor = resolutorModal.current;
+    resolutorModal.current = null;
+    setModalControlado(null);
+    setErrorModal("");
+    resolutor(modalControlado.tipo === "confirmacion" ? true : valorModal);
   }
 
   const [catalogoCuentas, setCatalogoCuentas] = useState<CatalogoCuenta[]>([]);
@@ -774,14 +864,21 @@ export default function ContabilidadPage() {
       return;
     }
 
-    const motivo = window.prompt("Indica el motivo de anulacion:");
+    const motivo = await solicitarTexto({
+      titulo: "Anular movimiento",
+      mensaje: "Indica el motivo de anulacion.",
+      obligatorio: true,
+      minLength: 5,
+    });
 
-    if (!motivo || motivo.trim().length < 5) {
+    if (motivo === null) return;
+    if (motivo.trim().length < 5) {
       mostrarMensaje("Debes escribir un motivo valido para anular.");
       return;
     }
 
-    const confirmar = window.confirm(
+    const confirmar = await solicitarConfirmacion(
+      "Confirmar anulacion",
       "Seguro que deseas anular este movimiento? No se borrara, quedara como anulado."
     );
 
@@ -1187,8 +1284,14 @@ export default function ContabilidadPage() {
       return;
     }
 
-    const motivo = window.prompt("Motivo para inactivar el impuesto:");
-    if (!motivo || motivo.trim().length < 5) {
+    const motivo = await solicitarTexto({
+      titulo: "Inactivar impuesto",
+      mensaje: "Indica el motivo para inactivar el impuesto.",
+      obligatorio: true,
+      minLength: 5,
+    });
+    if (motivo === null) return;
+    if (motivo.trim().length < 5) {
       mostrarMensaje("Debes indicar un motivo valido.");
       return;
     }
@@ -1309,7 +1412,13 @@ export default function ContabilidadPage() {
 
     let observacion: string | null = null;
     if (estado === "Observado" || estado === "Rechazado") {
-      observacion = window.prompt("Escribe la observacion del contador:") || "";
+      observacion = await solicitarTexto({
+        titulo: `${estado} documento`,
+        mensaje: "Escribe la observacion del contador.",
+        obligatorio: true,
+        minLength: 5,
+      });
+      if (observacion === null) return;
       if (observacion.trim().length < 5) {
         mostrarMensaje("La observacion debe tener al menos 5 caracteres.");
         return;
@@ -1318,7 +1427,8 @@ export default function ContabilidadPage() {
 
     const confirmar =
       estado === "Contabilizado"
-        ? window.confirm(
+        ? await solicitarConfirmacion(
+            "Confirmar contabilizacion",
             "Se marcara como Contabilizado sin crear asiento automatico. Debe existir adjunto y quedara listo para distribucion contable futura."
           )
         : true;
@@ -1367,22 +1477,31 @@ export default function ContabilidadPage() {
       return;
     }
 
-    const observacion = window.prompt("Motivo de la correccion:") || "";
+    const observacion = await solicitarTexto({
+      titulo: "Corregir documento",
+      mensaje: "Indica el motivo de la correccion.",
+      obligatorio: true,
+      minLength: 5,
+    });
+    if (observacion === null) return;
     if (observacion.trim().length < 5) {
       mostrarMensaje("El motivo debe tener al menos 5 caracteres.");
       return;
     }
 
-    const totalTexto = window.prompt(
-      "Total corregido:",
-      String(documento.total)
-    );
+    const totalTexto = await solicitarTexto({
+      titulo: "Total corregido",
+      mensaje: "Ingresa el total corregido.",
+      valorInicial: String(documento.total),
+      inputType: "number",
+    });
     if (totalTexto === null) return;
 
-    const descripcion = window.prompt(
-      "Descripcion corregida:",
-      documento.descripcion || ""
-    );
+    const descripcion = await solicitarTexto({
+      titulo: "Descripcion corregida",
+      mensaje: "Ingresa la descripcion corregida.",
+      valorInicial: documento.descripcion || "",
+    });
     if (descripcion === null) return;
 
     try {
@@ -1446,10 +1565,11 @@ export default function ContabilidadPage() {
       return;
     }
 
-    const motivo = window.prompt(
-      "Motivo o referencia de la distribucion:",
-      "Distribucion contable del documento"
-    );
+    const motivo = await solicitarTexto({
+      titulo: "Guardar distribucion",
+      mensaje: "Indica el motivo o referencia de la distribucion.",
+      valorInicial: "Distribucion contable del documento",
+    });
     if (motivo === null) return;
 
     try {
@@ -1584,10 +1704,14 @@ export default function ContabilidadPage() {
         return;
       }
 
-      const observaciones = window.prompt(
-        "Observaciones del cierre mensual contable (opcional):"
-      );
-      const confirmar = window.confirm(
+      const observaciones = await solicitarTexto({
+        titulo: "Observaciones del cierre",
+        mensaje: "Observaciones del cierre mensual contable (opcional).",
+      });
+      if (observaciones === null) return;
+
+      const confirmar = await solicitarConfirmacion(
+        "Confirmar cierre de periodo",
         `Cerrar periodo ${periodo.mes}/${periodo.anio}? No se crearan asientos automaticos.`
       );
 
@@ -1758,14 +1882,21 @@ export default function ContabilidadPage() {
       return;
     }
 
-    const motivo = window.prompt("Indica el motivo de anulacion del asiento:");
+    const motivo = await solicitarTexto({
+      titulo: "Anular asiento contable",
+      mensaje: "Indica el motivo de anulacion del asiento.",
+      obligatorio: true,
+      minLength: 5,
+    });
 
-    if (!motivo || motivo.trim().length < 5) {
+    if (motivo === null) return;
+    if (motivo.trim().length < 5) {
       mostrarMensaje("Debes escribir un motivo valido para anular.");
       return;
     }
 
-    const confirmar = window.confirm(
+    const confirmar = await solicitarConfirmacion(
+      "Confirmar anulacion",
       "Seguro que deseas anular este asiento? No se borrara fisicamente."
     );
 
@@ -4020,6 +4151,67 @@ export default function ContabilidadPage() {
           )}
         </div>
       </main>
+
+      {modalControlado && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-contabilidad-titulo"
+        >
+          <div className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0B1120] p-6 shadow-2xl">
+            <h2
+              id="modal-contabilidad-titulo"
+              className="text-xl font-black text-white"
+            >
+              {modalControlado.titulo}
+            </h2>
+            <p className="mt-2 text-sm text-gray-400">{modalControlado.mensaje}</p>
+
+            {modalControlado.tipo === "texto" && (
+              <div className="mt-5">
+                <input
+                  type={modalControlado.inputType}
+                  value={valorModal}
+                  onChange={(event) => {
+                    setValorModal(event.target.value);
+                    setErrorModal("");
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      confirmarModalControlado();
+                    }
+                  }}
+                  autoFocus
+                  className="input-control"
+                  aria-invalid={Boolean(errorModal)}
+                />
+                {errorModal && (
+                  <p className="mt-2 text-sm font-bold text-red-300">{errorModal}</p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={cerrarModalControlado}
+                className="h-11 rounded-xl border border-white/10 px-4 font-bold text-gray-300 transition hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarModalControlado}
+                className="h-11 rounded-xl border border-cyan-500/30 bg-cyan-500/15 px-4 font-black text-cyan-100 transition hover:bg-cyan-500/25"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
