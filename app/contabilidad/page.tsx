@@ -675,7 +675,14 @@ export default function ContabilidadPage() {
 
   function tieneFuncionContable(
     empresaId: string | number | null | undefined,
-    funciones: Array<"auxiliar_contable" | "contador_revisor" | "auditor_solo_lectura">
+    funciones: Array<
+      | "auxiliar_contable"
+      | "contador_revisor"
+      | "contabilidad_catalogo_admin"
+      | "contabilidad_configuracion"
+      | "contabilidad_cierre_periodo"
+      | "auditor_solo_lectura"
+    >
   ) {
     return tieneFuncionOperativaLocal(funcionesOperativas, userId, empresaId, funciones);
   }
@@ -718,6 +725,20 @@ export default function ContabilidadPage() {
     return puedeAuxiliarContable(empresaId);
   }
 
+  function puedeAdministrarCatalogoContable(
+    empresaId: string | number | null | undefined
+  ) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+    return tieneFuncionContable(empresaId, ["contabilidad_catalogo_admin"]);
+  }
+
+  function puedeConfigurarContabilidad(
+    empresaId: string | number | null | undefined
+  ) {
+    if (esAuditorSoloLecturaContable(empresaId)) return false;
+    return tieneFuncionContable(empresaId, ["contabilidad_configuracion"]);
+  }
+
   function puedeAnularAsientoContableLocal(
     empresaId: string | number | null | undefined
   ) {
@@ -736,7 +757,7 @@ export default function ContabilidadPage() {
     empresaId: string | number | null | undefined
   ) {
     if (esAuditorSoloLecturaContable(empresaId)) return false;
-    return tieneFuncionContable(empresaId, ["contador_revisor"]) || esAdminGlobalTemporal();
+    return tieneFuncionContable(empresaId, ["contabilidad_cierre_periodo"]);
   }
 
   function empresaNombre(empresaId: string | number | null | undefined) {
@@ -1135,21 +1156,17 @@ export default function ContabilidadPage() {
   }
 
   async function crearCuenta() {
-    const esGlobal = cuentaForm.empresaId === "global";
+    let empresaId: number;
 
-    if (esGlobal && !["admin", "jefe"].includes(rolActual)) {
-      mostrarMensaje("Solo admin o jefe pueden crear cuentas globales.");
+    try {
+      empresaId = validarEmpresaPermitida(cuentaForm.empresaId, "crear cuentas");
+    } catch (error) {
+      mostrarMensaje(errorSeguro(error));
       return;
     }
 
-    let empresaId: number | null = null;
-
-    try {
-      empresaId = esGlobal
-        ? null
-        : validarEmpresaPermitida(cuentaForm.empresaId, "crear cuentas");
-    } catch (error) {
-      mostrarMensaje(errorSeguro(error));
+    if (!puedeAdministrarCatalogoContable(empresaId)) {
+      mostrarMensaje("No tienes la funcion contabilidad_catalogo_admin para administrar este catalogo.");
       return;
     }
 
@@ -1240,6 +1257,11 @@ export default function ContabilidadPage() {
       return;
     }
 
+    if (!puedeConfigurarContabilidad(empresaId)) {
+      mostrarMensaje("No tienes la funcion contabilidad_configuracion para modificar esta configuracion.");
+      return;
+    }
+
     if (!impuestoForm.nombre.trim() || !impuestoForm.porcentaje) {
       mostrarMensaje("Nombre y porcentaje son obligatorios.");
       return;
@@ -1289,6 +1311,11 @@ export default function ContabilidadPage() {
       validarEmpresaPermitida(impuesto.empresa_id, "inactivar impuestos");
     } catch (error) {
       mostrarMensaje(errorSeguro(error));
+      return;
+    }
+
+    if (!puedeConfigurarContabilidad(impuesto.empresa_id)) {
+      mostrarMensaje("No tienes la funcion contabilidad_configuracion para inactivar esta configuracion.");
       return;
     }
 
@@ -1616,7 +1643,7 @@ export default function ContabilidadPage() {
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      mostrarMensaje("No tienes funcion operativa contador_revisor para preparar periodos contables en esta empresa.");
+      mostrarMensaje("No tienes la funcion contabilidad_cierre_periodo para preparar periodos contables.");
       return;
     }
 
@@ -1647,7 +1674,7 @@ export default function ContabilidadPage() {
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      mostrarMensaje("No tienes funcion de contador revisor para previsualizar cierres de esta empresa.");
+      mostrarMensaje("No tienes la funcion contabilidad_cierre_periodo para previsualizar cierres.");
       return;
     }
 
@@ -1685,7 +1712,7 @@ export default function ContabilidadPage() {
     }
 
     if (!puedeCerrarPeriodoContableLocal(empresaId)) {
-      mostrarMensaje("No tienes funcion de contador revisor para cerrar periodos de esta empresa.");
+      mostrarMensaje("No tienes la funcion contabilidad_cierre_periodo para cerrar periodos.");
       return;
     }
 
@@ -2036,8 +2063,6 @@ export default function ContabilidadPage() {
   // Los movimientos operativos se gestionan por separado de los asientos formales.
   const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(rolActual);
 
-  const puedeGestionarGlobales = ["admin", "jefe"].includes(rolActual);
-
   const nombreEmpresaFiltro =
     empresaFiltro === "Todas"
       ? "Todas las empresas"
@@ -2323,7 +2348,8 @@ export default function ContabilidadPage() {
   function renderCatalogo() {
     return (
       <div className="grid gap-8">
-        <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+        {puedeAdministrarCatalogoContable(cuentaForm.empresaId) && (
+          <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <BookOpen className="text-cyan-400" /> Nueva cuenta contable
           </h2>
@@ -2337,7 +2363,6 @@ export default function ContabilidadPage() {
                 }
                 className="input-control"
               >
-                {puedeGestionarGlobales && <option value="global">Global</option>}
                 {listaEmpresas.map((empresa) => (
                   <option key={empresa.id} value={String(empresa.id)}>
                     {empresa.nombre}
@@ -2444,7 +2469,8 @@ export default function ContabilidadPage() {
           >
             Crear cuenta
           </button>
-        </section>
+          </section>
+        )}
 
         <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
           <h2 className="text-xl font-black mb-5">Catalogo visible</h2>
@@ -2488,7 +2514,8 @@ export default function ContabilidadPage() {
           </p>
         </section>
 
-        <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+        {puedeConfigurarContabilidad(impuestoForm.empresaId) && (
+          <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <BookOpen className="text-cyan-400" />
             {impuestoEditandoId ? "Editar impuesto" : "Nuevo impuesto"}
@@ -2682,7 +2709,8 @@ export default function ContabilidadPage() {
               </button>
             )}
           </div>
-        </section>
+          </section>
+        )}
 
         <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
           <h2 className="text-xl font-black mb-5">Configuracion fiscal visible</h2>
@@ -2722,24 +2750,26 @@ export default function ContabilidadPage() {
                   </p>
                   <EstadoPill estado={impuesto.activo ? "activo" : "inactivo"} />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <button
-                    type="button"
-                    onClick={() => cargarImpuestoParaEditar(impuesto)}
-                    className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black"
-                  >
-                    Editar
-                  </button>
-                  {impuesto.activo && (
+                {puedeConfigurarContabilidad(impuesto.empresa_id) && (
+                  <div className="flex flex-col gap-2">
                     <button
                       type="button"
-                      onClick={() => inactivarImpuesto(impuesto)}
-                      className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black"
+                      onClick={() => cargarImpuestoParaEditar(impuesto)}
+                      className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black"
                     >
-                      Inactivar
+                      Editar
                     </button>
-                  )}
-                </div>
+                    {impuesto.activo && (
+                      <button
+                        type="button"
+                        onClick={() => inactivarImpuesto(impuesto)}
+                        className="px-4 py-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black"
+                      >
+                        Inactivar
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -3361,7 +3391,8 @@ export default function ContabilidadPage() {
   function renderPeriodos() {
     return (
       <div className="grid gap-8">
-        <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
+        {puedeCerrarPeriodoContableLocal(periodoForm.empresaId) && (
+          <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <Calendar className="text-cyan-400" /> Obtener o crear periodo
           </h2>
@@ -3403,7 +3434,8 @@ export default function ContabilidadPage() {
           >
             Obtener o crear periodo
           </button>
-        </section>
+          </section>
+        )}
 
         <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
@@ -3431,26 +3463,28 @@ export default function ContabilidadPage() {
                 <p className="text-xs text-gray-500">
                   {periodo.cerrado_at ? `Cerrado: ${periodo.cerrado_at.slice(0, 10)}` : "Abierto para cierre"}
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => previsualizarCierrePeriodo(periodo)}
-                    disabled={loading}
-                    className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black disabled:opacity-50"
-                  >
-                    Previsualizar
-                  </button>
-                  {periodo.estado !== "cerrado" && (
+                {puedeCerrarPeriodoContableLocal(periodo.empresa_id) && (
+                  <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => cerrarPeriodo(periodo)}
+                      onClick={() => previsualizarCierrePeriodo(periodo)}
                       disabled={loading}
-                      className="px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
+                      className="px-3 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black disabled:opacity-50"
                     >
-                      Cerrar
+                      Previsualizar
                     </button>
-                  )}
-                </div>
+                    {periodo.estado !== "cerrado" && (
+                      <button
+                        type="button"
+                        onClick={() => cerrarPeriodo(periodo)}
+                        disabled={loading}
+                        className="px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
+                      >
+                        Cerrar
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
