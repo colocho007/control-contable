@@ -447,14 +447,14 @@ function texto(valor?: string | null) {
 function requerirTexto(valor: string, campo: string) {
   const limpio = texto(valor);
   if (!limpio) {
-    throw new Error(`El campo ${campo} es obligatorio para Contabilidad V2.`);
+    throw new Error(`El campo ${campo} es obligatorio para Contabilidad formal.`);
   }
   return limpio;
 }
 
 function validarEmpresaId(empresaId: number) {
   if (!Number.isInteger(Number(empresaId)) || Number(empresaId) <= 0) {
-    throw new Error("Debe indicar una empresa valida para Contabilidad V2.");
+    throw new Error("Debe indicar una empresa valida para Contabilidad formal.");
   }
   return Number(empresaId);
 }
@@ -593,7 +593,7 @@ async function obtenerUsuarioIdActual() {
   }
 
   if (!user) {
-    throw new Error("No hay usuario autenticado para Contabilidad V2.");
+    throw new Error("No hay usuario autenticado para Contabilidad formal.");
   }
 
   return user.id;
@@ -603,7 +603,7 @@ async function auditarSinBloquear(params: RegistrarAuditoriaEventoParams) {
   try {
     await registrarAuditoriaEvento(params);
   } catch (error) {
-    console.error("La operacion de Contabilidad V2 se completo, pero fallo la auditoria:", error);
+    console.error("La operacion de Contabilidad formal se completo, pero fallo la auditoria:", error);
   }
 }
 

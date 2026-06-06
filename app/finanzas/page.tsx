@@ -590,8 +590,8 @@ export default function FinanzasPage() {
             <div>
               <h1 className="text-5xl font-black">Finanzas</h1>
               <p className="text-gray-400 mt-2">
-                Movimientos operativos V1 por empresa. No crea asientos contables
-                automaticos ni modifica Contabilidad V2 formal.
+                Movimientos operativos por empresa. No crea ni modifica asientos
+                contables formales.
               </p>
             </div>
 
@@ -609,7 +609,7 @@ export default function FinanzasPage() {
           {!empresas.length && (
             <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-2xl p-5 mb-8 text-yellow-100">
               No tienes empresas operativas disponibles para Finanzas. Las empresas
-              archivadas, inactivas o de prueba no se muestran aqui.
+              archivadas, inactivas o fuera del alcance operativo no se muestran aqui.
             </div>
           )}
 

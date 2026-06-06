@@ -1242,7 +1242,7 @@ export default function ReportesPage() {
               </Panel>
             </div>
 
-            <Panel titulo="Alertas V1" subtitulo="Criterios conservadores de reporteria">
+            <Panel titulo="Alertas operativas" subtitulo="Criterios conservadores de reporteria">
               <div className="space-y-4 text-sm text-gray-300">
                 <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-yellow-100">
                   Los movimientos con <strong>estado anulado</strong> se cuentan como alerta,
@@ -1250,7 +1250,7 @@ export default function ReportesPage() {
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                   Movimientos sin <strong>empresa_id</strong> no se mezclan en reportes por empresa.
-                  Esta V1 prioriza alcance seguro por empresas permitidas.
+                  Los reportes operativos priorizan el alcance seguro por empresas permitidas.
                 </div>
                 <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-cyan-100">
                   Los estados financieros formales usan solo asientos registrados y se muestran

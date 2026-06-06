@@ -119,7 +119,7 @@ const TABS: Array<{
   {
     id: "movimientos",
     nombre: "Movimientos operativos",
-    descripcion: "Ingresos y egresos usados por Reportes V1",
+    descripcion: "Ingresos y egresos usados por reportes operativos",
   },
   {
     id: "catalogo",
@@ -1664,7 +1664,7 @@ export default function ContabilidadPage() {
     }
 
     if (!puedeAnularAsientoContableLocal(empresaId)) {
-      alert("Solo contador_revisor o admin global temporal puede anular asientos contables.");
+      alert("Solo contador_revisor o un administrador autorizado puede anular asientos contables.");
       return;
     }
 
@@ -1769,7 +1769,7 @@ export default function ContabilidadPage() {
     lineasAsiento.reduce((acc, linea) => acc + numero(linea.haber), 0)
   );
 
-  // Fallback temporal V1: movimientos operativos no son asientos formales V2.
+  // Los movimientos operativos se gestionan por separado de los asientos formales.
   const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(rolActual);
 
   const puedeGestionarGlobales = ["admin", "jefe"].includes(rolActual);
@@ -1791,7 +1791,7 @@ export default function ContabilidadPage() {
       <div className="mb-6 bg-white/5 border border-white/10 rounded-[2rem] p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.25em] text-cyan-300 font-black">
-            Alcance contable V2
+            Alcance contable formal
           </p>
           <p className="text-gray-400 text-sm mt-1">
             Catalogo, documentos en revision, periodos, asientos y balance trabajan por empresa.
@@ -1835,11 +1835,11 @@ export default function ContabilidadPage() {
       <>
         <div className="bg-cyan-500/10 border border-cyan-500/20 rounded-2xl p-5 mb-8">
           <h2 className="text-cyan-300 font-black text-sm uppercase">
-            Capa operativa
+            Movimientos operativos
           </h2>
           <p className="text-gray-400 text-sm mt-1">
-            Estos movimientos siguen alimentando Reportes Operativos V1. No se
-            mezclan con asientos contables V2 ni con balance de comprobacion.
+            Estos movimientos alimentan los reportes operativos. Se gestionan por
+            separado de los asientos contables formales y del balance de comprobacion.
           </p>
         </div>
 
@@ -3769,7 +3769,7 @@ export default function ContabilidadPage() {
     if (cargandoV2) {
       return (
         <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-10 text-center text-cyan-400">
-          Cargando datos contables V2...
+          Cargando datos de contabilidad formal...
         </section>
       );
     }
@@ -3829,7 +3829,7 @@ export default function ContabilidadPage() {
                   ? empresaFiltro === "Todas"
                     ? "Movimientos operativos de todas las empresas"
                     : `Movimientos operativos de ${nombreEmpresaFiltro}`
-                  : "Contabilidad formal V2 dentro del mismo modulo"}
+                  : "Contabilidad formal"}
               </p>
             </div>
 
