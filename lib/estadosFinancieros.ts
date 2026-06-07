@@ -6,6 +6,7 @@ export interface EstadosFinancierosParams {
   fecha_desde?: string;
   fecha_hasta?: string;
   moneda?: string;
+  periodo_id?: string | number;
 }
 
 export interface BalanceComprobacionFormalFila {
@@ -43,9 +44,43 @@ export interface EstadoResultadosSeccion {
 
 export interface PeriodoEstadoFinanciero {
   id: string | number;
+  empresa_id: number;
   anio: number;
   mes: number;
+  fecha_inicio: string;
+  fecha_fin: string;
   estado: string;
+  cerrado_at: string | null;
+}
+
+export interface LibroDiarioFila {
+  asiento_id: string | number;
+  empresa_id: number;
+  periodo_id: string | number;
+  fecha: string;
+  descripcion: string;
+  origen_modulo: string | null;
+  moneda: string;
+  cuenta_id: string | number;
+  codigo: string;
+  cuenta: string;
+  detalle: string | null;
+  debe: number;
+  haber: number;
+}
+
+export interface LibroMayorCuenta {
+  cuenta_id: string | number;
+  codigo: string;
+  nombre: string;
+  tipo: string;
+  subtipo: string;
+  naturaleza: string;
+  moneda: string;
+  total_debe: number;
+  total_haber: number;
+  saldo: number;
+  movimientos: Array<LibroDiarioFila & { saldo_acumulado: number }>;
 }
 
 export interface EstadosFinancierosFormales {
@@ -56,6 +91,9 @@ export interface EstadosFinancierosFormales {
     patrimonio: EstadoFinancieroSeccion[];
   };
   estado_resultados: EstadoResultadosSeccion[];
+  libro_diario: LibroDiarioFila[];
+  libro_mayor: LibroMayorCuenta[];
+  cuentas_sin_clasificar: BalanceComprobacionFormalFila[];
   periodos: PeriodoEstadoFinanciero[];
   preliminar: boolean;
   mensaje_preliminar: string;
@@ -66,13 +104,15 @@ interface AsientoFormalRow {
   empresa_id: number;
   periodo_id: string | number;
   fecha: string;
+  descripcion: string;
+  origen_modulo: string | null;
   estado: string;
   movimientos_contables_detalle?: DetalleFormalRow[];
-  periodos_contables?: { id: string | number; anio: number; mes: number; estado: string } | null;
 }
 
 interface DetalleFormalRow {
   cuenta_id: string | number;
+  descripcion: string | null;
   debe: number | null;
   haber: number | null;
   moneda: string | null;
@@ -167,6 +207,9 @@ export async function obtenerEstadosFinancierosFormales(
       balance_comprobacion: [],
       balance_general: { activos: [], pasivos: [], patrimonio: [] },
       estado_resultados: [],
+      libro_diario: [],
+      libro_mayor: [],
+      cuentas_sin_clasificar: [],
       periodos: [],
       preliminar: true,
       mensaje_preliminar: "No hay empresas permitidas para consultar estados financieros.",
@@ -176,42 +219,67 @@ export async function obtenerEstadosFinancierosFormales(
   const monedaFiltro = params.moneda?.trim().toUpperCase();
   const fechaDesde = validarFecha(params.fecha_desde, "fecha_desde");
   const fechaHasta = validarFecha(params.fecha_hasta, "fecha_hasta");
+  const periodoId =
+    params.periodo_id === undefined || params.periodo_id === null || params.periodo_id === ""
+      ? undefined
+      : String(params.periodo_id);
 
-  let query: any = supabase
-    .from("asientos_contables")
-    .select(
-      "id,empresa_id,periodo_id,fecha,estado,periodos_contables(id,anio,mes,estado),movimientos_contables_detalle(cuenta_id,debe,haber,moneda,catalogo_cuentas(codigo,nombre,tipo,subtipo,naturaleza))"
-    )
-    .in("empresa_id", empresas)
-    .eq("estado", "registrado");
+  const asientosFormales: AsientoFormalRow[] = [];
+  const tamanoPagina = 500;
+  let desde = 0;
 
-  if (fechaDesde) query = query.gte("fecha", fechaDesde);
-  if (fechaHasta) query = query.lte("fecha", fechaHasta);
+  while (true) {
+    let query: any = supabase
+      .from("asientos_contables")
+      .select(
+        "id,empresa_id,periodo_id,fecha,descripcion,origen_modulo,estado,movimientos_contables_detalle(cuenta_id,descripcion,debe,haber,moneda,catalogo_cuentas(codigo,nombre,tipo,subtipo,naturaleza))"
+      )
+      .in("empresa_id", empresas)
+      .eq("estado", "registrado");
 
-  const { data, error } = await query.order("fecha", { ascending: true });
-  if (error) {
-    throw new Error(`No se pudieron cargar asientos formales: ${error.message}`);
+    if (periodoId) query = query.eq("periodo_id", periodoId);
+    if (fechaDesde) query = query.gte("fecha", fechaDesde);
+    if (fechaHasta) query = query.lte("fecha", fechaHasta);
+
+    const { data, error } = await query
+      .order("fecha", { ascending: true })
+      .order("id", { ascending: true })
+      .range(desde, desde + tamanoPagina - 1);
+    if (error) {
+      throw new Error(`No se pudieron cargar asientos formales: ${error.message}`);
+    }
+
+    const pagina = (data || []) as AsientoFormalRow[];
+    asientosFormales.push(...pagina);
+    if (pagina.length < tamanoPagina) break;
+    desde += tamanoPagina;
   }
 
   const acumulado = new Map<string, BalanceComprobacionFormalFila>();
-  const periodos = new Map<string, PeriodoEstadoFinanciero>();
+  const libroDiario: LibroDiarioFila[] = [];
 
-  ((data || []) as AsientoFormalRow[]).forEach((asiento) => {
-    if (asiento.periodos_contables) {
-      periodos.set(String(asiento.periodos_contables.id), {
-        id: asiento.periodos_contables.id,
-        anio: asiento.periodos_contables.anio,
-        mes: asiento.periodos_contables.mes,
-        estado: asiento.periodos_contables.estado,
-      });
-    }
-
+  asientosFormales.forEach((asiento) => {
     (asiento.movimientos_contables_detalle || []).forEach((detalle) => {
       const moneda = normalizarMoneda(detalle.moneda);
       if (monedaFiltro && moneda !== monedaFiltro) return;
 
       const cuenta = detalle.catalogo_cuentas;
       const naturaleza = (cuenta?.naturaleza || "deudora").trim().toLowerCase();
+      libroDiario.push({
+        asiento_id: asiento.id,
+        empresa_id: asiento.empresa_id,
+        periodo_id: asiento.periodo_id,
+        fecha: asiento.fecha,
+        descripcion: asiento.descripcion,
+        origen_modulo: asiento.origen_modulo,
+        moneda,
+        cuenta_id: detalle.cuenta_id,
+        codigo: cuenta?.codigo || String(detalle.cuenta_id),
+        cuenta: cuenta?.nombre || "Cuenta sin nombre",
+        detalle: detalle.descripcion,
+        debe: numero(detalle.debe),
+        haber: numero(detalle.haber),
+      });
       const key = `${detalle.cuenta_id}:${moneda}`;
       const actual =
         acumulado.get(key) ||
@@ -243,6 +311,39 @@ export async function obtenerEstadosFinancierosFormales(
   const balanceComprobacion = Array.from(acumulado.values()).sort((a, b) =>
     a.moneda.localeCompare(b.moneda) || a.codigo.localeCompare(b.codigo)
   );
+  const libroMayor = balanceComprobacion.map((cuenta) => {
+    let saldoAcumulado = 0;
+    const movimientos = libroDiario
+      .filter(
+        (fila) =>
+          String(fila.cuenta_id) === String(cuenta.cuenta_id) &&
+          fila.moneda === cuenta.moneda
+      )
+      .map((fila) => {
+        saldoAcumulado = numero(
+          saldoAcumulado +
+            (cuenta.naturaleza === "acreedora"
+              ? fila.haber - fila.debe
+              : fila.debe - fila.haber)
+        );
+        return { ...fila, saldo_acumulado: saldoAcumulado };
+      });
+    const diferencia = numero(cuenta.debe - cuenta.haber);
+    return {
+      cuenta_id: cuenta.cuenta_id,
+      codigo: cuenta.codigo,
+      nombre: cuenta.nombre,
+      tipo: cuenta.tipo,
+      subtipo: cuenta.subtipo,
+      naturaleza: cuenta.naturaleza,
+      moneda: cuenta.moneda,
+      total_debe: cuenta.debe,
+      total_haber: cuenta.haber,
+      saldo:
+        cuenta.naturaleza === "acreedora" ? numero(-diferencia) : diferencia,
+      movimientos,
+    } satisfies LibroMayorCuenta;
+  });
 
   const porClasificacion = {
     activos: [] as BalanceComprobacionFormalFila[],
@@ -303,7 +404,23 @@ export async function obtenerEstadosFinancierosFormales(
     };
   });
 
-  const periodosLista = Array.from(periodos.values()).sort(
+  let periodosQuery: any = supabase
+    .from("periodos_contables")
+    .select("id,empresa_id,anio,mes,fecha_inicio,fecha_fin,estado,cerrado_at")
+    .in("empresa_id", empresas);
+  if (periodoId) periodosQuery = periodosQuery.eq("id", periodoId);
+  if (fechaDesde) periodosQuery = periodosQuery.gte("fecha_fin", fechaDesde);
+  if (fechaHasta) periodosQuery = periodosQuery.lte("fecha_inicio", fechaHasta);
+
+  const { data: periodosData, error: periodosError } = await periodosQuery.order(
+    "fecha_inicio",
+    { ascending: true }
+  );
+  if (periodosError) {
+    throw new Error(`No se pudieron cargar periodos contables: ${periodosError.message}`);
+  }
+
+  const periodosLista = ((periodosData || []) as PeriodoEstadoFinanciero[]).sort(
     (a, b) => a.anio - b.anio || a.mes - b.mes
   );
   const preliminar =
@@ -314,6 +431,11 @@ export async function obtenerEstadosFinancierosFormales(
     balance_comprobacion: balanceComprobacion,
     balance_general: { activos, pasivos, patrimonio },
     estado_resultados: estadoResultados,
+    libro_diario: libroDiario,
+    libro_mayor: libroMayor,
+    cuentas_sin_clasificar: balanceComprobacion.filter(
+      (cuenta) => clasificarCuenta(cuenta.tipo, cuenta.subtipo) === "sin_clasificar"
+    ),
     periodos: periodosLista,
     preliminar,
     mensaje_preliminar: preliminar

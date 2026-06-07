@@ -70,6 +70,9 @@ Mantener ambos casos como pruebas de regresion antes de aprobar el despliegue.
 - Un periodo con documentos o asientos pendientes bloquea el cierre. Preparar un
   periodo limpio independiente evita resultados ambiguos.
 - La contabilizacion documental no crea asiento automatico.
+- Estado de resultados y balance general dependen de `tipo` y `subtipo` del
+  catalogo. Las cuentas sin clasificacion suficiente se reportan como limitacion
+  y no se asignan de forma inventada.
 
 ### Bajo
 
@@ -202,6 +205,7 @@ Notas:
 | POS-14 | Admin explicito | `contabilidad_cierre_periodo` | Cerrar periodo limpio | RPC cambia a `cerrado`; queda auditoria | | Pendiente |
 | POS-15 | Auditor | `auditor_solo_lectura` | Consultar contabilidad y movimientos | Puede consultar empresa asignada sin controles de escritura | | Pendiente |
 | POS-16 | Usuarios asignados | Segun perfil | Abrir Reportes, Dashboard y Flujo Efectivo | Solo muestran empresas asignadas y datos coherentes | | Pendiente |
+| POS-17 | Auditor | `auditor_solo_lectura` | Consultar balance, diario, mayor, resultados, movimientos y cierres | Puede consultar sin escribir; solo asientos registrados en reportes formales | | Pendiente |
 
 ## 8. Checklist negativo de permisos y validaciones
 
@@ -235,6 +239,8 @@ intentar la operacion mediante una llamada autenticada sin service role.
 | NEG-23 | Admin cierre | Cerrar periodo con documento pendiente, observado o vencido | Previsualizacion identifica cada estado y RPC bloquea | | Pendiente |
 | NEG-24 | Admin cierre | Cerrar periodo con diferencia entre debe y haber | Previsualizacion muestra descuadre y RPC bloquea | | Pendiente |
 | NEG-25 | Admin cierre | Intentar cerrar periodo bloqueado o cerrado | UI no ofrece cierre y RPC rechaza por estado | | Pendiente |
+| NEG-26 | Usuario sin empresa | Consultar reportes contables | No obtiene empresas, asientos, movimientos ni periodos | | Pendiente |
+| NEG-27 | Usuario asignado | Consultar reportes formales con borradores/anulados existentes | Borradores y anulados no aparecen en balance, diario, mayor ni resultados | | Pendiente |
 
 ## 9. Casos de coherencia e idempotencia
 

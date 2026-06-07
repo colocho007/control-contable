@@ -6,6 +6,7 @@ export interface ReportesFinancierosParams {
   fecha_desde?: string;
   fecha_hasta?: string;
   moneda?: string;
+  periodo_id?: string | number;
   estado?: string;
   proveedor_id?: string | number;
   cliente_id?: string | number;
@@ -421,28 +422,41 @@ async function consultarMovimientos(params: ReportesFinancierosParams) {
   const empresas = resolverEmpresas(params);
   if (!empresas.length) return [] as MovimientoRow[];
 
-  let query: any = supabase
-    .from("movimientos")
-    .select(COLUMNAS_MOVIMIENTOS)
-    .in("empresa_id", empresas);
-
   const fechaDesde = validarFecha(params.fecha_desde, "fecha_desde");
   const fechaHasta = validarFecha(params.fecha_hasta, "fecha_hasta");
   const moneda = monedaPermitida(params);
   const estado = estadoPermitido(params);
+  const movimientos: MovimientoRow[] = [];
+  const tamanoPagina = 500;
+  let desde = 0;
 
-  if (fechaDesde) query = query.gte("fecha", fechaDesde);
-  if (fechaHasta) query = query.lte("fecha", fechaHasta);
-  if (moneda) query = query.eq("moneda", moneda);
-  if (estado) query = query.eq("estado", estado);
+  while (true) {
+    let query: any = supabase
+      .from("movimientos")
+      .select(COLUMNAS_MOVIMIENTOS)
+      .in("empresa_id", empresas);
 
-  const { data, error } = await query.order("fecha", { ascending: false });
+    if (fechaDesde) query = query.gte("fecha", fechaDesde);
+    if (fechaHasta) query = query.lte("fecha", fechaHasta);
+    if (moneda) query = query.eq("moneda", moneda);
+    if (estado) query = query.eq("estado", estado);
 
-  if (error) {
-    throw errorSupabase("No se pudieron cargar movimientos para reportes", error);
+    const { data, error } = await query
+      .order("fecha", { ascending: false })
+      .order("id", { ascending: false })
+      .range(desde, desde + tamanoPagina - 1);
+
+    if (error) {
+      throw errorSupabase("No se pudieron cargar movimientos para reportes", error);
+    }
+
+    const pagina = (data || []) as MovimientoRow[];
+    movimientos.push(...pagina);
+    if (pagina.length < tamanoPagina) break;
+    desde += tamanoPagina;
   }
 
-  return (data || []) as MovimientoRow[];
+  return movimientos;
 }
 
 export async function obtenerResumenFinanciero(

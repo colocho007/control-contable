@@ -19,7 +19,6 @@ import {
   descargarCsvSecciones,
   type SeccionExportacion,
 } from "../../lib/exportaciones";
-import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import {
   esEmpresaOperativaVisible,
   obtenerEmpresasOperativasDesdeIds,
@@ -42,6 +41,9 @@ import {
   type BalanceComprobacionFormalFila,
   type EstadoResultadosSeccion,
   type EstadosFinancierosFormales,
+  type LibroDiarioFila,
+  type LibroMayorCuenta,
+  type PeriodoEstadoFinanciero,
 } from "../../lib/estadosFinancieros";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
@@ -62,6 +64,7 @@ interface FiltrosReportes {
   fechaDesde: string;
   fechaHasta: string;
   moneda: string;
+  periodoId: string;
   estado: string;
   proveedorClienteId: string;
 }
@@ -91,6 +94,7 @@ const FILTROS_INICIALES: FiltrosReportes = {
   fechaDesde: inicioMesISO(),
   fechaHasta: fechaLocalISO(),
   moneda: "",
+  periodoId: "",
   estado: "",
   proveedorClienteId: "",
 };
@@ -163,6 +167,7 @@ export default function ReportesPage() {
   const [reporte, setReporte] = useState<ReporteMensual | null>(null);
   const [estadosFinancieros, setEstadosFinancieros] =
     useState<EstadosFinancierosFormales | null>(null);
+  const [periodosDisponibles, setPeriodosDisponibles] = useState<PeriodoEstadoFinanciero[]>([]);
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [cargandoReportes, setCargandoReportes] = useState(false);
   const [autorizado, setAutorizado] = useState(false);
@@ -195,10 +200,7 @@ export default function ReportesPage() {
           return;
         }
 
-        const idsPermitidos = await obtenerEmpresasPermitidas(
-          acceso.user!.id,
-          acceso.perfil?.rol || ""
-        );
+        const idsPermitidos = await obtenerEmpresasAsignadasReportes(acceso.user!.id);
         const empresasOperativas = await obtenerEmpresasOperativasDesdeIds(idsPermitidos);
         const idsOperativos = empresasOperativas.ids;
         const funciones = await listarFuncionesOperativasUsuario(acceso.user!.id, idsOperativos);
@@ -222,6 +224,7 @@ export default function ReportesPage() {
         setEmpresas(empresasOperativas.empresas);
         await Promise.all([
           cargarEmpresas(idsOperativos),
+          cargarPeriodosReportes(idsOperativos),
           cargarReporte(idsOperativos, FILTROS_INICIALES),
         ]);
       } catch (error) {
@@ -255,6 +258,47 @@ export default function ReportesPage() {
     }
 
     setEmpresas(((data || []) as Empresa[]).filter(esEmpresaOperativaVisible));
+  }
+
+  async function obtenerEmpresasAsignadasReportes(usuarioId: string) {
+    const { data, error } = await supabase
+      .from("usuario_empresas")
+      .select("empresa_id")
+      .eq("usuario_id", usuarioId)
+      .eq("activo", true);
+
+    if (error) {
+      throw new Error(`No se pudieron validar empresas asignadas para reportes: ${error.message}`);
+    }
+
+    return Array.from(
+      new Set(
+        (data || [])
+          .map((asignacion) => Number(asignacion.empresa_id))
+          .filter((empresaId) => Number.isInteger(empresaId) && empresaId > 0)
+      )
+    );
+  }
+
+  async function cargarPeriodosReportes(idsPermitidos: number[]) {
+    if (!idsPermitidos.length) {
+      setPeriodosDisponibles([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("periodos_contables")
+      .select("id,empresa_id,anio,mes,fecha_inicio,fecha_fin,estado,cerrado_at")
+      .in("empresa_id", idsPermitidos)
+      .order("fecha_inicio", { ascending: false });
+
+    if (error) {
+      console.error("Error cargando periodos para reportes:", error);
+      setPeriodosDisponibles([]);
+      return;
+    }
+
+    setPeriodosDisponibles((data || []) as PeriodoEstadoFinanciero[]);
   }
 
   async function cargarReporte(
@@ -302,6 +346,7 @@ export default function ReportesPage() {
         fecha_desde: filtrosAplicados.fechaDesde || undefined,
         fecha_hasta: filtrosAplicados.fechaHasta || undefined,
         moneda: filtrosAplicados.moneda || undefined,
+        periodo_id: filtrosAplicados.periodoId || undefined,
         estado: filtrosAplicados.estado || undefined,
         proveedor_id: filtrosAplicados.proveedorClienteId || undefined,
         cliente_id: filtrosAplicados.proveedorClienteId || undefined,
@@ -348,6 +393,31 @@ export default function ReportesPage() {
     () => new Map(empresas.map((empresa) => [Number(empresa.id), empresa.nombre])),
     [empresas]
   );
+  const periodosParaFiltro = useMemo(
+    () =>
+      periodosDisponibles.filter(
+        (periodo) =>
+          !filtros.empresaId || Number(periodo.empresa_id) === Number(filtros.empresaId)
+      ),
+    [filtros.empresaId, periodosDisponibles]
+  );
+
+  function seleccionarPeriodo(periodoId: string) {
+    const periodo = periodosDisponibles.find(
+      (opcion) => String(opcion.id) === String(periodoId)
+    );
+    setFiltros({
+      ...filtros,
+      periodoId,
+      ...(periodo
+        ? {
+            empresaId: String(periodo.empresa_id),
+            fechaDesde: periodo.fecha_inicio,
+            fechaHasta: periodo.fecha_fin,
+          }
+        : {}),
+    });
+  }
 
   const totalesFondos = useMemo(() => {
     const porMoneda = new Map<string, { moneda: string; disponible: number; comprometido: number }>();
@@ -374,6 +444,7 @@ export default function ReportesPage() {
       "Fecha desde": filtros.fechaDesde || "",
       "Fecha hasta": filtros.fechaHasta || "",
       Moneda: filtros.moneda || "Todas",
+      Periodo: filtros.periodoId || "Rango de fechas",
       Estado: filtros.estado || "Todos",
       "Proveedor/cliente ID": filtros.proveedorClienteId || "Todos",
     };
@@ -648,11 +719,57 @@ export default function ReportesPage() {
           filas: estadosFinancieros.estado_resultados.map((fila) => ({ ...fila })),
         },
         {
-          titulo: "Periodos contables",
+          titulo: "Libro diario formal",
           columnas: [
+            { clave: "fecha", titulo: "Fecha" },
+            { clave: "asiento_id", titulo: "Asiento" },
+            { clave: "descripcion", titulo: "Descripcion asiento" },
+            { clave: "codigo", titulo: "Codigo cuenta" },
+            { clave: "cuenta", titulo: "Cuenta" },
+            { clave: "detalle", titulo: "Detalle" },
+            { clave: "moneda", titulo: "Moneda" },
+            { clave: "debe", titulo: "Debe" },
+            { clave: "haber", titulo: "Haber" },
+          ],
+          filas: estadosFinancieros.libro_diario.map((fila) => ({ ...fila })),
+        },
+        {
+          titulo: "Libro mayor formal",
+          columnas: [
+            { clave: "codigo", titulo: "Codigo" },
+            { clave: "nombre", titulo: "Cuenta" },
+            { clave: "fecha", titulo: "Fecha" },
+            { clave: "asiento_id", titulo: "Asiento" },
+            { clave: "descripcion", titulo: "Descripcion" },
+            { clave: "moneda", titulo: "Moneda" },
+            { clave: "debe", titulo: "Debe" },
+            { clave: "haber", titulo: "Haber" },
+            { clave: "saldo_acumulado", titulo: "Saldo acumulado" },
+          ],
+          filas: estadosFinancieros.libro_mayor.flatMap((cuenta) =>
+            cuenta.movimientos.map((movimiento) => ({
+              codigo: cuenta.codigo,
+              nombre: cuenta.nombre,
+              fecha: movimiento.fecha,
+              asiento_id: movimiento.asiento_id,
+              descripcion: movimiento.detalle || movimiento.descripcion,
+              moneda: cuenta.moneda,
+              debe: movimiento.debe,
+              haber: movimiento.haber,
+              saldo_acumulado: movimiento.saldo_acumulado,
+            }))
+          ),
+        },
+        {
+          titulo: "Cierres y periodos contables",
+          columnas: [
+            { clave: "empresa_id", titulo: "Empresa ID" },
             { clave: "anio", titulo: "Anio" },
             { clave: "mes", titulo: "Mes" },
+            { clave: "fecha_inicio", titulo: "Fecha inicio" },
+            { clave: "fecha_fin", titulo: "Fecha fin" },
             { clave: "estado", titulo: "Estado" },
+            { clave: "cerrado_at", titulo: "Cerrado en" },
           ],
           filas: estadosFinancieros.periodos.map((fila) => ({ ...fila })),
         }
@@ -1006,7 +1123,7 @@ export default function ReportesPage() {
 
           <form
             onSubmit={aplicarFiltros}
-            className="mb-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5"
+            className="mb-8 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-9 gap-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5"
           >
             <label className="space-y-2">
               <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
@@ -1015,7 +1132,7 @@ export default function ReportesPage() {
               <select
                 value={filtros.empresaId}
                 onChange={(event) =>
-                  setFiltros({ ...filtros, empresaId: event.target.value })
+                  setFiltros({ ...filtros, empresaId: event.target.value, periodoId: "" })
                 }
                 className="w-full rounded-xl bg-slate-950 border border-white/10 px-3 py-3 text-sm text-white"
               >
@@ -1028,18 +1145,37 @@ export default function ReportesPage() {
               </select>
             </label>
 
+            <label className="space-y-2">
+              <span className="text-xs uppercase tracking-widest text-gray-500 font-bold">
+                Periodo contable
+              </span>
+              <select
+                value={filtros.periodoId}
+                onChange={(event) => seleccionarPeriodo(event.target.value)}
+                className="w-full rounded-xl bg-slate-950 border border-white/10 px-3 py-3 text-sm text-white"
+              >
+                <option value="">Rango de fechas</option>
+                {periodosParaFiltro.map((periodo) => (
+                  <option key={String(periodo.id)} value={String(periodo.id)}>
+                    {empresasPorId.get(Number(periodo.empresa_id)) || `Empresa ${periodo.empresa_id}`} |{" "}
+                    {periodo.mes}/{periodo.anio} - {textoLegible(periodo.estado)}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <InputFiltro
               label="Fecha desde"
               type="date"
               value={filtros.fechaDesde}
-              onChange={(value) => setFiltros({ ...filtros, fechaDesde: value })}
+              onChange={(value) => setFiltros({ ...filtros, fechaDesde: value, periodoId: "" })}
             />
 
             <InputFiltro
               label="Fecha hasta"
               type="date"
               value={filtros.fechaHasta}
-              onChange={(value) => setFiltros({ ...filtros, fechaHasta: value })}
+              onChange={(value) => setFiltros({ ...filtros, fechaHasta: value, periodoId: "" })}
             />
 
             <label className="space-y-2">
@@ -1201,6 +1337,25 @@ export default function ReportesPage() {
                   <h3 className="text-lg font-black mb-3">Balance de comprobacion</h3>
                   <TablaBalanceFormal filas={estadosFinancieros?.balance_comprobacion || []} />
                 </div>
+
+                <div>
+                  <h3 className="text-lg font-black mb-3">Libro diario</h3>
+                  <TablaLibroDiario filas={estadosFinancieros?.libro_diario || []} />
+                </div>
+
+                <div>
+                  <h3 className="text-lg font-black mb-3">Libro mayor</h3>
+                  <TablaLibroMayor cuentas={estadosFinancieros?.libro_mayor || []} />
+                </div>
+
+                {(estadosFinancieros?.cuentas_sin_clasificar.length || 0) > 0 && (
+                  <div className="rounded-2xl border border-yellow-400/20 bg-yellow-400/10 p-4 text-sm text-yellow-100">
+                    Hay {estadosFinancieros?.cuentas_sin_clasificar.length} cuentas sin una
+                    clasificacion suficiente en tipo/subtipo. Se incluyen en balance de
+                    comprobacion, diario y mayor, pero no se inventa su ubicacion en balance
+                    general ni estado de resultados.
+                  </div>
+                )}
 
                 <PanelPeriodosFormales estados={estadosFinancieros} />
               </div>
@@ -1759,6 +1914,90 @@ function TablaEstadoResultadosFormal({ filas }: { filas: EstadoResultadosSeccion
   );
 }
 
+function TablaLibroDiario({ filas }: { filas: LibroDiarioFila[] }) {
+  if (!filas.length) return <EmptyState texto="No hay asientos registrados para libro diario." />;
+
+  return (
+    <Tabla>
+      <thead>
+        <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+          <th className="pb-3">Fecha / asiento</th>
+          <th className="pb-3">Descripcion</th>
+          <th className="pb-3">Cuenta</th>
+          <th className="pb-3">Moneda</th>
+          <th className="pb-3">Debe</th>
+          <th className="pb-3">Haber</th>
+        </tr>
+      </thead>
+      <tbody>
+        {filas.map((fila, index) => (
+          <tr key={`${fila.asiento_id}-${fila.cuenta_id}-${index}`} className="border-t border-white/10">
+            <td className="py-3">
+              <p>{mostrarFecha(fila.fecha)}</p>
+              <p className="text-xs text-gray-500">{String(fila.asiento_id)}</p>
+            </td>
+            <td className="py-3">
+              <p>{fila.descripcion}</p>
+              <p className="text-xs text-gray-500">{fila.detalle || fila.origen_modulo || "-"}</p>
+            </td>
+            <td className="py-3">{fila.codigo} - {fila.cuenta}</td>
+            <td className="py-3 font-bold">{fila.moneda}</td>
+            <td className="py-3 text-green-300">{formatoMonto(fila.debe, fila.moneda)}</td>
+            <td className="py-3 text-red-300">{formatoMonto(fila.haber, fila.moneda)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </Tabla>
+  );
+}
+
+function TablaLibroMayor({ cuentas }: { cuentas: LibroMayorCuenta[] }) {
+  if (!cuentas.length) return <EmptyState texto="No hay cuentas con movimientos registrados para libro mayor." />;
+
+  return (
+    <div className="space-y-5">
+      {cuentas.map((cuenta) => (
+        <div key={`${cuenta.cuenta_id}-${cuenta.moneda}`} className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+          <div className="flex flex-wrap justify-between gap-3 mb-3">
+            <div>
+              <p className="font-black">{cuenta.codigo} - {cuenta.nombre}</p>
+              <p className="text-xs text-gray-500">{textoLegible(cuenta.tipo)} | {cuenta.moneda}</p>
+            </div>
+            <p className="text-sm text-cyan-200">
+              Saldo final: {formatoMonto(cuenta.saldo, cuenta.moneda)}
+            </p>
+          </div>
+          <Tabla>
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+                <th className="pb-3">Fecha</th>
+                <th className="pb-3">Asiento / detalle</th>
+                <th className="pb-3">Debe</th>
+                <th className="pb-3">Haber</th>
+                <th className="pb-3">Saldo acumulado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cuenta.movimientos.map((movimiento, index) => (
+                <tr key={`${movimiento.asiento_id}-${index}`} className="border-t border-white/10">
+                  <td className="py-3">{mostrarFecha(movimiento.fecha)}</td>
+                  <td className="py-3">
+                    <p>{movimiento.detalle || movimiento.descripcion}</p>
+                    <p className="text-xs text-gray-500">{String(movimiento.asiento_id)}</p>
+                  </td>
+                  <td className="py-3 text-green-300">{formatoMonto(movimiento.debe, cuenta.moneda)}</td>
+                  <td className="py-3 text-red-300">{formatoMonto(movimiento.haber, cuenta.moneda)}</td>
+                  <td className="py-3 text-cyan-200">{formatoMonto(movimiento.saldo_acumulado, cuenta.moneda)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Tabla>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PanelPeriodosFormales({
   estados,
 }: {
@@ -1771,24 +2010,32 @@ function PanelPeriodosFormales({
   }
 
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 mb-3">
-        Periodos incluidos
-      </h3>
-      <div className="flex flex-wrap gap-2">
-        {periodos.map((periodo) => (
-          <span
-            key={String(periodo.id)}
-            className={`inline-flex rounded-full border px-3 py-1 text-xs font-bold ${
-              periodo.estado === "cerrado"
-                ? "border-green-400/30 bg-green-400/10 text-green-200"
-                : "border-yellow-400/30 bg-yellow-400/10 text-yellow-200"
-            }`}
-          >
-            {periodo.mes}/{periodo.anio} - {textoLegible(periodo.estado)}
-          </span>
-        ))}
-      </div>
+    <div>
+      <h3 className="text-lg font-black mb-3">Cierres y periodos contables</h3>
+      <Tabla>
+        <thead>
+          <tr className="text-left text-xs uppercase tracking-widest text-gray-500">
+            <th className="pb-3">Periodo</th>
+            <th className="pb-3">Fechas</th>
+            <th className="pb-3">Estado</th>
+            <th className="pb-3">Cerrado en</th>
+          </tr>
+        </thead>
+        <tbody>
+          {periodos.map((periodo) => (
+            <tr key={String(periodo.id)} className="border-t border-white/10">
+              <td className="py-3 font-semibold">{periodo.mes}/{periodo.anio}</td>
+              <td className="py-3 text-gray-400">
+                {mostrarFecha(periodo.fecha_inicio)} a {mostrarFecha(periodo.fecha_fin)}
+              </td>
+              <td className="py-3"><EstadoPill estado={periodo.estado} /></td>
+              <td className="py-3 text-gray-400">
+                {periodo.cerrado_at ? new Date(periodo.cerrado_at).toLocaleString("es-GT") : "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Tabla>
     </div>
   );
 }
