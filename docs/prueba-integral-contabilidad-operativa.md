@@ -24,6 +24,22 @@ Reglas de ejecucion:
 - No cerrar el periodo principal hasta completar los demas casos. Para probar
   cierre, usar un segundo periodo limpio.
 
+### Trazabilidad del alcance
+
+| Bloque | Casos principales |
+|---|---|
+| Contabilidad formal | POS-02, POS-03, COH-07, COH-08 |
+| Asientos borrador/finalizacion/anulacion | POS-01 a POS-03, NEG-01, NEG-02, NEG-07, NEG-18, NEG-19, COH-01, COH-02, RSK-01 |
+| Documentos contables | POS-04, POS-05, POS-07, NEG-03, NEG-06, NEG-16, NEG-17, COH-03, COH-09 |
+| Distribuciones | POS-06, NEG-06, NEG-17 |
+| Cierre de periodos | POS-13, POS-14, NEG-05, NEG-11, NEG-15, NEG-22 |
+| Movimientos operativos | POS-08 a POS-10, NEG-08, NEG-09, NEG-20, NEG-21, COH-05, COH-06 |
+| Cheques/pagos | PRE-09, POS-11, NEG-10, COH-04, RSK-02 |
+| Impuestos/configuracion | POS-12, NEG-04, NEG-11, NEG-15 |
+| Auditor solo lectura | POS-15, NEG-06 a NEG-11 |
+| Usuario sin empresa | PRE-06, NEG-12, NEG-13 |
+| Reportes/dashboard/flujo efectivo | POS-16, COH-06 a COH-08 |
+
 Estados para completar la matriz:
 
 - `Pendiente`
@@ -149,8 +165,8 @@ Notas:
 - Contabilidad UI solo muestra anulacion de movimientos a
   `admin/supervisor/jefe`. Finanzas tambien permite `contador_revisor` o rol
   contador.
-- El pago de cheque debe probarse especialmente por la diferencia conocida entre
-  UI y RPC.
+- El pago de cheque debe probarse por UI y llamada autenticada para confirmar que
+  ambas capas exigen `pagador_cheque`.
 
 ## 6. Checklist previo
 
