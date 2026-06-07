@@ -1188,8 +1188,7 @@ begin
       raise exception 'La empresa no esta operativa para pagar cheques.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) not in ('admin', 'supervisor', 'jefe')
-      and not exists (
+    if not exists (
         select 1 from usuario_empresas ue
         where ue.usuario_id = v_usuario_id
           and ue.empresa_id = p_empresa_id
@@ -1199,8 +1198,7 @@ begin
       raise exception 'No tienes permiso para operar esta empresa.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) not in ('admin', 'supervisor', 'jefe')
-      and exists (
+    if exists (
         select 1 from usuario_funciones_operativas ufo
         where ufo.usuario_id = v_usuario_id
           and ufo.empresa_id = p_empresa_id
@@ -1278,7 +1276,9 @@ begin
         empresa,
         empresa_id,
         moneda,
-        fecha
+        fecha,
+        estado,
+        creado_por
       )
       values (
         'Egreso',
@@ -1300,7 +1300,9 @@ begin
         v_cheque.empresa,
         v_cheque.empresa_id,
         coalesce(v_cheque.moneda, 'GTQ'),
-        v_fecha_movimiento
+        v_fecha_movimiento,
+        'activo',
+        v_usuario_id
       )
       returning * into v_movimiento;
 

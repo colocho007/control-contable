@@ -1520,12 +1520,14 @@ async function ejecutarOperacion(
 async function anularMovimientos(
   empresaId: number,
   fechaDesde: string | null,
-  fechaHasta: string | null
+  fechaHasta: string | null,
+  userId: string
 ) {
   let query: any = supabase
     .from("movimientos")
     .update({
       estado: "anulado",
+      anulado_por: userId,
       anulado_at: new Date().toISOString(),
       motivo_anulacion: MOTIVO_REINICIO,
     })
@@ -1897,7 +1899,8 @@ export async function ejecutarReinicioControlado(
         anularMovimientos(
           previsualizacionParams.empresa_id,
           previsualizacionParams.fecha_desde || null,
-          previsualizacionParams.fecha_hasta || null
+          previsualizacionParams.fecha_hasta || null,
+          userId
         )
       )
     );

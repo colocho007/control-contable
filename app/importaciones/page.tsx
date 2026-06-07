@@ -1000,6 +1000,8 @@ monto_gtq: montoGtq,
           monto,
           moneda: normalizarMoneda(leerCampo(fila, ["Moneda", "moneda"])),
           fecha,
+          estado: "activo",
+          creado_por: userId,
           referencia:
             limpiarTexto(leerCampo(fila, ["Referencia", "referencia"])) || null,
         },
