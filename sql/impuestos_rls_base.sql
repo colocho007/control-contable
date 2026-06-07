@@ -8,8 +8,11 @@ BEGIN;
 --
 -- Patron aplicado, alineado con Planilla:
 -- * Usuario autenticado con perfil activo.
--- * Acceso a empresa por admin global o usuario_empresas activo.
--- * Escritura para admin, supervisor, jefe, auxiliar_contable o contador_revisor.
+-- * Acceso general por admin global o usuario_empresas activo.
+-- * impuestos_configuracion exige usuario_empresas activo y
+--   contabilidad_configuracion por empresa, incluso para admin.
+-- * Las demas tablas conservan temporalmente escritura para admin, supervisor,
+--   jefe, auxiliar_contable o contador_revisor.
 -- * auditor_solo_lectura puede leer por empresa, pero no insertar ni actualizar.
 -- * Borrado fisico bloqueado con policies FOR DELETE USING (false).
 -- * No se crean funciones SQL nuevas ni funciones propias de impuestos todavia.
@@ -73,15 +76,12 @@ USING (
     FROM public.perfiles p
     WHERE p.id = auth.uid()
       AND p.activo = true
-      AND (
-        lower(coalesce(p.rol, '')) = 'admin'
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_empresas ue
-          WHERE ue.usuario_id = auth.uid()
-            AND ue.empresa_id = impuestos_configuracion.empresa_id
-            AND ue.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_empresas ue
+        WHERE ue.usuario_id = auth.uid()
+          AND ue.empresa_id = impuestos_configuracion.empresa_id
+          AND ue.activo = true
       )
   )
 );
@@ -96,15 +96,12 @@ WITH CHECK (
     FROM public.perfiles p
     WHERE p.id = auth.uid()
       AND p.activo = true
-      AND (
-        lower(coalesce(p.rol, '')) = 'admin'
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_empresas ue
-          WHERE ue.usuario_id = auth.uid()
-            AND ue.empresa_id = impuestos_configuracion.empresa_id
-            AND ue.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_empresas ue
+        WHERE ue.usuario_id = auth.uid()
+          AND ue.empresa_id = impuestos_configuracion.empresa_id
+          AND ue.activo = true
       )
       AND NOT EXISTS (
         SELECT 1
@@ -114,16 +111,13 @@ WITH CHECK (
           AND ufo.funcion = 'auditor_solo_lectura'
           AND ufo.activo = true
       )
-      AND (
-        lower(coalesce(p.rol, '')) IN ('admin', 'supervisor', 'jefe')
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_funciones_operativas ufo
-          WHERE ufo.usuario_id = auth.uid()
-            AND ufo.empresa_id = impuestos_configuracion.empresa_id
-            AND ufo.funcion IN ('auxiliar_contable', 'contador_revisor')
-            AND ufo.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_funciones_operativas ufo
+        WHERE ufo.usuario_id = auth.uid()
+          AND ufo.empresa_id = impuestos_configuracion.empresa_id
+          AND ufo.funcion = 'contabilidad_configuracion'
+          AND ufo.activo = true
       )
   )
 );
@@ -138,15 +132,12 @@ USING (
     FROM public.perfiles p
     WHERE p.id = auth.uid()
       AND p.activo = true
-      AND (
-        lower(coalesce(p.rol, '')) = 'admin'
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_empresas ue
-          WHERE ue.usuario_id = auth.uid()
-            AND ue.empresa_id = impuestos_configuracion.empresa_id
-            AND ue.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_empresas ue
+        WHERE ue.usuario_id = auth.uid()
+          AND ue.empresa_id = impuestos_configuracion.empresa_id
+          AND ue.activo = true
       )
       AND NOT EXISTS (
         SELECT 1
@@ -156,16 +147,13 @@ USING (
           AND ufo.funcion = 'auditor_solo_lectura'
           AND ufo.activo = true
       )
-      AND (
-        lower(coalesce(p.rol, '')) IN ('admin', 'supervisor', 'jefe')
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_funciones_operativas ufo
-          WHERE ufo.usuario_id = auth.uid()
-            AND ufo.empresa_id = impuestos_configuracion.empresa_id
-            AND ufo.funcion IN ('auxiliar_contable', 'contador_revisor')
-            AND ufo.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_funciones_operativas ufo
+        WHERE ufo.usuario_id = auth.uid()
+          AND ufo.empresa_id = impuestos_configuracion.empresa_id
+          AND ufo.funcion = 'contabilidad_configuracion'
+          AND ufo.activo = true
       )
   )
 )
@@ -175,15 +163,12 @@ WITH CHECK (
     FROM public.perfiles p
     WHERE p.id = auth.uid()
       AND p.activo = true
-      AND (
-        lower(coalesce(p.rol, '')) = 'admin'
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_empresas ue
-          WHERE ue.usuario_id = auth.uid()
-            AND ue.empresa_id = impuestos_configuracion.empresa_id
-            AND ue.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_empresas ue
+        WHERE ue.usuario_id = auth.uid()
+          AND ue.empresa_id = impuestos_configuracion.empresa_id
+          AND ue.activo = true
       )
       AND NOT EXISTS (
         SELECT 1
@@ -193,16 +178,13 @@ WITH CHECK (
           AND ufo.funcion = 'auditor_solo_lectura'
           AND ufo.activo = true
       )
-      AND (
-        lower(coalesce(p.rol, '')) IN ('admin', 'supervisor', 'jefe')
-        OR EXISTS (
-          SELECT 1
-          FROM public.usuario_funciones_operativas ufo
-          WHERE ufo.usuario_id = auth.uid()
-            AND ufo.empresa_id = impuestos_configuracion.empresa_id
-            AND ufo.funcion IN ('auxiliar_contable', 'contador_revisor')
-            AND ufo.activo = true
-        )
+      AND EXISTS (
+        SELECT 1
+        FROM public.usuario_funciones_operativas ufo
+        WHERE ufo.usuario_id = auth.uid()
+          AND ufo.empresa_id = impuestos_configuracion.empresa_id
+          AND ufo.funcion = 'contabilidad_configuracion'
+          AND ufo.activo = true
       )
   )
 );

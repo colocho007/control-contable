@@ -148,6 +148,7 @@ const FUNCIONES_ESCRITURA: Array<"auxiliar_contable" | "contador_revisor"> = [
   "auxiliar_contable",
   "contador_revisor",
 ];
+const FUNCION_CONFIGURACION = ["contabilidad_configuracion"] as const;
 const MONEDAS: Moneda[] = ["GTQ", "USD"];
 const TIPOS_IMPUESTO = [
   "IVA",
@@ -597,6 +598,17 @@ export default function ImpuestosPage() {
     return empresasOperativasIds.some((empresaId) => puedeEscribir(empresaId));
   }
 
+  function puedeConfigurar(empresaId?: string | number | null) {
+    if (!empresaId || !userId || esAuditorSoloLectura(empresaId)) return false;
+    return tieneFuncionOperativaLocal(funcionesOperativas, userId, empresaId, [
+      ...FUNCION_CONFIGURACION,
+    ]);
+  }
+
+  function puedeConfigurarAlgunaEmpresa() {
+    return empresasOperativasIds.some((empresaId) => puedeConfigurar(empresaId));
+  }
+
   async function auditar(params: RegistrarAuditoriaEventoParams) {
     try {
       await registrarAuditoriaEvento(params);
@@ -620,8 +632,8 @@ export default function ImpuestosPage() {
 
     try {
       const empresaId = validarEmpresa(formConfiguracion.empresaId);
-      if (!puedeEscribir(empresaId)) {
-        setErrorCarga("No tienes funcion operativa para modificar Impuestos.");
+      if (!puedeConfigurar(empresaId)) {
+        setErrorCarga("No tienes la funcion contabilidad_configuracion para modificar la configuracion fiscal.");
         return;
       }
       if (!formConfiguracion.nombre.trim()) {
@@ -1129,6 +1141,8 @@ export default function ImpuestosPage() {
   }, [documentos]);
 
   const escrituraHabilitada = puedeEscribirAlgunaEmpresa();
+  const empresasConfigurables = empresas.filter((empresa) => puedeConfigurar(empresa.id));
+  const configuracionHabilitada = puedeConfigurarAlgunaEmpresa();
   const auditorSoloLectura = esAuditorSoloLectura();
 
   if (validandoAcceso) {
@@ -1206,11 +1220,11 @@ export default function ImpuestosPage() {
 
           {tab === "configuracion" && (
             <Panel titulo="Configuracion fiscal" subtitulo="Altas basicas de impuestos y retenciones.">
-              {escrituraHabilitada ? (
+              {configuracionHabilitada ? (
                 <FormularioConfiguracion
                   form={formConfiguracion}
                   setForm={setFormConfiguracion}
-                  empresas={empresas}
+                  empresas={empresasConfigurables}
                   procesando={procesando}
                   onGuardar={guardarConfiguracion}
                 />
