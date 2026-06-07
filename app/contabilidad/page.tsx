@@ -693,36 +693,25 @@ export default function ContabilidadPage() {
     return tieneFuncionContable(empresaId, ["auditor_solo_lectura"]);
   }
 
-  function esAdminGlobalTemporal() {
-    return rolActual === "admin";
-  }
-
-  function tieneFallbackRolContable(rolesPermitidos: string[]) {
-    // Transicion Control+: este fallback mantiene usuarios actuales mientras el admin
-    // termina de asignar funciones operativas reales por usuario y empresa.
-    return rolesPermitidos.includes(rolActual);
-  }
-
   function puedeAuxiliarContable(empresaId: string | number | null | undefined) {
     if (esAuditorSoloLecturaContable(empresaId)) return false;
-
-    return (
-      tieneFuncionContable(empresaId, ["auxiliar_contable", "contador_revisor"]) ||
-      tieneFallbackRolContable(["admin", "supervisor", "jefe", "contador", "auxiliar"])
-    );
+    return tieneFuncionContable(empresaId, ["auxiliar_contable", "contador_revisor"]);
   }
 
   function puedeRevisorContable(empresaId: string | number | null | undefined) {
     if (esAuditorSoloLecturaContable(empresaId)) return false;
 
-    return (
-      tieneFuncionContable(empresaId, ["contador_revisor"]) ||
-      tieneFallbackRolContable(["admin", "supervisor", "jefe", "contador"])
-    );
+    return tieneFuncionContable(empresaId, ["contador_revisor"]);
   }
 
   function puedeCrearAsientoManual(empresaId: string | number | null | undefined) {
     return puedeAuxiliarContable(empresaId);
+  }
+
+  function puedeCrearMovimientoOperativo(
+    empresaId: string | number | null | undefined
+  ) {
+    return Boolean(empresaId) && !esAuditorSoloLecturaContable(empresaId);
   }
 
   function puedeAdministrarCatalogoContable(
@@ -743,7 +732,7 @@ export default function ContabilidadPage() {
     empresaId: string | number | null | undefined
   ) {
     if (esAuditorSoloLecturaContable(empresaId)) return false;
-    return tieneFuncionContable(empresaId, ["contador_revisor"]) || esAdminGlobalTemporal();
+    return tieneFuncionContable(empresaId, ["contador_revisor"]);
   }
 
   function puedeFinalizarAsientoContableLocal(
@@ -788,6 +777,11 @@ export default function ContabilidadPage() {
       empresaId = validarEmpresaPermitida(form.empresaId, "crear movimientos");
     } catch (error) {
       mostrarMensaje(errorSeguro(error));
+      return;
+    }
+
+    if (!puedeCrearMovimientoOperativo(empresaId)) {
+      mostrarMensaje("El auditor de solo lectura no puede crear movimientos operativos.");
       return;
     }
 
@@ -869,11 +863,6 @@ export default function ContabilidadPage() {
   }
 
   async function anularMovimiento(id: number) {
-    if (!puedeAnularMovimiento) {
-      mostrarMensaje("No tienes permiso para anular movimientos.");
-      return;
-    }
-
     if (!userId) {
       mostrarMensaje("Sesion no valida.");
       return;
@@ -883,6 +872,11 @@ export default function ContabilidadPage() {
 
     if (!movimientoAnulado?.empresa_id) {
       mostrarMensaje("No se encontro un movimiento valido para anular.");
+      return;
+    }
+
+    if (!puedeAnularMovimientoOperativo(movimientoAnulado.empresa_id)) {
+      mostrarMensaje("No tienes permiso para anular movimientos.");
       return;
     }
 
@@ -1462,9 +1456,9 @@ export default function ContabilidadPage() {
 
     const confirmar =
       estado === "Contabilizado"
-        ? await solicitarConfirmacion(
+          ? await solicitarConfirmacion(
             "Confirmar contabilizacion",
-            "Se marcara como Contabilizado sin crear asiento automatico. Debe existir adjunto y quedara listo para distribucion contable futura."
+            "Se marcara como Contabilizado sin crear asiento automatico. Deben existir adjunto activo y distribucion contable valida y balanceada."
           )
         : true;
 
@@ -1939,7 +1933,7 @@ export default function ContabilidadPage() {
 
     try {
       setLoading(true);
-      await anularAsientoContable(asiento.id, motivo.trim());
+      await anularAsientoContable(asiento.id, empresaId, motivo.trim());
       await cargarAsientos(String(asiento.empresa_id));
       mostrarMensaje("Asiento anulado.", "exito");
     } catch (error) {
@@ -2061,7 +2055,14 @@ export default function ContabilidadPage() {
   );
 
   // Los movimientos operativos se gestionan por separado de los asientos formales.
-  const puedeAnularMovimiento = ["admin", "supervisor", "jefe"].includes(rolActual);
+  function puedeAnularMovimientoOperativo(
+    empresaId: string | number | null | undefined
+  ) {
+    return (
+      ["admin", "supervisor", "jefe"].includes(rolActual) &&
+      !esAuditorSoloLecturaContable(empresaId)
+    );
+  }
 
   const nombreEmpresaFiltro =
     empresaFiltro === "Todas"
@@ -2071,6 +2072,12 @@ export default function ContabilidadPage() {
 
   const cuentasParaMovimiento = catalogoCuentas.filter(
     (cuenta) => cuenta.activo && cuenta.permite_movimientos
+  );
+  const empresasMovimientoEscritura = listaEmpresas.filter((empresa) =>
+    puedeCrearMovimientoOperativo(empresa.id)
+  );
+  const empresasDocumentoEscritura = listaEmpresas.filter((empresa) =>
+    puedeAuxiliarContable(empresa.id)
   );
 
   function renderSelectorEmpresaV2() {
@@ -2183,6 +2190,7 @@ export default function ContabilidadPage() {
           />
         </div>
 
+        {empresasMovimientoEscritura.length > 0 && (
         <div className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8 mb-12">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <Plus className="text-cyan-500" /> Nuevo movimiento operativo
@@ -2248,7 +2256,7 @@ export default function ContabilidadPage() {
                 className="input-control"
               >
                 <option value="">Seleccionar empresa...</option>
-                {listaEmpresas.map((emp) => (
+                {empresasMovimientoEscritura.map((emp) => (
                   <option key={emp.id} value={String(emp.id)}>
                     {emp.nombre}
                   </option>
@@ -2274,6 +2282,7 @@ export default function ContabilidadPage() {
             {loading ? "Registrando..." : "Registrar movimiento"}
           </button>
         </div>
+        )}
 
         <div className="grid gap-4">
           {movimientosFiltrados.length === 0 && (
@@ -2328,7 +2337,7 @@ export default function ContabilidadPage() {
                   {money(mov.monto, mov.moneda)}
                 </span>
 
-                {puedeAnularMovimiento && (
+                {puedeAnularMovimientoOperativo(mov.empresa_id) && (
                   <button
                     onClick={() => anularMovimiento(mov.id)}
                     className="p-3 text-gray-600 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
@@ -2792,11 +2801,12 @@ export default function ContabilidadPage() {
           </h2>
           <p className="text-gray-400 text-sm mt-1">
             Esta cola no crea asientos automaticos. El documento solo puede
-            marcarse como Contabilizado si tiene adjuntos activos y luego queda
-            preparado para distribucion contable balanceada.
+            marcarse como Contabilizado si tiene adjuntos activos y una
+            distribucion contable valida y balanceada.
           </p>
         </section>
 
+        {empresasDocumentoEscritura.length > 0 && (
         <section className="bg-white/5 border border-white/10 rounded-[2.5rem] p-8">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
             <FileText className="text-cyan-400" /> Registrar documento o factura
@@ -2812,7 +2822,7 @@ export default function ContabilidadPage() {
                 className="input-control"
               >
                 <option value="">Seleccionar empresa...</option>
-                {listaEmpresas.map((empresa) => (
+                {empresasDocumentoEscritura.map((empresa) => (
                   <option key={empresa.id} value={String(empresa.id)}>
                     {empresa.nombre}
                   </option>
@@ -2994,6 +3004,7 @@ export default function ContabilidadPage() {
             Registrar como Pendiente
           </button>
         </section>
+        )}
 
         <section className="bg-[#0B1120] border border-white/10 rounded-[2.5rem] p-6">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-5">
@@ -3944,7 +3955,7 @@ export default function ContabilidadPage() {
             </div>
           </div>
 
-          {!esAuditorSoloLecturaContable(asientoForm.empresaId) && (
+          {puedeCrearAsientoManual(asientoForm.empresaId) && (
             <button
               onClick={crearAsientoManual}
               disabled={loading}

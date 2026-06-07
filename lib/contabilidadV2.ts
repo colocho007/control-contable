@@ -579,6 +579,28 @@ function obtenerIdempotencyKeyFinalizarAsiento(
   return nueva;
 }
 
+function obtenerIdempotencyKeyOperacion(
+  accion: string,
+  empresaId: number,
+  entidadId: string | number,
+  alcanceAdicional = ""
+) {
+  const storageKey = `${IDEMPOTENCY_PREFIX_ASIENTOS}:${accion}:${hashSimple(
+    `${empresaId}|${entidadId}|${alcanceAdicional}`
+  )}`;
+
+  if (typeof window === "undefined") {
+    return `${storageKey}:${generarUuidSeguro()}`;
+  }
+
+  const existente = window.localStorage.getItem(storageKey);
+  if (existente) return existente;
+
+  const nueva = `${storageKey}:${generarUuidSeguro()}`;
+  window.localStorage.setItem(storageKey, nueva);
+  return nueva;
+}
+
 function validarNaturaleza(naturaleza: string) {
   const normalizada = naturaleza.trim().toLowerCase();
   if (normalizada !== "deudora" && normalizada !== "acreedora") {
@@ -1686,49 +1708,6 @@ export async function inactivarImpuestoConfiguracion(
   return impuesto;
 }
 
-async function validarDistribucionDocumentoContableLista(
-  documento: DocumentoContableRevision
-) {
-  const lineas = await listarDistribucionDocumentoContable({
-    empresa_id: documento.empresa_id,
-    documento_contable_id: documento.id,
-  });
-
-  if (!lineas.length) {
-    throw new Error("Debe registrar una distribucion contable antes de contabilizar.");
-  }
-
-  await validarLineasDistribucionDocumento(
-    documento,
-    lineas.map((linea) => ({
-      cuenta_id: linea.cuenta_id,
-      descripcion: linea.descripcion,
-      debito: linea.debito,
-      credito: linea.credito,
-      moneda: linea.moneda,
-    }))
-  );
-}
-
-async function contarAdjuntosDocumentoContable(
-  documento: DocumentoContableRevision
-) {
-  const { count, error } = await supabase
-    .from("documentos_tramites")
-    .select("id", { count: "exact", head: true })
-    .eq("empresa_id", documento.empresa_id)
-    .eq("modulo", "contabilidad")
-    .eq("entidad_tipo", "documento_contable_revision")
-    .eq("entidad_id", documento.id)
-    .eq("estado", "activo");
-
-  if (error) {
-    throw errorSupabase("No se pudieron validar adjuntos del documento", error);
-  }
-
-  return count || 0;
-}
-
 export async function cambiarEstadoDocumentoContable(
   params: CambiarEstadoDocumentoContableParams
 ): Promise<DocumentoContableRevision> {
@@ -1763,12 +1742,33 @@ export async function cambiarEstadoDocumentoContable(
   }
 
   if (estadoNuevo === "Contabilizado") {
-    const adjuntos = await contarAdjuntosDocumentoContable(documentoActual);
-    if (adjuntos <= 0) {
-      throw new Error("Debe existir al menos un documento adjunto antes de contabilizar.");
+    const idempotencyKey = obtenerIdempotencyKeyOperacion(
+      "contabilizar_documento_contable",
+      empresaId,
+      params.id
+    );
+    const { data, error } = await supabase.rpc("contabilizar_documento_contable", {
+      p_documento_id: params.id,
+      p_empresa_id: empresaId,
+      p_contabilizado_por: userId,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    if (error) {
+      liberarIdempotencyKeyAsiento(idempotencyKey);
+      throw errorSupabase("No se pudo contabilizar el documento", error);
     }
 
-    await validarDistribucionDocumentoContableLista(documentoActual);
+    const resultado = data as
+      | { ok?: boolean; mensaje?: string; documento?: DocumentoContableRevision }
+      | null;
+    if (!resultado || resultado.ok === false || !resultado.documento) {
+      liberarIdempotencyKeyAsiento(idempotencyKey);
+      throw new Error(resultado?.mensaje || "No se pudo contabilizar el documento.");
+    }
+
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    return normalizarDocumentoRevision(resultado.documento);
   }
 
   if (["Observado", "Rechazado"].includes(estadoNuevo) && !observacion) {
@@ -1784,24 +1784,6 @@ export async function cambiarEstadoDocumentoContable(
     estadoNuevo === "Observado" ||
     estadoNuevo === "Rechazado"
       ? { revisado_por: userId, revisado_at: ahora }
-      : {}),
-    ...(estadoNuevo === "Contabilizado"
-      ? {
-          contabilizado_por: userId,
-          contabilizado_at: ahora,
-          revisado_por: documentoActual.revisado_por || userId,
-          revisado_at: documentoActual.revisado_at || ahora,
-          metadatos: {
-            ...(documentoActual.metadatos &&
-            typeof documentoActual.metadatos === "object" &&
-            !Array.isArray(documentoActual.metadatos)
-              ? documentoActual.metadatos
-              : {}),
-            preparado_para_distribucion_contable: true,
-            asiento_automatico_creado: false,
-            requiere_distribucion_balanceada: true,
-          },
-        }
       : {}),
   };
 
@@ -1822,10 +1804,7 @@ export async function cambiarEstadoDocumentoContable(
   await auditarSinBloquear({
     empresa_id: documento.empresa_id,
     modulo: "contabilidad",
-    accion:
-      estadoNuevo === "Contabilizado"
-        ? "marcar_documento_contabilizado"
-        : "cambiar_estado_documento_revision",
+    accion: "cambiar_estado_documento_revision",
     entidad_tipo: "documento_contable_revision",
     entidad_id: documento.id,
     estado_anterior: documentoActual.estado,
@@ -1833,7 +1812,7 @@ export async function cambiarEstadoDocumentoContable(
     motivo: observacion,
     descripcion: "Documento contable actualizado en flujo de revision",
     sensible: true,
-    visible_calendario: estadoNuevo !== "Contabilizado",
+    visible_calendario: true,
     metadatos: {
       numero_documento: documento.numero_documento,
       moneda: documento.moneda,
@@ -1959,6 +1938,7 @@ export async function corregirDocumentoContableRevision(
 
 export async function anularAsientoContable(
   id: string | number,
+  empresaIdValor: number,
   motivo: string
 ): Promise<AsientoContable> {
   if (id === "" || id === null || id === undefined) {
@@ -1966,69 +1946,37 @@ export async function anularAsientoContable(
   }
 
   const motivoAnulacion = requerirTexto(motivo, "motivo");
+  const empresaId = validarEmpresaId(empresaIdValor);
   const userId = await obtenerUsuarioIdActual();
-
-  const { data: asientoActual, error: asientoError } = await supabase
-    .from("asientos_contables")
-    .select(`${COLUMNAS_ASIENTO},periodos_contables(estado)`)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (asientoError) {
-    throw errorSupabase("No se pudo cargar el asiento contable", asientoError);
-  }
-
-  if (!asientoActual) {
-    throw new Error("No se encontro un asiento contable accesible con ese id.");
-  }
-
-  const asiento = asientoActual as AsientoContable & {
-    periodos_contables?: { estado?: string | null } | null;
-  };
-
-  if (asiento.periodos_contables?.estado && asiento.periodos_contables.estado !== "abierto") {
-    throw new Error("No se puede anular un asiento de un periodo cerrado o bloqueado.");
-  }
-
-  const { data, error } = await supabase
-    .from("asientos_contables")
-    .update({
-      estado: "anulado",
-      anulado_por: userId,
-      anulado_at: new Date().toISOString(),
-      motivo_anulacion: motivoAnulacion,
-      actualizado_at: new Date().toISOString(),
-    })
-    .eq("id", id)
-    .select(COLUMNAS_ASIENTO)
-    .single();
+  const idempotencyKey = obtenerIdempotencyKeyOperacion(
+    "anular_asiento_contable",
+    empresaId,
+    id,
+    motivoAnulacion
+  );
+  const { data, error } = await supabase.rpc("anular_asiento_contable", {
+    p_asiento_id: id,
+    p_empresa_id: empresaId,
+    p_motivo: motivoAnulacion,
+    p_anulado_por: userId,
+    p_idempotency_key: idempotencyKey,
+  });
 
   if (error) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
     throw errorSupabase("No se pudo anular el asiento contable", error);
   }
 
-  const asientoAnulado = normalizarAsiento(data);
+  const resultado = data as
+    | { ok?: boolean; mensaje?: string; asiento?: AsientoContable }
+    | null;
+  if (!resultado || resultado.ok === false || !resultado.asiento) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    throw new Error(resultado?.mensaje || "No se pudo anular el asiento contable.");
+  }
 
-  await auditarSinBloquear({
-    empresa_id: asientoAnulado.empresa_id,
-    modulo: "contabilidad",
-    accion: "anular_asiento_contable",
-    entidad_tipo: "asiento_contable",
-    entidad_id: asientoAnulado.id,
-    estado_anterior: asiento.estado,
-    estado_nuevo: "anulado",
-    motivo: motivoAnulacion,
-    descripcion: "Asiento contable anulado",
-    sensible: true,
-    metadatos: {
-      fecha: asientoAnulado.fecha,
-      periodo_id: asientoAnulado.periodo_id,
-      total_debe: asientoAnulado.total_debe,
-      total_haber: asientoAnulado.total_haber,
-    },
-  });
-
-  return asientoAnulado;
+  liberarIdempotencyKeyAsiento(idempotencyKey);
+  return normalizarAsiento(resultado.asiento);
 }
 
 export async function finalizarAsientoContable(
@@ -2360,61 +2308,35 @@ export async function cerrarPeriodoContable(
   }
 
   const userId = await obtenerUsuarioIdActual();
-  const ahora = new Date().toISOString();
-  const metadatosAnteriores =
-    previsualizacion.periodo.metadatos &&
-    typeof previsualizacion.periodo.metadatos === "object" &&
-    !Array.isArray(previsualizacion.periodo.metadatos)
-      ? (previsualizacion.periodo.metadatos as Record<string, ValorJsonAuditoria>)
-      : {};
-  const resumenCierre = {
-    ...(serializarResumenCierre(previsualizacion.resumen) as Record<string, ValorJsonAuditoria>),
-    advertencias: serializarHallazgos(previsualizacion.advertencias),
-    observaciones: texto(params.observaciones),
-    cerrado_at: ahora,
-    cerrado_por: userId,
-    asiento_automatico_creado: false,
-  };
-
-  const { data, error } = await supabase
-    .from("periodos_contables")
-    .update({
-      estado: "cerrado",
-      cerrado_por: userId,
-      cerrado_at: ahora,
-      actualizado_at: ahora,
-      metadatos: {
-        ...metadatosAnteriores,
-        resumen_cierre: resumenCierre,
-      },
-    })
-    .eq("id", previsualizacion.periodo.id)
-    .eq("empresa_id", empresaId)
-    .neq("estado", "cerrado")
-    .select(COLUMNAS_PERIODO)
-    .single();
+  const idempotencyKey = obtenerIdempotencyKeyOperacion(
+    "cerrar_periodo_contable",
+    empresaId,
+    previsualizacion.periodo.id,
+    texto(params.observaciones) || ""
+  );
+  const { data, error } = await supabase.rpc("cerrar_periodo_contable", {
+    p_periodo_id: previsualizacion.periodo.id,
+    p_empresa_id: empresaId,
+    p_observaciones: texto(params.observaciones),
+    p_cerrado_por: userId,
+    p_idempotency_key: idempotencyKey,
+  });
 
   if (error) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
     throw errorSupabase("No se pudo cerrar el periodo contable", error);
   }
 
-  const periodoCerrado = normalizarPeriodo(data);
+  const resultado = data as
+    | { ok?: boolean; mensaje?: string; periodo?: PeriodoContable }
+    | null;
+  if (!resultado || resultado.ok === false || !resultado.periodo) {
+    liberarIdempotencyKeyAsiento(idempotencyKey);
+    throw new Error(resultado?.mensaje || "No se pudo cerrar el periodo contable.");
+  }
 
-  await auditarSinBloquear({
-    empresa_id: empresaId,
-    modulo: "contabilidad",
-    accion: "cerrar_periodo_contable",
-    entidad_tipo: "periodo_contable",
-    entidad_id: periodoCerrado.id,
-    estado_anterior: previsualizacion.periodo.estado,
-    estado_nuevo: periodoCerrado.estado,
-    motivo: texto(params.observaciones),
-    descripcion: "Periodo contable cerrado",
-    sensible: true,
-    metadatos: resumenCierre,
-  });
-
-  return periodoCerrado;
+  liberarIdempotencyKeyAsiento(idempotencyKey);
+  return normalizarPeriodo(resultado.periodo);
 }
 
 export async function calcularBalanceComprobacion(

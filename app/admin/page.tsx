@@ -813,6 +813,12 @@ export default function AdminPage() {
       if (funcionInvalida) {
         throw new Error(`Funcion operativa no valida: ${funcionInvalida}`);
       }
+
+      if (funciones.includes("auditor_solo_lectura") && funciones.length > 1) {
+        throw new Error(
+          "auditor_solo_lectura no puede combinarse con funciones operativas de escritura en la misma empresa."
+        );
+      }
     }
   }
 

@@ -1145,6 +1145,17 @@ export default function ImpuestosPage() {
   const configuracionHabilitada = puedeConfigurarAlgunaEmpresa();
   const auditorSoloLectura = esAuditorSoloLectura();
 
+  useEffect(() => {
+    if (!empresasConfigurables.length) return;
+    if (empresasConfigurables.some((empresa) => String(empresa.id) === formConfiguracion.empresaId)) {
+      return;
+    }
+    setFormConfiguracion((actual) => ({
+      ...actual,
+      empresaId: String(empresasConfigurables[0].id),
+    }));
+  }, [empresas, funcionesOperativas, formConfiguracion.empresaId, userId]);
+
   if (validandoAcceso) {
     return <EstadoCentro>Validando acceso a Impuestos...</EstadoCentro>;
   }

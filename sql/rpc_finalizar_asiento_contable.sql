@@ -127,8 +127,7 @@ begin
       raise exception 'La empresa no esta operativa para finalizar asientos.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) <> 'admin'
-      and not exists (
+    if not exists (
         select 1
         from usuario_empresas ue
         where ue.usuario_id = v_usuario_id
@@ -151,8 +150,7 @@ begin
       raise exception 'El auditor de solo lectura no puede finalizar asientos contables.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) <> 'admin'
-      and not exists (
+    if not exists (
         select 1
         from usuario_funciones_operativas ufo
         where ufo.usuario_id = v_usuario_id
@@ -335,4 +333,5 @@ begin
 end;
 $$;
 
+revoke all on function public.finalizar_asiento_contable(uuid, bigint, uuid, text) from public, anon;
 grant execute on function public.finalizar_asiento_contable(uuid, bigint, uuid, text) to authenticated;

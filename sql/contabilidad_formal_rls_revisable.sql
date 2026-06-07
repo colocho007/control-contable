@@ -2,16 +2,17 @@ BEGIN;
 
 -- RLS formal revisable para Contabilidad.
 -- No crea ni modifica datos contables, no ejecuta RPCs y no cambia calculos.
--- registrar_asiento_completo y finalizar_asiento_contable son SECURITY DEFINER
--- y conservan sus validaciones internas de sesion, empresa, funcion y estado.
+-- Las transiciones finales usan RPCs SECURITY DEFINER revisables:
+-- registrar_asiento_completo, finalizar_asiento_contable, anular_asiento_contable,
+-- cerrar_periodo_contable y contabilizar_documento_contable.
 --
 -- Modelo transitorio:
 -- * SELECT por empresa permitida; catalogo global visible a perfiles activos.
 -- * auditor_solo_lectura solo consulta.
 -- * auxiliar_contable prepara borradores, documentos y distribuciones.
--- * contador_revisor registra, finaliza, anula y revisa.
--- * admin, jefe y supervisor conservan fallback temporal para no romper flujos.
--- * Se preparan las funciones operativas futuras:
+-- * contador_revisor revisa borradores; finalizar, anular y contabilizar usan RPCs.
+-- * Las escrituras formales exigen funciones operativas por empresa, sin fallback por rol.
+-- * Se usan las funciones operativas:
 --   contabilidad_catalogo_admin, contabilidad_configuracion y
 --   contabilidad_cierre_periodo.
 -- * DELETE fisico queda bloqueado.
@@ -62,6 +63,7 @@ BEGIN
         'contabilidad_periodos_insert',
         'contabilidad_periodos_update_auxiliar',
         'contabilidad_periodos_update_cierre',
+        'contabilidad_periodos_update_final_bloqueado',
         'contabilidad_periodos_delete_bloqueado',
         'contabilidad_asientos_select',
         'contabilidad_asientos_insert_borrador',
@@ -257,7 +259,7 @@ WITH CHECK (
   OR public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contabilidad_catalogo_admin'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -286,7 +288,7 @@ USING (
   OR public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contabilidad_catalogo_admin'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 )
 WITH CHECK (
@@ -310,7 +312,7 @@ WITH CHECK (
   OR public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contabilidad_catalogo_admin'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -324,6 +326,7 @@ DROP POLICY IF EXISTS "contabilidad_periodos_select" ON public.periodos_contable
 DROP POLICY IF EXISTS "contabilidad_periodos_insert" ON public.periodos_contables;
 DROP POLICY IF EXISTS "contabilidad_periodos_update_auxiliar" ON public.periodos_contables;
 DROP POLICY IF EXISTS "contabilidad_periodos_update_cierre" ON public.periodos_contables;
+DROP POLICY IF EXISTS "contabilidad_periodos_update_final_bloqueado" ON public.periodos_contables;
 DROP POLICY IF EXISTS "contabilidad_periodos_delete_bloqueado" ON public.periodos_contables;
 
 CREATE POLICY "contabilidad_periodos_select"
@@ -341,7 +344,7 @@ WITH CHECK (
   AND public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor', 'contabilidad_cierre_periodo'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -349,43 +352,16 @@ CREATE POLICY "contabilidad_periodos_update_auxiliar"
 ON public.periodos_contables
 FOR UPDATE
 TO authenticated
-USING (
-  estado = 'abierto'
-  AND public.contabilidad_autorizado(
-    empresa_id,
-    ARRAY['auxiliar_contable'],
-    ARRAY[]::text[]
-  )
-)
-WITH CHECK (
-  estado = 'abierto'
-  AND cerrado_por IS NULL
-  AND cerrado_at IS NULL
-  AND public.contabilidad_autorizado(
-    empresa_id,
-    ARRAY['auxiliar_contable'],
-    ARRAY[]::text[]
-  )
-);
+USING (false)
+WITH CHECK (false);
 
-CREATE POLICY "contabilidad_periodos_update_cierre"
+-- El cierre final solo puede ejecutarse mediante cerrar_periodo_contable.
+CREATE POLICY "contabilidad_periodos_update_final_bloqueado"
 ON public.periodos_contables
 FOR UPDATE
 TO authenticated
-USING (
-  public.contabilidad_autorizado(
-    empresa_id,
-    ARRAY['contador_revisor', 'contabilidad_cierre_periodo'],
-    ARRAY['admin', 'jefe', 'supervisor']
-  )
-)
-WITH CHECK (
-  public.contabilidad_autorizado(
-    empresa_id,
-    ARRAY['contador_revisor', 'contabilidad_cierre_periodo'],
-    ARRAY['admin', 'jefe', 'supervisor']
-  )
-);
+USING (false)
+WITH CHECK (false);
 
 CREATE POLICY "contabilidad_periodos_delete_bloqueado"
 ON public.periodos_contables
@@ -414,7 +390,7 @@ WITH CHECK (
   AND public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -447,21 +423,25 @@ ON public.asientos_contables
 FOR UPDATE
 TO authenticated
 USING (
-  estado IN ('borrador', 'requiere_revision', 'registrado')
+  estado IN ('borrador', 'requiere_revision')
   AND
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 )
 WITH CHECK (
-  estado IN ('borrador', 'requiere_revision', 'registrado', 'anulado')
+  -- registrado y anulado son transiciones exclusivas de RPCs SECURITY DEFINER.
+  estado IN ('borrador', 'requiere_revision')
+  AND anulado_por IS NULL
+  AND anulado_at IS NULL
+  AND motivo_anulacion IS NULL
   AND
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -503,7 +483,7 @@ WITH CHECK (
       AND public.contabilidad_autorizado(
         a.empresa_id,
         ARRAY['auxiliar_contable', 'contador_revisor'],
-        ARRAY['admin', 'jefe', 'supervisor']
+        ARRAY[]::text[]
       )
   )
 );
@@ -552,7 +532,7 @@ USING (
       AND public.contabilidad_autorizado(
         a.empresa_id,
         ARRAY['contador_revisor'],
-        ARRAY['admin', 'jefe', 'supervisor']
+        ARRAY[]::text[]
       )
   )
 )
@@ -565,7 +545,7 @@ WITH CHECK (
       AND public.contabilidad_autorizado(
         a.empresa_id,
         ARRAY['contador_revisor'],
-        ARRAY['admin', 'jefe', 'supervisor']
+        ARRAY[]::text[]
       )
   )
 );
@@ -597,7 +577,7 @@ WITH CHECK (
   AND public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -634,16 +614,19 @@ USING (
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 )
 WITH CHECK (
-  estado IN ('Pendiente', 'En revision', 'Observado', 'Contabilizado', 'Rechazado', 'Vencido')
+  -- Contabilizado es una transicion exclusiva de contabilizar_documento_contable.
+  estado IN ('Pendiente', 'En revision', 'Observado', 'Rechazado', 'Vencido')
+  AND contabilizado_por IS NULL
+  AND contabilizado_at IS NULL
   AND
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
 );
 
@@ -672,7 +655,7 @@ WITH CHECK (
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
   AND EXISTS (
     SELECT 1
@@ -691,7 +674,7 @@ USING (
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
   AND EXISTS (
     SELECT 1
@@ -705,7 +688,7 @@ WITH CHECK (
   public.contabilidad_autorizado(
     empresa_id,
     ARRAY['auxiliar_contable', 'contador_revisor'],
-    ARRAY['admin', 'jefe', 'supervisor']
+    ARRAY[]::text[]
   )
   AND EXISTS (
     SELECT 1

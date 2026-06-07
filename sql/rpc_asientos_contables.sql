@@ -181,8 +181,7 @@ begin
       raise exception 'La empresa no esta operativa para registrar asientos.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) <> 'admin'
-      and not exists (
+    if not exists (
         select 1
         from usuario_empresas ue
         where ue.usuario_id = v_usuario_id
@@ -211,8 +210,7 @@ begin
       raise exception 'El auditor de solo lectura no puede crear ni registrar asientos contables.';
     end if;
 
-    if lower(coalesce(v_perfil.rol, '')) <> 'admin'
-      and not exists (
+    if not exists (
         select 1
         from usuario_funciones_operativas ufo
         where ufo.usuario_id = v_usuario_id
@@ -225,7 +223,6 @@ begin
     end if;
 
     if v_estado_asiento = 'registrado'
-      and lower(coalesce(v_perfil.rol, '')) <> 'admin'
       and not exists (
         select 1
         from usuario_funciones_operativas ufo
@@ -482,4 +479,5 @@ begin
 end;
 $$;
 
+revoke all on function public.registrar_asiento_completo(bigint, uuid, date, text, text, text, jsonb, uuid, text) from public, anon;
 grant execute on function public.registrar_asiento_completo(bigint, uuid, date, text, text, text, jsonb, uuid, text) to authenticated;
