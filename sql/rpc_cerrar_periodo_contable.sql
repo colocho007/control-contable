@@ -21,9 +21,15 @@ declare
   v_idempotency idempotency_keys_operativas%rowtype;
   v_idempotency_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
   v_documentos_pendientes integer := 0;
-  v_asientos_pendientes integer := 0;
+  v_documentos_observados integer := 0;
+  v_documentos_vencidos integer := 0;
+  v_asientos_borrador integer := 0;
+  v_asientos_requiere_revision integer := 0;
   v_asientos_descuadrados integer := 0;
   v_asientos_moneda_mezclada integer := 0;
+  v_total_debe numeric := 0;
+  v_total_haber numeric := 0;
+  v_diferencia numeric := 0;
   v_resultado jsonb;
 begin
   if v_usuario_id is null or v_usuario_id <> p_cerrado_por then
@@ -32,6 +38,29 @@ begin
   select * into v_perfil from perfiles where id = v_usuario_id and activo = true;
   if not found then
     return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'usuario_inactivo', 'mensaje', 'Usuario no activo para cerrar periodos.');
+  end if;
+
+  if not exists (
+    select 1 from usuario_empresas ue
+    where ue.usuario_id = v_usuario_id and ue.empresa_id = p_empresa_id and ue.activo = true
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'empresa_no_asignada', 'mensaje', 'No tienes asignacion activa para operar esta empresa.');
+  end if;
+
+  if exists (
+    select 1 from usuario_funciones_operativas ufo
+    where ufo.usuario_id = v_usuario_id and ufo.empresa_id = p_empresa_id
+      and ufo.funcion = 'auditor_solo_lectura' and ufo.activo = true
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'auditor_solo_lectura', 'mensaje', 'El auditor de solo lectura no puede cerrar periodos contables.');
+  end if;
+
+  if not exists (
+    select 1 from usuario_funciones_operativas ufo
+    where ufo.usuario_id = v_usuario_id and ufo.empresa_id = p_empresa_id
+      and ufo.funcion = 'contabilidad_cierre_periodo' and ufo.activo = true
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'funcion_cierre_requerida', 'mensaje', 'Se requiere la funcion contabilidad_cierre_periodo.');
   end if;
 
   if v_idempotency_key is not null then
@@ -61,34 +90,26 @@ begin
   end if;
 
   begin
-    if not exists (
-      select 1 from usuario_empresas ue
-      where ue.usuario_id = v_usuario_id and ue.empresa_id = p_empresa_id and ue.activo = true
-    ) then raise exception 'No tienes asignacion activa para operar esta empresa.'; end if;
-    if exists (
-      select 1 from usuario_funciones_operativas ufo
-      where ufo.usuario_id = v_usuario_id and ufo.empresa_id = p_empresa_id
-        and ufo.funcion = 'auditor_solo_lectura' and ufo.activo = true
-    ) then raise exception 'El auditor de solo lectura no puede cerrar periodos contables.'; end if;
-    if not exists (
-      select 1 from usuario_funciones_operativas ufo
-      where ufo.usuario_id = v_usuario_id and ufo.empresa_id = p_empresa_id
-        and ufo.funcion = 'contabilidad_cierre_periodo' and ufo.activo = true
-    ) then raise exception 'Se requiere la funcion contabilidad_cierre_periodo.'; end if;
-
     select * into v_periodo from periodos_contables
     where id = p_periodo_id and empresa_id = p_empresa_id for update;
     if not found or lower(coalesce(v_periodo.estado, '')) <> 'abierto' then
       raise exception 'El periodo no esta abierto para cierre.';
     end if;
 
-    select count(*) into v_documentos_pendientes
+    select
+      count(*) filter (where estado in ('Pendiente', 'En revision')),
+      count(*) filter (where estado = 'Observado'),
+      count(*) filter (where estado = 'Vencido')
+    into v_documentos_pendientes, v_documentos_observados, v_documentos_vencidos
     from documentos_contables_revision
     where empresa_id = p_empresa_id
       and estado in ('Pendiente', 'En revision', 'Observado', 'Vencido')
       and fecha_documento between v_periodo.fecha_inicio and v_periodo.fecha_fin;
 
-    select count(*) into v_asientos_pendientes
+    select
+      count(*) filter (where lower(coalesce(estado, '')) = 'borrador'),
+      count(*) filter (where lower(coalesce(estado, '')) = 'requiere_revision')
+    into v_asientos_borrador, v_asientos_requiere_revision
     from asientos_contables
     where empresa_id = p_empresa_id and periodo_id = p_periodo_id
       and lower(coalesce(estado, '')) in ('borrador', 'requiere_revision');
@@ -118,19 +139,37 @@ begin
           and upper(trim(coalesce(d.moneda, ''))) <> upper(trim(coalesce(a.moneda_base, '')))
       );
 
-    if v_documentos_pendientes > 0 or v_asientos_pendientes > 0
+    select
+      round(coalesce(sum(total_debe), 0), 2),
+      round(coalesce(sum(total_haber), 0), 2)
+    into v_total_debe, v_total_haber
+    from asientos_contables
+    where empresa_id = p_empresa_id
+      and periodo_id = p_periodo_id
+      and lower(coalesce(estado, '')) = 'registrado';
+
+    v_diferencia := round(v_total_debe - v_total_haber, 2);
+
+    if v_documentos_pendientes > 0 or v_documentos_observados > 0 or v_documentos_vencidos > 0
+      or v_asientos_borrador > 0 or v_asientos_requiere_revision > 0
       or v_asientos_descuadrados > 0 or v_asientos_moneda_mezclada > 0
+      or abs(v_diferencia) > 0.005
     then
-      raise exception 'El periodo tiene bloqueos: documentos pendientes %, asientos pendientes %, asientos descuadrados %, moneda mezclada %.',
-        v_documentos_pendientes, v_asientos_pendientes, v_asientos_descuadrados, v_asientos_moneda_mezclada;
+      raise exception 'El periodo tiene bloqueos: documentos pendientes %, observados %, vencidos %, asientos borrador %, requiere revision %, descuadrados %, moneda mezclada %, diferencia %.',
+        v_documentos_pendientes, v_documentos_observados, v_documentos_vencidos,
+        v_asientos_borrador, v_asientos_requiere_revision, v_asientos_descuadrados,
+        v_asientos_moneda_mezclada, v_diferencia;
     end if;
 
     update periodos_contables
     set estado = 'cerrado', cerrado_por = p_cerrado_por, cerrado_at = now(), actualizado_at = now(),
         metadatos = coalesce(metadatos, '{}'::jsonb) || jsonb_build_object(
           'cerrado_por_rpc', true, 'observaciones_cierre', nullif(trim(coalesce(p_observaciones, '')), ''),
-          'documentos_pendientes', v_documentos_pendientes, 'asientos_pendientes', v_asientos_pendientes,
+          'documentos_pendientes', v_documentos_pendientes, 'documentos_observados', v_documentos_observados,
+          'documentos_vencidos', v_documentos_vencidos, 'asientos_borrador', v_asientos_borrador,
+          'asientos_requiere_revision', v_asientos_requiere_revision,
           'asientos_descuadrados', v_asientos_descuadrados, 'asientos_moneda_mezclada', v_asientos_moneda_mezclada,
+          'total_debe', v_total_debe, 'total_haber', v_total_haber, 'diferencia', v_diferencia,
           'asiento_automatico_creado', false
         )
     where id = p_periodo_id and empresa_id = p_empresa_id and estado = 'abierto'
@@ -144,7 +183,13 @@ begin
       p_cerrado_por, v_perfil.nombre, p_empresa_id, 'contabilidad', 'cerrar_periodo_contable',
       'periodo_contable', v_periodo.id::text, 'abierto', 'cerrado',
       nullif(trim(coalesce(p_observaciones, '')), ''), 'Periodo contable cerrado por RPC transaccional.',
-      true, true, jsonb_build_object('idempotency_key', v_idempotency_key, 'asiento_automatico_creado', false),
+      true, true, jsonb_build_object(
+        'idempotency_key', v_idempotency_key,
+        'total_debe', v_total_debe,
+        'total_haber', v_total_haber,
+        'diferencia', v_diferencia,
+        'asiento_automatico_creado', false
+      ),
       'rpc_cerrar_periodo_contable'
     );
 
@@ -161,7 +206,8 @@ begin
       'ok', false,
       'permitido', false,
       'codigo', 'cerrar_periodo_contable_fallido',
-      'mensaje', 'No se pudo cerrar el periodo contable. Revise permisos y bloqueos.',
+      'mensaje', left(sqlerrm, 500),
+      'detalle_resumido', left(sqlerrm, 500),
       'idempotency_key', v_idempotency_key
     );
   end;

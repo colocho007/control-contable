@@ -1753,7 +1753,11 @@ export default function ContabilidadPage() {
         observaciones,
       });
       await Promise.all([cargarPeriodos(String(empresaId)), cargarAsientos(String(empresaId))]);
-      mostrarMensaje("Periodo cerrado correctamente.", "exito");
+      setPrevisualizacionCierre(null);
+      mostrarMensaje(
+        `Periodo ${periodo.mes}/${periodo.anio} cerrado correctamente por RPC.`,
+        "exito"
+      );
     } catch (error) {
       console.error("Error cerrando periodo contable:", error);
       setMensajeV2(errorSeguro(error));
@@ -3484,16 +3488,6 @@ export default function ContabilidadPage() {
                     >
                       Previsualizar
                     </button>
-                    {periodo.estado !== "cerrado" && (
-                      <button
-                        type="button"
-                        onClick={() => cerrarPeriodo(periodo)}
-                        disabled={loading}
-                        className="px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
-                      >
-                        Cerrar
-                      </button>
-                    )}
                   </div>
                 )}
               </div>
@@ -3509,19 +3503,38 @@ export default function ContabilidadPage() {
                 <p className="text-sm text-gray-500 mt-1">
                   Periodo {previsualizacionCierre.periodo.mes}/{previsualizacionCierre.periodo.anio} | {empresaNombre(previsualizacionCierre.periodo.empresa_id)}
                 </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {previsualizacionCierre.periodo.fecha_inicio} a {previsualizacionCierre.periodo.fecha_fin}
+                  {" | Estado: "}
+                  {previsualizacionCierre.periodo.estado}
+                </p>
               </div>
-              <span
-                className={`w-fit rounded-full border px-4 py-2 text-xs font-black uppercase ${
-                  previsualizacionCierre.puede_cerrar
-                    ? "border-green-500/20 bg-green-500/10 text-green-200"
-                    : "border-red-500/20 bg-red-500/10 text-red-200"
-                }`}
-              >
-                {previsualizacionCierre.puede_cerrar ? "Listo para cierre" : "Con bloqueos"}
-              </span>
+              <div className="flex flex-wrap items-center gap-3">
+                <span
+                  className={`w-fit rounded-full border px-4 py-2 text-xs font-black uppercase ${
+                    previsualizacionCierre.puede_cerrar
+                      ? "border-green-500/20 bg-green-500/10 text-green-200"
+                      : "border-red-500/20 bg-red-500/10 text-red-200"
+                  }`}
+                >
+                  {previsualizacionCierre.puede_cerrar ? "Listo para cierre" : "Con bloqueos"}
+                </span>
+                {previsualizacionCierre.puede_cerrar &&
+                  String(previsualizacionCierre.periodo.estado).toLowerCase() === "abierto" &&
+                  puedeCerrarPeriodoContableLocal(previsualizacionCierre.periodo.empresa_id) && (
+                    <button
+                      type="button"
+                      onClick={() => cerrarPeriodo(previsualizacionCierre.periodo)}
+                      disabled={loading}
+                      className="px-4 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-200 text-xs font-black disabled:opacity-50"
+                    >
+                      Cerrar periodo
+                    </button>
+                  )}
+              </div>
             </div>
 
-            <div className="grid md:grid-cols-4 gap-3 mb-5">
+            <div className="grid md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
               <ResumenCard
                 icon={<BookOpen size={18} />}
                 label="Asientos registrados"
@@ -3530,21 +3543,60 @@ export default function ContabilidadPage() {
               />
               <ResumenCard
                 icon={<AlertTriangle size={18} />}
+                label="Asientos borrador"
+                value={String(previsualizacionCierre.resumen.asientos_borrador)}
+                color={previsualizacionCierre.resumen.asientos_borrador ? "red" : "green"}
+              />
+              <ResumenCard
+                icon={<AlertTriangle size={18} />}
+                label="Requiere revision"
+                value={String(previsualizacionCierre.resumen.asientos_requiere_revision)}
+                color={previsualizacionCierre.resumen.asientos_requiere_revision ? "red" : "green"}
+              />
+              <ResumenCard
+                icon={<AlertTriangle size={18} />}
                 label="Documentos pendientes"
                 value={String(previsualizacionCierre.resumen.documentos_pendientes)}
                 color={previsualizacionCierre.resumen.documentos_pendientes ? "red" : "green"}
               />
               <ResumenCard
+                icon={<AlertTriangle size={18} />}
+                label="Documentos observados"
+                value={String(previsualizacionCierre.resumen.documentos_observados)}
+                color={previsualizacionCierre.resumen.documentos_observados ? "red" : "green"}
+              />
+              <ResumenCard
+                icon={<AlertTriangle size={18} />}
+                label="Documentos vencidos"
+                value={String(previsualizacionCierre.resumen.documentos_vencidos)}
+                color={previsualizacionCierre.resumen.documentos_vencidos ? "red" : "green"}
+              />
+            </div>
+
+            <div className="grid md:grid-cols-4 gap-3 mb-5">
+              <ResumenCard
                 icon={<Wallet size={18} />}
-                label="CxP vencidas"
-                value={String(previsualizacionCierre.resumen.cxp_vencidas)}
-                color={previsualizacionCierre.resumen.cxp_vencidas ? "orange" : "green"}
+                label="Total debe"
+                value={previsualizacionCierre.resumen.total_debe.toLocaleString("es-GT", { minimumFractionDigits: 2 })}
+                color="cyan"
               />
               <ResumenCard
                 icon={<Wallet size={18} />}
-                label="CxC vencidas"
-                value={String(previsualizacionCierre.resumen.cxc_vencidas)}
-                color={previsualizacionCierre.resumen.cxc_vencidas ? "orange" : "green"}
+                label="Total haber"
+                value={previsualizacionCierre.resumen.total_haber.toLocaleString("es-GT", { minimumFractionDigits: 2 })}
+                color="cyan"
+              />
+              <ResumenCard
+                icon={<AlertTriangle size={18} />}
+                label="Diferencia"
+                value={previsualizacionCierre.resumen.diferencia.toLocaleString("es-GT", { minimumFractionDigits: 2 })}
+                color={previsualizacionCierre.resumen.balanceado ? "green" : "red"}
+              />
+              <ResumenCard
+                icon={<BookOpen size={18} />}
+                label="Estado balance"
+                value={previsualizacionCierre.resumen.balanceado ? "Balanceado" : "Descuadrado"}
+                color={previsualizacionCierre.resumen.balanceado ? "green" : "red"}
               />
             </div>
 
@@ -3560,6 +3612,21 @@ export default function ContabilidadPage() {
                 textoVacio="No hay advertencias operativas."
                 hallazgos={previsualizacionCierre.advertencias}
                 tipo="advertencia"
+              />
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-3 mt-5">
+              <ResumenCard
+                icon={<Wallet size={18} />}
+                label="CxP vencidas (advertencia)"
+                value={String(previsualizacionCierre.resumen.cxp_vencidas)}
+                color={previsualizacionCierre.resumen.cxp_vencidas ? "orange" : "green"}
+              />
+              <ResumenCard
+                icon={<Wallet size={18} />}
+                label="CxC vencidas (advertencia)"
+                value={String(previsualizacionCierre.resumen.cxc_vencidas)}
+                color={previsualizacionCierre.resumen.cxc_vencidas ? "orange" : "green"}
               />
             </div>
 

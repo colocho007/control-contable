@@ -198,7 +198,7 @@ Notas:
 | POS-10 | Admin explicito | Acceso Importaciones | Importar movimiento con referencia unica | Inserta `activo`, `creado_por` correcto y sin duplicado | | Pendiente |
 | POS-11 | Admin explicito | `pagador_cheque` | Pagar cheque autorizado | Cheque queda `Pagado`; crea un solo movimiento egreso | | Pendiente |
 | POS-12 | Admin explicito | `contabilidad_configuracion` | Crear configuracion fiscal | Registro visible en Impuestos y Contabilidad | | Pendiente |
-| POS-13 | Admin explicito | `contabilidad_cierre_periodo` | Previsualizar periodo limpio | Sin bloqueos | | Pendiente |
+| POS-13 | Admin explicito | `contabilidad_cierre_periodo` | Previsualizar periodo limpio | Muestra empresa, periodo, fechas, estado, conteos separados, debe, haber, diferencia, balance, bloqueos y advertencias | | Pendiente |
 | POS-14 | Admin explicito | `contabilidad_cierre_periodo` | Cerrar periodo limpio | RPC cambia a `cerrado`; queda auditoria | | Pendiente |
 | POS-15 | Auditor | `auditor_solo_lectura` | Consultar contabilidad y movimientos | Puede consultar empresa asignada sin controles de escritura | | Pendiente |
 | POS-16 | Usuarios asignados | Segun perfil | Abrir Reportes, Dashboard y Flujo Efectivo | Solo muestran empresas asignadas y datos coherentes | | Pendiente |
@@ -232,6 +232,9 @@ intentar la operacion mediante una llamada autenticada sin service role.
 | NEG-20 | Usuario autorizado | Anular movimiento cambiando tambien monto/empresa | Trigger rechaza toda la actualizacion | | Pendiente |
 | NEG-21 | Usuario autorizado | DELETE de movimiento/asiento/documento | Permiso/RLS rechaza | | Pendiente |
 | NEG-22 | Admin cierre | Cerrar periodo con borrador pendiente | Previsualizacion y RPC bloquean | | Pendiente |
+| NEG-23 | Admin cierre | Cerrar periodo con documento pendiente, observado o vencido | Previsualizacion identifica cada estado y RPC bloquea | | Pendiente |
+| NEG-24 | Admin cierre | Cerrar periodo con diferencia entre debe y haber | Previsualizacion muestra descuadre y RPC bloquea | | Pendiente |
+| NEG-25 | Admin cierre | Intentar cerrar periodo bloqueado o cerrado | UI no ofrece cierre y RPC rechaza por estado | | Pendiente |
 
 ## 9. Casos de coherencia e idempotencia
 
