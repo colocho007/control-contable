@@ -36,10 +36,10 @@ Estados para completar la matriz:
 
 ### Alto
 
-1. `registrar_asiento_completo` permite solicitar estado registrado enviando
-   `p_tipo = registrado` cuando el usuario tiene `contador_revisor`. La UI crea
-   borradores, pero debe probarse si una llamada directa puede saltarse el flujo
-   separado de finalizacion.
+1. RSK-01 mitigado en `fix/bloquear-registro-directo-asientos`:
+   `registrar_asiento_completo` rechaza `p_tipo = registrado`, `finalizar` o
+   `finalizado` con codigo `registro_directo_no_permitido` y solo crea
+   borradores. Mantener el caso de regresion RSK-01.
 2. `pagar_cheque_transaccional` valida sesion, perfil, empresa asignada y no
    auditor, pero no exige actualmente `pagador_cheque`. La UI si exige esa
    funcion o rol de jefatura.
@@ -237,12 +237,12 @@ Ejecutar solo en staging y con datos desechables.
 
 | ID | Riesgo | Prueba | Resultado seguro esperado | Resultado obtenido | Estado |
 |---|---|---|---|---|---|
-| RSK-01 | Registro directo de asiento | Como revisor, llamar `registrar_asiento_completo` con `p_tipo = registrado` | Debe crear borrador o rechazar; si registra directo, abrir bug Alto | | Pendiente |
+| RSK-01 | Registro directo de asiento mitigado | Como revisor, llamar `registrar_asiento_completo` con `p_tipo = registrado`, `finalizar` y `finalizado` | Rechaza con `registro_directo_no_permitido`; no crea asiento ni llave de idempotencia | | Pendiente |
 | RSK-02 | Pago sin funcion especializada | Usuario asignado, no auditor y sin `pagador_cheque` llama directamente `pagar_cheque_transaccional` | Debe rechazar; si paga, abrir bug Alto | | Pendiente |
 
 Ramas sugeridas si se confirman:
 
-- `fix/registrar-asiento-solo-borrador`
+- `fix/registrar-asiento-solo-borrador` (mitigado por `fix/bloquear-registro-directo-asientos`)
 - `fix/pagar-cheque-exige-pagador`
 
 ## 11. Verificaciones en Supabase

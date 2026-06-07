@@ -30,7 +30,6 @@ declare
   v_idempotency_key text := nullif(trim(coalesce(p_idempotency_key, '')), '');
   v_moneda text := upper(trim(coalesce(p_moneda, '')));
   v_tipo text := lower(trim(coalesce(p_tipo, 'asiento_manual')));
-  v_estado_asiento text := 'borrador';
   v_total_debe numeric := 0;
   v_total_haber numeric := 0;
   v_linea record;
@@ -67,6 +66,15 @@ begin
       'permitido', false,
       'codigo', 'usuario_inactivo',
       'mensaje', 'Usuario no activo para registrar asientos.'
+    );
+  end if;
+
+  if v_tipo in ('registrado', 'finalizar', 'finalizado') then
+    return jsonb_build_object(
+      'ok', false,
+      'permitido', false,
+      'codigo', 'registro_directo_no_permitido',
+      'mensaje', 'registrar_asiento_completo solo crea borradores. Use finalizar_asiento_contable para registrar un asiento existente.'
     );
   end if;
 
@@ -192,12 +200,6 @@ begin
       raise exception 'No tienes permiso para operar esta empresa.';
     end if;
 
-    if v_tipo in ('registrado', 'finalizar', 'finalizado') then
-      v_estado_asiento := 'registrado';
-    else
-      v_estado_asiento := 'borrador';
-    end if;
-
     if exists (
       select 1
       from usuario_funciones_operativas ufo
@@ -220,19 +222,6 @@ begin
       )
     then
       raise exception 'No tienes funcion operativa contable para crear asientos.';
-    end if;
-
-    if v_estado_asiento = 'registrado'
-      and not exists (
-        select 1
-        from usuario_funciones_operativas ufo
-        where ufo.usuario_id = v_usuario_id
-          and ufo.empresa_id = p_empresa_id
-          and ufo.activo = true
-          and ufo.funcion = 'contador_revisor'
-      )
-    then
-      raise exception 'Solo contador_revisor puede finalizar asientos contables.';
     end if;
 
     select *
@@ -343,7 +332,7 @@ begin
       'contabilidad',
       nullif(v_tipo, ''),
       null,
-      v_estado_asiento,
+      'borrador',
       v_moneda,
       v_total_debe,
       v_total_haber,
