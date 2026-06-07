@@ -7,9 +7,8 @@
 -- Permisos actuales de creacion:
 -- - admin, jefe o supervisor pueden crear.
 -- - usuarios con empresa activa asignada pueden crear si no son auditor solo lectura.
--- Pendiente futuro: crear funciones operativas de cheques como creador_cheque,
--- autorizador_cheque, pagador_cheque y supervisor_cheques; cuando existan,
--- esta RPC podra reforzarse para exigirlas sin bloquear el flujo actual.
+-- El pago exige pagador_cheque activo para la empresa, sin fallback por rol.
+-- Otras operaciones conservan sus reglas actuales hasta una revision coordinada.
 
 create or replace function public.crear_cheque_transaccional(
   p_empresa_id bigint,
@@ -1147,6 +1146,35 @@ begin
     return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'usuario_inactivo', 'mensaje', 'Usuario no activo para pagar cheques.');
   end if;
 
+  if not exists (
+    select 1 from usuario_empresas ue
+    where ue.usuario_id = v_usuario_id
+      and ue.empresa_id = p_empresa_id
+      and ue.activo = true
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'empresa_no_asignada', 'mensaje', 'No tienes asignacion activa para operar esta empresa.');
+  end if;
+
+  if exists (
+    select 1 from usuario_funciones_operativas ufo
+    where ufo.usuario_id = v_usuario_id
+      and ufo.empresa_id = p_empresa_id
+      and ufo.activo = true
+      and ufo.funcion = 'auditor_solo_lectura'
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'auditor_solo_lectura', 'mensaje', 'El auditor solo lectura no puede pagar cheques.');
+  end if;
+
+  if not exists (
+    select 1 from usuario_funciones_operativas ufo
+    where ufo.usuario_id = v_usuario_id
+      and ufo.empresa_id = p_empresa_id
+      and ufo.activo = true
+      and ufo.funcion = 'pagador_cheque'
+  ) then
+    return jsonb_build_object('ok', false, 'permitido', false, 'codigo', 'funcion_pagador_cheque_requerida', 'mensaje', 'Se requiere la funcion operativa pagador_cheque para pagar cheques.');
+  end if;
+
   if v_idempotency_key is not null then
     select * into v_idempotency from idempotency_keys_operativas where idempotency_key = v_idempotency_key for update;
 
@@ -1186,27 +1214,6 @@ begin
 
     if lower(coalesce(v_empresa.estado, '')) in ('inactiva', 'inactivo', 'archivada', 'archivado', 'prueba', 'demo', 'testing') then
       raise exception 'La empresa no esta operativa para pagar cheques.';
-    end if;
-
-    if not exists (
-        select 1 from usuario_empresas ue
-        where ue.usuario_id = v_usuario_id
-          and ue.empresa_id = p_empresa_id
-          and ue.activo = true
-      )
-    then
-      raise exception 'No tienes permiso para operar esta empresa.';
-    end if;
-
-    if exists (
-        select 1 from usuario_funciones_operativas ufo
-        where ufo.usuario_id = v_usuario_id
-          and ufo.empresa_id = p_empresa_id
-          and ufo.activo = true
-          and ufo.funcion = 'auditor_solo_lectura'
-      )
-    then
-      raise exception 'El auditor solo lectura no puede pagar cheques.';
     end if;
 
     select * into v_cheque
@@ -1444,4 +1451,5 @@ grant execute on function public.crear_cheque_transaccional(
 grant execute on function public.autorizar_cheque_transaccional(bigint, bigint, uuid, text) to authenticated;
 grant execute on function public.rechazar_cheque_transaccional(bigint, bigint, uuid, text, text) to authenticated;
 grant execute on function public.anular_cheque_transaccional(bigint, bigint, uuid, text, text) to authenticated;
+revoke all on function public.pagar_cheque_transaccional(bigint, bigint, uuid, text) from public, anon;
 grant execute on function public.pagar_cheque_transaccional(bigint, bigint, uuid, text) to authenticated;

@@ -773,8 +773,7 @@ function usuarioPuedeAutorizarCheque(usuario: Perfil, empresaId?: number | strin
 }
 
 function usuarioActualPuedePagarCheque(cheque: Cheque) {
-  if (tieneFuncionCheque(userId, cheque.empresa_id, ["pagador_cheque"])) return true;
-  return ROLES_JEFATURA.includes((perfilActual?.rol || "").trim().toLowerCase());
+  return tieneFuncionCheque(userId, cheque.empresa_id, ["pagador_cheque"]);
 }
 
 function esAuditorSoloLecturaCheque(empresaId?: number | string | null) {
@@ -3408,6 +3407,7 @@ useEffect(() => {
                 tiempo={estadoTiempo(cheque)}
                 money={money}
                 puedeAprobar={puedeAprobar}
+                puedePagar={usuarioActualPuedePagarCheque(cheque)}
                 procesando={procesandoId === cheque.id}
                 onAutorizar={() => autorizarCheque(cheque)}
                 onRechazar={() => rechazarCheque(cheque)}
@@ -3527,6 +3527,7 @@ function ChequeCard({
   tiempo,
   money,
   puedeAprobar,
+  puedePagar,
   procesando,
   onAutorizar,
   onRechazar,
@@ -3545,6 +3546,7 @@ function ChequeCard({
   };
   money: (valor: number, moneda?: string | null) => string;
   puedeAprobar: boolean;
+  puedePagar: boolean;
   procesando: boolean;
   onAutorizar: () => void;
   onRechazar: () => void;
@@ -3743,9 +3745,9 @@ const historial = historialCheques.filter((h) => {
 
         </div>
 
-        {puedeAprobar && (
+        {(puedeAprobar || puedePagar) && (
           <div className="flex flex-wrap xl:flex-col gap-2 min-w-[180px]">
-            {cheque.estado === "Pendiente de autorizaciÃ³n" && (
+            {puedeAprobar && cheque.estado === "Pendiente de autorizaciÃ³n" && (
               <>
                 <button
                   onClick={onAutorizar}
@@ -3780,7 +3782,7 @@ const historial = historialCheques.filter((h) => {
               </>
             )}
 
-            {cheque.estado === "Autorizado" && (
+            {cheque.estado === "Autorizado" && puedePagar && (
               <button
                 onClick={onPagado}
                 disabled={procesando}

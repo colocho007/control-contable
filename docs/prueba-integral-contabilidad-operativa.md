@@ -40,12 +40,12 @@ Estados para completar la matriz:
    `registrar_asiento_completo` rechaza `p_tipo = registrado`, `finalizar` o
    `finalizado` con codigo `registro_directo_no_permitido` y solo crea
    borradores. Mantener el caso de regresion RSK-01.
-2. `pagar_cheque_transaccional` valida sesion, perfil, empresa asignada y no
-   auditor, pero no exige actualmente `pagador_cheque`. La UI si exige esa
-   funcion o rol de jefatura.
+2. RSK-02 mitigado en `fix/exigir-pagador-cheque-rpc`: tanto la UI como
+   `pagar_cheque_transaccional` exigen `pagador_cheque` activo para la empresa,
+   sin bypass por rol administrativo o de jefatura. Mantener el caso de
+   regresion RSK-02.
 
-Si cualquiera se confirma, documentar el resultado y proponer una rama separada.
-No corregirlo durante esta prueba.
+Mantener ambos casos como pruebas de regresion antes de aprobar el despliegue.
 
 ### Medio
 
@@ -140,7 +140,7 @@ Leyenda: `P` permitido, `D` denegado, `L` solo lectura.
 | Crear movimiento operativo | P | P | P | D | D | P |
 | Anular movimiento operativo | P | D | P por RLS/Finanzas | D | D | D |
 | Importar movimientos | P | Segun acceso al modulo | Segun acceso al modulo | D por RLS | D | Segun acceso al modulo |
-| Pagar cheque autorizado | P | D esperado por UI | D esperado por UI | D | D | D esperado por UI |
+| Pagar cheque autorizado | P con `pagador_cheque` | D | D | D | D | D |
 
 Notas:
 
@@ -238,12 +238,12 @@ Ejecutar solo en staging y con datos desechables.
 | ID | Riesgo | Prueba | Resultado seguro esperado | Resultado obtenido | Estado |
 |---|---|---|---|---|---|
 | RSK-01 | Registro directo de asiento mitigado | Como revisor, llamar `registrar_asiento_completo` con `p_tipo = registrado`, `finalizar` y `finalizado` | Rechaza con `registro_directo_no_permitido`; no crea asiento ni llave de idempotencia | | Pendiente |
-| RSK-02 | Pago sin funcion especializada | Usuario asignado, no auditor y sin `pagador_cheque` llama directamente `pagar_cheque_transaccional` | Debe rechazar; si paga, abrir bug Alto | | Pendiente |
+| RSK-02 | Pago sin funcion especializada mitigado | Usuario asignado, admin o jefatura sin `pagador_cheque` llama directamente `pagar_cheque_transaccional` | Rechaza con `funcion_pagador_cheque_requerida`; no paga ni reserva idempotencia | | Pendiente |
 
 Ramas sugeridas si se confirman:
 
 - `fix/registrar-asiento-solo-borrador` (mitigado por `fix/bloquear-registro-directo-asientos`)
-- `fix/pagar-cheque-exige-pagador`
+- `fix/pagar-cheque-exige-pagador` (mitigado por `fix/exigir-pagador-cheque-rpc`)
 
 ## 11. Verificaciones en Supabase
 
