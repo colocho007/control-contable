@@ -39,7 +39,6 @@ interface Movimiento {
   empresa: string;
   empresa_id: number | null;
   moneda: "GTQ" | "USD" | string | null;
-  categoria?: string | null;
   fecha: string;
   estado?: string | null;
   creado_por?: string | null;
@@ -88,6 +87,7 @@ export default function FinanzasPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [procesando, setProcesando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
   const [userId, setUserId] = useState<string | null>(null);
   const [rolActual, setRolActual] = useState("");
@@ -145,6 +145,7 @@ export default function FinanzasPage() {
       setRolActual(rol);
       setAutorizado(true);
       setCargando(true);
+      setErrorCarga(null);
 
       try {
         const idsPermitidos = await obtenerEmpresasPermitidas(
@@ -169,7 +170,9 @@ export default function FinanzasPage() {
         }
       } catch (error) {
         console.error("Error cargando Finanzas:", error);
-        alert("Error al cargar datos de Finanzas.");
+        setErrorCarga(
+          "No se pudieron cargar los movimientos financieros. Revisa la conexion y los permisos de la empresa."
+        );
       } finally {
         setCargando(false);
         setValidandoAcceso(false);
@@ -190,7 +193,7 @@ export default function FinanzasPage() {
     const { data, error } = await supabase
       .from("movimientos")
       .select(
-        "id,tipo,descripcion,monto,empresa,empresa_id,moneda,categoria,fecha,estado,creado_por,anulado_por,anulado_at,motivo_anulacion"
+        "id,tipo,descripcion,monto,empresa,empresa_id,moneda,fecha,estado,creado_por,anulado_por,anulado_at,motivo_anulacion"
       )
       .in("empresa_id", ids)
       .order("fecha", { ascending: false })
@@ -652,6 +655,12 @@ export default function FinanzasPage() {
             )}
           </div>
 
+          {errorCarga && (
+            <div className="mb-8 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-100">
+              {errorCarga}
+            </div>
+          )}
+
           <div className="grid md:grid-cols-2 xl:grid-cols-6 gap-5 mb-10">
             {resumenPorMoneda.map((fila) => (
               <div
@@ -813,7 +822,7 @@ export default function FinanzasPage() {
           <div className="space-y-4">
             {!movimientosFiltrados.length && (
               <div className="bg-white/5 border border-white/10 rounded-2xl p-6 text-gray-400">
-                No hay movimientos activos para el filtro seleccionado.
+                No hay movimientos financieros registrados para esta empresa.
               </div>
             )}
 

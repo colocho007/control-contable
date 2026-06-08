@@ -10,7 +10,6 @@ import {
   Clock,
   FileText,
   Loader2,
-  Lock,
   ShieldCheck,
   Wallet,
 } from "lucide-react";
@@ -693,17 +692,8 @@ function EstadoPill({ estado }: { estado: string }) {
 }
 
 function BotonProximamente({ label }: { label: string }) {
-  return (
-    <button
-      type="button"
-      disabled
-      className="inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-gray-400 opacity-70"
-      title={`${label}: Próximamente`}
-    >
-      <Lock size={13} />
-      {label} - Próximamente
-    </button>
-  );
+  void label;
+  return null;
 }
 
 function LineaDato({ label, valor }: { label: string; valor: string }) {

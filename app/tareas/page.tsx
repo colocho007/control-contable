@@ -326,6 +326,16 @@ export default function TareasPage() {
     return tieneFuncionOperativaLocal(funcionesOperativas, userProfile?.id, empresaId, funciones);
   }
 
+  function usuarioPuedeRecibirTarea(usuarioId: string, empresaId: number) {
+    return funcionesOperativas.some(
+      (funcion) =>
+        funcion.activo !== false &&
+        funcion.usuario_id === usuarioId &&
+        Number(funcion.empresa_id) === empresaId &&
+        ["auxiliar_contable", "contador_revisor"].includes(String(funcion.funcion))
+    );
+  }
+
   function puedeCrearTarea(empresaId: string | number | null | undefined) {
     const rol = normalizarRol(userProfile?.rol);
     if (esAuditorSoloLectura(empresaId)) return false;
@@ -949,12 +959,26 @@ export default function TareasPage() {
                       onChange={(e) => setForm({ ...form, usuarioId: e.target.value })}
                     >
                       <option value="">Asignar a empleado / supervisor / jefe</option>
-                      {usuarios.map((u) => (
+                      {usuarios
+                        .filter(
+                          (usuario) =>
+                            empresaFormId > 0 &&
+                            usuarioPuedeRecibirTarea(usuario.id, empresaFormId)
+                        )
+                        .map((u) => (
                         <option key={u.id} value={u.id}>
                           {u.nombre} - {u.rol}
                         </option>
-                      ))}
+                        ))}
                     </select>
+                    {empresaFormId > 0 &&
+                      !usuarios.some((usuario) =>
+                        usuarioPuedeRecibirTarea(usuario.id, empresaFormId)
+                      ) && (
+                        <p className="md:col-span-3 text-sm text-amber-200">
+                          No hay usuarios autorizados configurados para esta accion.
+                        </p>
+                      )}
 
                     <select
                       className="input-custom"

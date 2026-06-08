@@ -1321,8 +1321,8 @@ export default function ImpuestosPage() {
 
           {tab === "proximamente" && (
             <Panel
-              titulo="Flujos bloqueados"
-              subtitulo="Funciones visibles para ruta futura; no estan activas en esta rama."
+              titulo="Fase posterior"
+              subtitulo="Funciones no incluidas en el alcance operativo inicial."
             >
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {[
@@ -1448,7 +1448,7 @@ function Tabs({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
     { id: "periodos", label: "Periodos", icon: <CalendarDays size={15} /> },
     { id: "resumen_periodo", label: "Resumen periodo", icon: <BadgeDollarSign size={15} /> },
     { id: "calendario", label: "Vencimientos", icon: <CalendarDays size={15} /> },
-    { id: "proximamente", label: "Proximamente", icon: <Lock size={15} /> },
+    { id: "proximamente", label: "Fase posterior", icon: <Lock size={15} /> },
   ];
 
   return (
@@ -1980,12 +1980,8 @@ function Badge({ estado }: { estado: string }) {
 }
 
 function BotonProximamente({ label }: { label: string }) {
-  return (
-    <button type="button" disabled className="btn-disabled" title={`${label}: Proximamente`}>
-      <Lock size={13} />
-      {label} - Proximamente
-    </button>
-  );
+  void label;
+  return null;
 }
 
 function EmptyState({ texto }: { texto: string }) {

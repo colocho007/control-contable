@@ -991,10 +991,9 @@ export default function PlanillaPage() {
                     <p className="text-gray-300">
                       El calculo detallado, aprobacion, pago, CxP y asiento contable quedan pendientes.
                     </p>
-                    <button type="button" disabled className="mt-5 btn-disabled">
-                      <Lock size={14} />
-                      Calcular planilla - Próximamente
-                    </button>
+                    <p className="mt-5 text-sm font-bold text-gray-500">
+                      No incluido en el alcance operativo inicial.
+                    </p>
                   </div>
                 </Panel>
               )}
@@ -1484,12 +1483,8 @@ function Badge({ estado }: { estado: string }) {
 }
 
 function BotonProximamente({ label }: { label: string }) {
-  return (
-    <button type="button" disabled className="btn-disabled" title={`${label}: Próximamente`}>
-      <Lock size={13} />
-      {label} - Próximamente
-    </button>
-  );
+  void label;
+  return null;
 }
 
 function EmptyState({ texto }: { texto: string }) {

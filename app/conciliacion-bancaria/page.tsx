@@ -1251,7 +1251,7 @@ export default function ConciliacionBancariaPage() {
               )}
 
               {tab === "proximamente" && (
-                <Panel titulo="Proximamente" subtitulo="Funciones visibles para fase posterior; no activas en esta rama.">
+                <Panel titulo="Fase posterior" subtitulo="Funciones no incluidas en el alcance operativo inicial.">
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {[
                       "Importacion Excel/PDF",
@@ -1383,7 +1383,7 @@ function Tabs({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
     { id: "movimientos", label: "Movimientos", icon: <FileText size={15} /> },
     { id: "vinculos", label: "Vinculos", icon: <GitBranch size={15} /> },
     { id: "ajustes", label: "Ajustes", icon: <BadgeDollarSign size={15} /> },
-    { id: "proximamente", label: "Proximamente", icon: <Lock size={15} /> },
+    { id: "proximamente", label: "Fase posterior", icon: <Lock size={15} /> },
   ];
   return (
     <div className="flex flex-wrap gap-2 rounded-2xl border border-[var(--card-border)] bg-[var(--card)] p-2">
@@ -1842,12 +1842,8 @@ function Badge({ estado }: { estado: string }) {
 }
 
 function BotonProximamente({ label }: { label: string }) {
-  return (
-    <button type="button" disabled className="btn-disabled" title={`${label}: Proximamente`}>
-      <Lock size={13} />
-      {label} - Proximamente
-    </button>
-  );
+  void label;
+  return null;
 }
 
 function EmptyState({ texto }: { texto: string }) {

@@ -766,10 +766,10 @@ function tieneFuncionCheque(
 }
 
 function usuarioPuedeAutorizarCheque(usuario: Perfil, empresaId?: number | string | null) {
-  if (empresaId && tieneFuncionCheque(usuario.id, empresaId, ["autorizador_cheque", "firmante_cheque"])) {
-    return true;
-  }
-  return ROLES_JEFATURA.includes((usuario.rol || "").trim().toLowerCase());
+  return Boolean(
+    empresaId &&
+      tieneFuncionCheque(usuario.id, empresaId, ["autorizador_cheque", "firmante_cheque"])
+  );
 }
 
 function usuarioActualPuedePagarCheque(cheque: Cheque) {
@@ -2069,7 +2069,10 @@ async function autorizarCheque(cheque: Cheque) {
     toast.error("El auditor solo lectura no puede autorizar cheques.");
     return;
   }
-  if (!tieneFuncionCheque(userId, cheque.empresa_id, ["autorizador_cheque", "firmante_cheque"]) && !puedeAprobar) {
+  if (
+    !perfilActual ||
+    !usuarioPuedeAutorizarCheque(perfilActual, cheque.empresa_id)
+  ) {
     toast.error("No tienes funcion operativa para autorizar cheques en esta empresa.");
     return;
   }
@@ -2573,10 +2576,6 @@ const usuariosMap = useMemo(() => {
 }, [usuarios]);
 
 
-const puedeAprobar = ROLES_JEFATURA.includes(
-  (perfilActual?.rol || "").trim().toLowerCase()
-);
-
 useEffect(() => {
   if (
     chequeCreadoIdRef.current !== null ||
@@ -3025,6 +3024,16 @@ useEffect(() => {
                     </option>
                   ))}
               </select>
+              {form.empresaId &&
+                !usuarios.some(
+                  (usuario) =>
+                    usuario.activo !== false &&
+                    usuarioPuedeAutorizarCheque(usuario, Number(form.empresaId))
+                ) && (
+                  <p className="md:col-span-4 text-sm text-amber-200">
+                    No hay usuarios autorizados configurados para esta accion.
+                  </p>
+                )}
 
               <button
                 onClick={crearCheque}
@@ -3406,7 +3415,10 @@ useEffect(() => {
                 usuariosMap={usuariosMap}
                 tiempo={estadoTiempo(cheque)}
                 money={money}
-                puedeAprobar={puedeAprobar}
+                puedeAprobar={
+                  Boolean(perfilActual) &&
+                  usuarioPuedeAutorizarCheque(perfilActual as Perfil, cheque.empresa_id)
+                }
                 puedePagar={usuarioActualPuedePagarCheque(cheque)}
                 procesando={procesandoId === cheque.id}
                 onAutorizar={() => autorizarCheque(cheque)}

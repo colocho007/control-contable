@@ -102,7 +102,7 @@ interface OrdenCompra {
 
 const ROLES_ADMIN = ["admin", "supervisor", "jefe"];
 const ROLES_CREADORES = ["admin", "supervisor", "jefe", "iniciador_gestion"];
-const ROLES_FIRMANTES = ["admin", "supervisor", "jefe", "firmante_oc"];
+const ROLES_FIRMANTES = ["firmante_oc"];
 const TIPOS_DOCUMENTO_ORDENES = [
   "Factura",
   "Cotización",
@@ -440,7 +440,11 @@ function continuarConBorrador() {
       .filter(
         (usuario) =>
           usuario.activo !== false &&
-          ROLES_FIRMANTES.includes(normalizarRol(usuario.rol))
+          formularioRecuperado.empresaId &&
+          tieneFuncionOrden(usuario.id, formularioRecuperado.empresaId, [
+            "firmante_orden",
+            "autorizador_compra",
+          ])
       )
       .map((usuario) => usuario.id)
   );
@@ -776,10 +780,10 @@ function tieneFuncionOrden(
 }
 
 function usuarioPuedeFirmarOrden(usuario: Perfil, empresaId?: number | string | null) {
-  if (empresaId && tieneFuncionOrden(usuario.id, empresaId, ["firmante_orden", "autorizador_compra"])) {
-    return true;
-  }
-  return ROLES_FIRMANTES.includes(normalizarRol(usuario.rol));
+  return Boolean(
+    empresaId &&
+      tieneFuncionOrden(usuario.id, empresaId, ["firmante_orden", "autorizador_compra"])
+  );
 }
 
 function usuarioActualPuedeCrearOrden(empresaId: number | string | null | undefined) {
@@ -2717,7 +2721,7 @@ const stats = useMemo(() => {
 
           {usuariosFirmantes.length === 0 && (
             <p className="text-gray-500 text-sm md:col-span-4">
-              No hay usuarios firmantes registrados.
+              No hay usuarios autorizados configurados para esta accion.
             </p>
           )}
         </div>

@@ -53,6 +53,20 @@ interface UsuarioModulo {
   activo?: boolean | null;
 }
 
+interface ResumenOperativoReal {
+  empresasAsignadas: number | null;
+  empresasActivas: number | null;
+  funcionesActivas: number | null;
+  asientosRegistrados: number | null;
+  asientosBorrador: number | null;
+  periodosAbiertos: number | null;
+  periodosCerrados: number | null;
+  documentosPendientes: number | null;
+  movimientosActivos: number | null;
+  movimientosAnulados: number | null;
+  errores: string[];
+}
+
 interface AuditoriaEvento {
   id: string | number;
   creado_at: string;
@@ -683,6 +697,8 @@ export default function MonitoreoSistemaPage() {
   const [filtroEstado, setFiltroEstado] = useState<EstadoAlerta | "todos">("Pendiente");
   const [filtroSeveridad, setFiltroSeveridad] = useState<SeveridadAlerta | "todos">("todos");
   const [filtroFuente, setFiltroFuente] = useState("todos");
+  const [resumenOperativoReal, setResumenOperativoReal] =
+    useState<ResumenOperativoReal | null>(null);
 
   useEffect(() => {
     let activo = true;
@@ -706,7 +722,7 @@ export default function MonitoreoSistemaPage() {
         setPerfilActual({ ...(validacion.perfil as Perfil), rol });
         setAutorizado(true);
         setValidandoAcceso(false);
-        await cargarDatos();
+        await cargarDatos(validacion.perfil?.id);
       } catch (error) {
         console.error("Error validando acceso a monitoreo:", error);
         router.replace("/dashboard");
@@ -740,7 +756,7 @@ export default function MonitoreoSistemaPage() {
     );
   }, [estadosAlertas]);
 
-  async function cargarDatos() {
+  async function cargarDatos(usuarioId = perfilActual?.id) {
     setCargando(true);
     setAvisoLogs(null);
 
@@ -829,12 +845,77 @@ export default function MonitoreoSistemaPage() {
       } else {
         setLogs((resLogs.data || []) as LogSistema[]);
       }
+
+      await cargarResumenOperativoReal(usuarioId);
     } catch (error) {
       console.error("Error cargando Monitoreo del Sistema:", error);
       toast.error("No se pudo cargar el monitoreo del sistema.");
     } finally {
       setCargando(false);
     }
+  }
+
+  async function cargarResumenOperativoReal(usuarioId?: string | null) {
+    const resultados = await Promise.all([
+      usuarioId
+        ? supabase
+            .from("usuario_empresas")
+            .select("id", { count: "exact", head: true })
+            .eq("usuario_id", usuarioId)
+            .eq("activo", true)
+        : Promise.resolve({ count: null, error: null }),
+      supabase.from("empresas").select("id", { count: "exact", head: true }).eq("estado", "activa"),
+      supabase
+        .from("usuario_funciones_operativas")
+        .select("id", { count: "exact", head: true })
+        .eq("activo", true),
+      supabase
+        .from("asientos_contables")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "registrado"),
+      supabase
+        .from("asientos_contables")
+        .select("id", { count: "exact", head: true })
+        .in("estado", ["borrador", "requiere_revision"]),
+      supabase
+        .from("periodos_contables")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "abierto"),
+      supabase
+        .from("periodos_contables")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "cerrado"),
+      supabase
+        .from("documentos_contables_revision")
+        .select("id", { count: "exact", head: true })
+        .in("estado", ["Pendiente", "En revision", "Observado", "Vencido"]),
+      supabase
+        .from("movimientos")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "activo"),
+      supabase
+        .from("movimientos")
+        .select("id", { count: "exact", head: true })
+        .eq("estado", "anulado"),
+    ]);
+
+    const errores = resultados
+      .map((resultado) => resultado.error?.message || null)
+      .filter((mensaje): mensaje is string => Boolean(mensaje));
+
+    setResumenOperativoReal({
+      empresasAsignadas: resultados[0].count ?? null,
+      empresasActivas: resultados[1].count ?? null,
+      funcionesActivas: resultados[2].count ?? null,
+      asientosRegistrados: resultados[3].count ?? null,
+      asientosBorrador: resultados[4].count ?? null,
+      periodosAbiertos: resultados[5].count ?? null,
+      periodosCerrados: resultados[6].count ?? null,
+      documentosPendientes: resultados[7].count ?? null,
+      movimientosActivos: resultados[8].count ?? null,
+      movimientosAnulados: resultados[9].count ?? null,
+      errores,
+    });
   }
 
   async function cambiarEstadoModuloGlobal(modulo: ModuloSistema) {
@@ -1478,6 +1559,49 @@ export default function MonitoreoSistemaPage() {
                 </div>
               )}
 
+              <section className="panel mb-8">
+                <h2 className="panel-title">
+                  <Activity size={16} className="text-cyan-300" />
+                  Resumen operativo real
+                </h2>
+                <p className="mb-4 text-sm text-gray-400">
+                  Conteos obtenidos desde Supabase con los permisos de la sesion actual.
+                  Un valor no verificable se muestra como Pendiente.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  <DatoEstado label="Sesion actual" valor={perfilActual?.nombre || null} />
+                  <DatoEstado label="Rol actual" valor={perfilActual?.rol || null} />
+                  <DatoEstado label="Empresas asignadas" valor={resumenOperativoReal?.empresasAsignadas} />
+                  <DatoEstado label="Usuarios activos" valor={usuariosActivos.length} />
+                  <DatoEstado label="Empresas activas" valor={resumenOperativoReal?.empresasActivas} />
+                  <DatoEstado label="Funciones activas" valor={resumenOperativoReal?.funcionesActivas} />
+                  <DatoEstado label="Asientos registrados" valor={resumenOperativoReal?.asientosRegistrados} />
+                  <DatoEstado label="Asientos borrador/revision" valor={resumenOperativoReal?.asientosBorrador} />
+                  <DatoEstado label="Periodos abiertos" valor={resumenOperativoReal?.periodosAbiertos} />
+                  <DatoEstado label="Periodos cerrados" valor={resumenOperativoReal?.periodosCerrados} />
+                  <DatoEstado label="Documentos pendientes" valor={resumenOperativoReal?.documentosPendientes} />
+                  <DatoEstado label="Movimientos activos" valor={resumenOperativoReal?.movimientosActivos} />
+                  <DatoEstado label="Movimientos anulados" valor={resumenOperativoReal?.movimientosAnulados} />
+                  <DatoEstado label="Modulos operativos activos" valor={modulos.filter((modulo) => modulo.activo).length} />
+                  <DatoEstado label="Modulos en fase posterior/inactivos" valor={modulos.filter((modulo) => !modulo.activo).length} />
+                  <DatoEstado label="RPCs criticas" valor="Verificacion desde Supabase requerida" pendiente />
+                  <DatoEstado label="RLS / policies" valor="Verificacion desde Supabase requerida" pendiente />
+                  <DatoEstado
+                    label="Consultas no verificables"
+                    valor={resumenOperativoReal?.errores.length ?? null}
+                    estado={
+                      resumenOperativoReal?.errores.length ? "Error" : "Correcto"
+                    }
+                  />
+                </div>
+                {resumenOperativoReal?.errores.length ? (
+                  <p className="mt-4 text-sm text-amber-200">
+                    Pendiente: {resumenOperativoReal.errores.length} conteo(s) no pudieron
+                    verificarse con la sesion actual.
+                  </p>
+                ) : null}
+              </section>
+
               <section className="grid md:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
                 <TarjetaResumen titulo="Modulos activos" valor={resumen.modulosActivos} icono={<ToggleRight size={22} />} activo={categoriaActiva === "modulos_activos"} onClick={() => seleccionarCategoria("modulos_activos")} />
                 <TarjetaResumen titulo="Modulos inactivos" valor={resumen.modulosInactivos} icono={<ToggleLeft size={22} />} activo={categoriaActiva === "modulos_inactivos"} onClick={() => seleccionarCategoria("modulos_inactivos")} />
@@ -1750,6 +1874,36 @@ function Dato({ label, valor }: { label: string; valor: number }) {
     <div className="bg-[#0f172a]/70 border border-white/10 rounded-xl p-4">
       <p className="text-[11px] uppercase font-black text-gray-500">{label}</p>
       <p className="text-2xl font-black mt-2">{valor}</p>
+    </div>
+  );
+}
+
+function DatoEstado({
+  label,
+  valor,
+  pendiente = false,
+  estado: estadoForzado,
+}: {
+  label: string;
+  valor: string | number | null | undefined;
+  pendiente?: boolean;
+  estado?: "Correcto" | "Pendiente" | "Error";
+}) {
+  const verificable = valor !== null && valor !== undefined && valor !== "";
+  const estado =
+    estadoForzado || (pendiente || !verificable ? "Pendiente" : "Correcto");
+  const clase =
+    estado === "Correcto"
+      ? "border-green-400/30 bg-green-400/10 text-green-200"
+      : estado === "Error"
+        ? "border-red-400/30 bg-red-400/10 text-red-200"
+        : "border-amber-400/30 bg-amber-400/10 text-amber-200";
+
+  return (
+    <div className={`rounded-xl border p-4 ${clase}`}>
+      <p className="text-[10px] font-black uppercase tracking-wider opacity-70">{label}</p>
+      <p className="mt-2 text-sm font-black">{verificable ? String(valor) : "No verificable"}</p>
+      <p className="mt-2 text-[10px] font-black uppercase">{estado}</p>
     </div>
   );
 }
