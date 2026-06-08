@@ -25,6 +25,7 @@ completarse con evidencia antes de declarar la entrega aprobada.
 
 | Documento | Estado en repositorio | Uso |
 |---|---|---|
+| [Paquete formal de entrega](paquete-entrega/README.md) | Disponible | Orden de despliegue, SQL, checklist y acta de cierre |
 | [Manual de usuario](manual-usuario-control-plus.md) | Disponible | Operacion diaria y errores comunes |
 | [Manual administrativo](manual-admin-control-plus.md) | Disponible | Usuarios, empresas, roles, funciones y auditoria |
 | [Checklist de produccion](checklist-produccion-control-plus.md) | Disponible | Verificacion detallada y firmas |
