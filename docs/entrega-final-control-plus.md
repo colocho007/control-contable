@@ -186,3 +186,88 @@ Proceder con una ventana controlada de validacion final: crear backup, aplicar y
 verificar SQL critico, configurar usuarios y permisos, ejecutar la prueba minima
 con evidencia y obtener aprobacion contable. Con esos puntos aprobados y sin bugs
 bloqueantes, Control+ queda en condicion de entrega operativa.
+
+## 12. Acta tecnica de entrega operativa
+
+Esta acta debe completarse con evidencia del entorno productivo y ser aprobada
+por los responsables indicados. Los campos pendientes no deben marcarse como
+aprobados solamente por existir en el repositorio.
+
+### Identificacion de la entrega
+
+| Campo | Valor |
+|---|---|
+| Sistema | Control+ |
+| Fecha de preparacion del acta | 2026-06-08 |
+| Fecha efectiva de entrega | Pendiente |
+| Version/rama | `release/entrega-operativa-control-plus` |
+| Estado tecnico del repositorio | Build y `git diff --check` aprobados |
+| Estado de entrega | Listo para validacion final; entrega aprobada pendiente |
+
+### Confirmaciones operativas
+
+| Confirmacion | Estado | Responsable | Fecha | Evidencia u observaciones |
+|---|---|---|---|---|
+| SQL critico revisado y aplicado en Supabase | Pendiente | | | Registrar scripts, orden y resultado |
+| RLS y RPCs verificados con sesiones autenticadas | Pendiente | | | Adjuntar pruebas positivas y negativas |
+| Usuarios productivos configurados | Pendiente | | | Adjuntar lista aprobada de perfiles activos |
+| Empresas productivas configuradas y asignadas | Pendiente | | | Adjuntar matriz usuario-empresa |
+| Funciones operativas asignadas por empresa | Pendiente | | | Adjuntar matriz de permisos aprobada |
+| Backup previo a produccion realizado | Pendiente | | | Registrar fecha, responsable y ubicacion controlada |
+| Prueba minima obligatoria ejecutada | Pendiente | | | Enlazar evidencia de la prueba integral |
+| Catalogo `tipo`/`subtipo` validado | Pendiente | | | Registrar revision de clasificacion contable |
+| Reportes y exportaciones validados | Pendiente | | | Adjuntar muestras aprobadas |
+| Aprobacion contable recibida | Pendiente | | | Firma o confirmacion del contador responsable |
+| Documentacion entregada a usuarios y soporte | Pendiente | | | Registrar destinatarios y fecha |
+
+### SQL aplicado
+
+Completar la fecha, responsable y resultado real de cada script:
+
+| Archivo | Aplicado | Fecha | Responsable | Resultado/evidencia |
+|---|---|---|---|---|
+| `sql/rpc_asientos_contables.sql` | Pendiente | | | |
+| `sql/rpc_finalizar_asiento_contable.sql` | Pendiente | | | |
+| `sql/rpc_anular_asiento_contable.sql` | Pendiente | | | |
+| `sql/rpc_contabilizar_documento_contable.sql` | Pendiente | | | |
+| `sql/rpc_cerrar_periodo_contable.sql` | Pendiente | | | |
+| `sql/rpc_cheques.sql` | Pendiente | | | |
+| `sql/contabilidad_formal_rls_revisable.sql` | Pendiente | | | |
+| `sql/movimientos_operativos_rls_propuesto.sql` | Pendiente | | | |
+| `sql/impuestos_configuracion_contabilidad_rls.sql` | Pendiente | | | |
+
+### Resumen de configuracion entregada
+
+| Elemento | Cantidad o referencia | Estado | Evidencia |
+|---|---|---|---|
+| Usuarios configurados | Pendiente | Pendiente | |
+| Empresas configuradas | Pendiente | Pendiente | |
+| Asignaciones usuario-empresa | Pendiente | Pendiente | |
+| Funciones operativas asignadas | Pendiente | Pendiente | |
+| Periodos contables abiertos | Pendiente | Pendiente | |
+| Fondos y chequeras configurados | Pendiente | Pendiente | |
+
+### Observaciones finales
+
+Registrar aqui excepciones aceptadas, limitaciones comunicadas, incidencias
+resueltas durante la salida y cualquier condicion acordada para soporte:
+
+______________________________________________________________________________
+
+______________________________________________________________________________
+
+______________________________________________________________________________
+
+### Aceptacion del acta
+
+| Area | Nombre | Estado | Fecha | Firma o confirmacion |
+|---|---|---|---|---|
+| Responsable de negocio | | Pendiente | | |
+| Contador responsable | | Pendiente | | |
+| Administracion Control+ | | Pendiente | | |
+| Seguridad/Supabase | | Pendiente | | |
+| Soporte tecnico | | Pendiente | | |
+
+La entrega puede declararse aprobada cuando todas las confirmaciones criticas de
+esta acta tengan evidencia, no existan bugs bloqueantes y las areas responsables
+hayan registrado su aceptacion.
