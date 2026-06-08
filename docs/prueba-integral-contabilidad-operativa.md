@@ -4,6 +4,13 @@ Fecha de preparacion: 2026-06-07
 
 Estado inicial: pendiente de ejecucion en staging o entorno controlado.
 
+Documentacion relacionada para entrega:
+
+- [Manual de usuario Control+](manual-usuario-control-plus.md)
+- [Manual administrativo Control+](manual-admin-control-plus.md)
+- [Checklist de produccion Control+](checklist-produccion-control-plus.md)
+- [Matriz de permisos Control+](matriz-permisos-control-plus.md)
+
 ## 1. Objetivo y alcance
 
 Confirmar que UI, permisos por empresa, funciones operativas, RLS y RPCs trabajan
