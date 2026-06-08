@@ -9,7 +9,6 @@ import {
   Building2,
   Landmark,
   Loader2,
-  Lock,
   RefreshCcw,
   ShieldCheck,
   Wallet,
@@ -379,15 +378,10 @@ export default function FlujoEfectivoPage() {
             <TablaFondos fondos={fondosFiltrados} empresasPorId={empresasPorId} />
           </Panel>
 
-          <Panel titulo="Próximamente" subtitulo="Conexiones previstas para fases posteriores.">
-            <div className="flex flex-wrap gap-3">
-              {["Registrar ingreso", "Registrar egreso", "Crear fondo", "Proyectar flujo", "Conectar conciliación"].map((label) => (
-                <button key={label} type="button" disabled className="inline-flex items-center gap-2 rounded-xl border border-[var(--card-border)] bg-[var(--surface)] px-4 py-3 text-sm font-bold text-[var(--muted)] opacity-70">
-                  <Lock size={14} />
-                  {label} - Próximamente
-                </button>
-              ))}
-            </div>
+          <Panel titulo="Fase posterior" subtitulo="Conexiones no incluidas en el alcance operativo inicial.">
+            <p className="text-sm text-[var(--muted)]">
+              Las acciones de registro, proyeccion y conciliacion se habilitaran solo despues de su validacion operativa.
+            </p>
           </Panel>
         </div>
       </main>

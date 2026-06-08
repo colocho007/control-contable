@@ -7,6 +7,7 @@ import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 import { registrarAuditoriaEvento } from "../../lib/auditoria";
 import { Users, Plus, Trash2, Loader2 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
 const MOTIVO_DESACTIVACION = "Desactivado desde modulo Usuarios";
@@ -65,7 +66,7 @@ export default function UsuariosPage() {
             acceso.motivo === "usuario_inactivo"
           ) {
             if (acceso.motivo === "usuario_inactivo") {
-              alert("Tu usuario esta inactivo. Contacta al administrador.");
+              toast.error("Tu usuario esta inactivo. Contacta al administrador.");
             }
 
             router.replace("/login");
@@ -76,9 +77,9 @@ export default function UsuariosPage() {
             acceso.motivo === "modulo_inactivo" ||
             acceso.motivo === "modulo_no_encontrado"
           ) {
-            alert("El modulo de Usuarios esta desactivado.");
+            toast.error("El modulo de Usuarios esta desactivado.");
           } else {
-            alert("No tienes acceso al modulo de Usuarios.");
+            toast.error("No tienes acceso al modulo de Usuarios.");
           }
 
           router.replace("/dashboard");
@@ -122,7 +123,7 @@ export default function UsuariosPage() {
 
   async function crearPerfil() {
     if (!form.nombre.trim() || !form.uid.trim() || !form.correo.trim()) {
-      alert("Completa el nombre, correo y UID existente de Supabase Auth.");
+      toast.error("Completa el nombre, correo y UID existente de Supabase Auth.");
       return;
     }
 
@@ -153,9 +154,9 @@ export default function UsuariosPage() {
 
       setForm({ nombre: "", uid: "", correo: "", rol: "empleado" });
       await obtenerPerfiles();
-      alert(resultado?.advertencia || "Perfil de usuario creado correctamente.");
+      toast.success(resultado?.advertencia || "Perfil de usuario creado correctamente.");
     } catch (error: unknown) {
-      alert("Error al crear perfil de usuario: " + obtenerMensajeError(error));
+      toast.error("Error al crear perfil de usuario: " + obtenerMensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -163,7 +164,7 @@ export default function UsuariosPage() {
 
   async function desactivarPerfil(id: string) {
     if (id === currentUserId) {
-      alert("No puedes desactivar tu propio perfil de usuario.");
+      toast.error("No puedes desactivar tu propio perfil de usuario.");
       return;
     }
 
@@ -215,13 +216,13 @@ export default function UsuariosPage() {
       }
 
       await obtenerPerfiles();
-      alert(
+      toast.success(
         auditoriaRegistrada
           ? "Perfil de usuario desactivado correctamente."
           : "Perfil desactivado, pero no se pudo registrar la auditoria. Contacta al administrador."
       );
     } catch (error: unknown) {
-      alert("No se pudo desactivar el perfil: " + obtenerMensajeError(error));
+      toast.error("No se pudo desactivar el perfil: " + obtenerMensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -239,6 +240,7 @@ export default function UsuariosPage() {
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
       <Sidebar />
+      <Toaster position="top-right" />
       <main className="flex-1 p-8">
         <div className="max-w-7xl mx-auto">
           <header className="mb-10">

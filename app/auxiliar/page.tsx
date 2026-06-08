@@ -561,9 +561,9 @@ function TablaTareas({
               </td>
               <td className="px-4 py-4">
                 <div className="flex flex-col gap-2">
-                  <BotonProximamente label="Tomar tarea" />
-                  <BotonProximamente label="Enviar a contador" />
-                  <BotonProximamente label="Marcar preparado" />
+                  <AccionFasePosterior label="Tomar tarea" />
+                  <AccionFasePosterior label="Enviar a contador" />
+                  <AccionFasePosterior label="Marcar preparado" />
                 </div>
               </td>
             </tr>
@@ -608,7 +608,7 @@ function ListaDocumentos({
             <LineaDato label="Monto" valor={formatoMonto(documento.monto, documento.moneda)} />
           </div>
           <div className="mt-4">
-            <BotonProximamente label="Revisar documento" />
+            <AccionFasePosterior label="Revisar documento" />
           </div>
         </article>
       ))}
@@ -657,8 +657,8 @@ function ListaCheques({
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <BotonProximamente label="Preparar cheque" />
-              <BotonProximamente label="Enviar a revisión" />
+              <AccionFasePosterior label="Preparar cheque" />
+              <AccionFasePosterior label="Enviar a revisión" />
             </div>
           </div>
         </article>
@@ -691,7 +691,7 @@ function EstadoPill({ estado }: { estado: string }) {
   );
 }
 
-function BotonProximamente({ label }: { label: string }) {
+function AccionFasePosterior({ label }: { label: string }) {
   void label;
   return null;
 }

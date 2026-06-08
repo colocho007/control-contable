@@ -22,7 +22,7 @@ type Tab =
   | "activos"
   | "movimientos"
   | "depreciaciones"
-  | "proximamente";
+  | "fase_posterior";
 
 type Empresa = {
   id: number;
@@ -133,7 +133,7 @@ const tabs: { id: Tab; etiqueta: string }[] = [
   { id: "activos", etiqueta: "Activos fijos" },
   { id: "movimientos", etiqueta: "Movimientos" },
   { id: "depreciaciones", etiqueta: "Depreciaciones" },
-  { id: "proximamente", etiqueta: "Próximamente" },
+  { id: "fase_posterior", etiqueta: "Fase posterior" },
 ];
 
 const activoInicial = {
@@ -798,15 +798,11 @@ export default function ActivosFijosPage() {
           </section>
         )}
 
-        {tab === "proximamente" && (
-          <Panel titulo="Integraciones futuras">
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {["Generar depreciación automática", "Contabilizar depreciaciones", "Procesar baja de activo", "Conectar documentos y trámites", "Conectar proyectos", "Ver reportes avanzados"].map((texto) => (
-                <button key={texto} type="button" disabled className="cursor-not-allowed rounded-xl border border-slate-700 bg-slate-950 p-4 text-left text-sm text-slate-500">
-                  {texto} · Próximamente
-                </button>
-              ))}
-            </div>
+        {tab === "fase_posterior" && (
+          <Panel titulo="Fase posterior">
+            <p className="text-sm text-slate-400">
+              Automatizaciones e integraciones no incluidas en el alcance operativo inicial.
+            </p>
           </Panel>
         )}
       </div>

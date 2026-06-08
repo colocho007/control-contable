@@ -1367,7 +1367,7 @@ function TablaEmpleados({ empleados, empresasPorId }: { empleados: EmpleadoPlani
             <td className="px-4 py-4 text-gray-300">{monto(empleado.salario_base, empleado.moneda)}</td>
             <td className="px-4 py-4 text-gray-300">{monto(empleado.bonificacion_incentivo, empleado.moneda)}</td>
             <td className="px-4 py-4"><Badge estado={empleado.activo ? empleado.estado : "Inactivo"} /></td>
-            <td className="px-4 py-4"><BotonProximamente label="Editar" /></td>
+            <td className="px-4 py-4"><AccionFasePosterior label="Editar" /></td>
           </tr>
         ))}
       </tbody>
@@ -1392,7 +1392,7 @@ function TablaPeriodos({ periodos, empresasPorId }: { periodos: PeriodoPlanilla[
             <td className="px-4 py-4 text-gray-300">Inicio {fechaMostrar(periodo.fecha_inicio)}<br />Fin {fechaMostrar(periodo.fecha_fin)}<br />Pago {fechaMostrar(periodo.fecha_pago)}</td>
             <td className="px-4 py-4"><Badge estado={periodo.estado} /></td>
             <td className="px-4 py-4 text-gray-300">Devengado {monto(periodo.total_devengado, periodo.moneda)}<br />Descuentos {monto(periodo.total_descuentos, periodo.moneda)}<br />Neto {monto(periodo.total_neto, periodo.moneda)}</td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Aprobar" /><BotonProximamente label="Pagar" /><BotonProximamente label="Anular" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Aprobar" /><AccionFasePosterior label="Pagar" /><AccionFasePosterior label="Anular" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1482,7 +1482,7 @@ function Badge({ estado }: { estado: string }) {
   return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${clase}`}>{estado}</span>;
 }
 
-function BotonProximamente({ label }: { label: string }) {
+function AccionFasePosterior({ label }: { label: string }) {
   void label;
   return null;
 }

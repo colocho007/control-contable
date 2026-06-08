@@ -52,6 +52,7 @@ import {
   listarFuncionesOperativasUsuario,
   type UsuarioFuncionOperativa,
 } from "../../lib/funcionesOperativas";
+import toast, { Toaster } from "react-hot-toast";
 
 interface Empresa {
   id: number;
@@ -203,7 +204,7 @@ export default function ReportesPage() {
           );
 
           if (!volverLogin) {
-            window.alert("No tienes acceso al modulo Reportes.");
+            toast.error("No tienes acceso al modulo Reportes.");
           }
 
           router.replace(volverLogin ? "/login" : "/dashboard");
@@ -873,7 +874,7 @@ export default function ReportesPage() {
   async function exportarCsv() {
     const secciones = seccionesExportacionReportes();
     if (!secciones.length) {
-      window.alert("No hay datos de reportes para exportar.");
+      toast.error("No hay datos de reportes para exportar.");
       return;
     }
 
@@ -885,7 +886,7 @@ export default function ReportesPage() {
     const rateLimit = await validarRateLimitExportacionReporte("csv", totalFilas);
     if (!rateLimit.permitido) {
       liberarExportacionReporte();
-      window.alert(rateLimit.mensaje);
+      toast.error(rateLimit.mensaje);
       void auditarReporte("bloquear_exportacion_reporte", {
         formato: "csv",
         filtros: filtrosCargados,
@@ -921,7 +922,7 @@ export default function ReportesPage() {
   async function imprimirPdf() {
     const secciones = seccionesExportacionReportes();
     if (!secciones.length) {
-      window.alert("No hay datos de reportes para imprimir.");
+      toast.error("No hay datos de reportes para imprimir.");
       return;
     }
 
@@ -936,7 +937,7 @@ export default function ReportesPage() {
     );
     if (!rateLimit.permitido) {
       liberarExportacionReporte();
-      window.alert(rateLimit.mensaje);
+      toast.error(rateLimit.mensaje);
       void auditarReporte("bloquear_exportacion_reporte", {
         formato: "pdf_vista_imprimible",
         filtros: filtrosCargados,
@@ -980,7 +981,7 @@ export default function ReportesPage() {
     const secciones = seccionesReporteEntrega(tipo);
     const totalFilas = totalFilasSecciones(secciones);
     if (!secciones.length || totalFilas === 0) {
-      window.alert(`No hay datos filtrados para ${configuracion.titulo}.`);
+      toast.error(`No hay datos filtrados para ${configuracion.titulo}.`);
       return;
     }
 
@@ -990,7 +991,7 @@ export default function ReportesPage() {
     const rateLimit = await validarRateLimitExportacionReporte(alcanceFormato, totalFilas);
     if (!rateLimit.permitido) {
       liberarExportacionReporte();
-      window.alert(rateLimit.mensaje);
+      toast.error(rateLimit.mensaje);
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
         reporte: tipo,
@@ -1046,7 +1047,7 @@ export default function ReportesPage() {
       empresaFiltrada !== null &&
       (!Number.isInteger(empresaFiltrada) || !empresasPermitidasIds.includes(empresaFiltrada))
     ) {
-      window.alert("La empresa seleccionada no esta autorizada para exportar.");
+      toast.error("La empresa seleccionada no esta autorizada para exportar.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
         filtros: filtrosCargados,
@@ -1067,7 +1068,7 @@ export default function ReportesPage() {
       ahora - ultimaExportacionAtRef.current < VENTANA_EXPORTACION_REPETIDA_MS;
 
     if (repetida) {
-      window.alert("Ya hay una exportacion de reportes en proceso. Espera un momento.");
+      toast.error("Ya hay una exportacion de reportes en proceso. Espera un momento.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
         filtros: filtrosCargados,
@@ -1083,7 +1084,7 @@ export default function ReportesPage() {
     }
 
     if (totalFilas > LIMITE_FILAS_EXPORTACION_REPORTES) {
-      window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
+      toast.error("La exportacion supera el limite operativo de filas. Ajusta filtros.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
         filtros: filtrosCargados,
@@ -1236,6 +1237,7 @@ export default function ReportesPage() {
   return (
     <div className="flex bg-[#020617] min-h-screen text-white font-sans">
       <Sidebar />
+      <Toaster position="top-right" />
 
       <main className="flex-1 p-6 md:p-8">
         <div className="max-w-7xl mx-auto">

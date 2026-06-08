@@ -24,6 +24,7 @@ import {
   Trash2,
   Wallet,
 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 
 interface Empresa {
   id: number;
@@ -113,7 +114,7 @@ export default function FinanzasPage() {
           acceso.motivo === "usuario_inactivo"
         ) {
           if (acceso.motivo === "usuario_inactivo") {
-            alert("Tu usuario esta inactivo. Contacta al administrador.");
+            toast.error("Tu usuario esta inactivo. Contacta al administrador.");
           }
 
           router.replace("/login");
@@ -124,9 +125,9 @@ export default function FinanzasPage() {
           acceso.motivo === "modulo_inactivo" ||
           acceso.motivo === "modulo_no_encontrado"
         ) {
-          alert("El modulo de Finanzas esta desactivado.");
+          toast.error("El modulo de Finanzas esta desactivado.");
         } else {
-          alert("No tienes acceso al modulo de Finanzas.");
+          toast.error("No tienes acceso al modulo de Finanzas.");
         }
 
         router.replace("/dashboard");
@@ -265,12 +266,12 @@ export default function FinanzasPage() {
 
   async function crearMovimiento() {
     if (procesando) {
-      alert("Ya hay una operacion en proceso.");
+      toast.error("Ya hay una operacion en proceso.");
       return;
     }
 
     if (!userId) {
-      alert("Sesion no valida.");
+      toast.error("Sesion no valida.");
       return;
     }
 
@@ -281,7 +282,7 @@ export default function FinanzasPage() {
       empresaId = validarEmpresaPermitida(form.empresaId, "crear movimientos");
       montoValidado = numero(form.monto);
     } catch (error) {
-      alert(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
       return;
     }
 
@@ -289,32 +290,32 @@ export default function FinanzasPage() {
       if (esAuditorSoloLectura(empresaId)) {
         await auditarBloqueoAuditor("crear_movimiento", empresaId);
       }
-      alert("No tienes permiso para crear movimientos en esta empresa.");
+      toast.error("No tienes permiso para crear movimientos en esta empresa.");
       return;
     }
 
     if (!TIPOS_MOVIMIENTO.includes(form.tipo as (typeof TIPOS_MOVIMIENTO)[number])) {
-      alert("El tipo de movimiento no es valido.");
+      toast.error("El tipo de movimiento no es valido.");
       return;
     }
 
     if (!form.descripcion.trim()) {
-      alert("La descripcion es obligatoria.");
+      toast.error("La descripcion es obligatoria.");
       return;
     }
 
     if (montoValidado <= 0) {
-      alert("El monto debe ser mayor a cero.");
+      toast.error("El monto debe ser mayor a cero.");
       return;
     }
 
     if (!MONEDAS.includes(form.moneda as (typeof MONEDAS)[number])) {
-      alert("La moneda debe ser GTQ o USD.");
+      toast.error("La moneda debe ser GTQ o USD.");
       return;
     }
 
     if (!form.fecha) {
-      alert("La fecha es obligatoria.");
+      toast.error("La fecha es obligatoria.");
       return;
     }
 
@@ -382,14 +383,14 @@ export default function FinanzasPage() {
 
       await obtenerMovimientos();
 
-      alert(
+      toast.success(
         auditoriaRegistrada
           ? "Movimiento creado correctamente."
           : "Movimiento creado, pero no se pudo registrar la auditoria central."
       );
     } catch (error) {
       console.error("Error creando movimiento:", error);
-      alert(`Error al registrar movimiento: ${getErrorMessage(error)}`);
+      toast.error(`Error al registrar movimiento: ${getErrorMessage(error)}`);
     } finally {
       setProcesando(false);
     }
@@ -397,17 +398,17 @@ export default function FinanzasPage() {
 
   async function anularMovimiento(movimiento: Movimiento) {
     if (procesando) {
-      alert("Ya hay una operacion en proceso.");
+      toast.error("Ya hay una operacion en proceso.");
       return;
     }
 
     if (!userId) {
-      alert("Sesion no valida.");
+      toast.error("Sesion no valida.");
       return;
     }
 
     if (!movimiento.empresa_id) {
-      alert("No se encontro una empresa valida para este movimiento.");
+      toast.error("No se encontro una empresa valida para este movimiento.");
       return;
     }
 
@@ -416,7 +417,7 @@ export default function FinanzasPage() {
     try {
       empresaId = validarEmpresaPermitida(movimiento.empresa_id, "anular movimientos");
     } catch (error) {
-      alert(getErrorMessage(error));
+      toast.error(getErrorMessage(error));
       return;
     }
 
@@ -424,19 +425,19 @@ export default function FinanzasPage() {
       if (esAuditorSoloLectura(empresaId)) {
         await auditarBloqueoAuditor("anular_movimiento", empresaId, movimiento.id);
       }
-      alert("No tienes permiso para anular movimientos en esta empresa.");
+      toast.error("No tienes permiso para anular movimientos en esta empresa.");
       return;
     }
 
     if ((movimiento.estado || "activo") === "anulado") {
-      alert("El movimiento ya esta anulado.");
+      toast.error("El movimiento ya esta anulado.");
       return;
     }
 
     const motivo = window.prompt("Indica el motivo de anulacion:");
 
     if (!motivo || motivo.trim().length < 5) {
-      alert("Debes escribir un motivo valido para anular.");
+      toast.error("Debes escribir un motivo valido para anular.");
       return;
     }
 
@@ -515,14 +516,14 @@ export default function FinanzasPage() {
 
       await obtenerMovimientos();
 
-      alert(
+      toast.success(
         auditoriaRegistrada && historialRegistrado
           ? "Movimiento anulado correctamente."
           : "Movimiento anulado, pero hubo un problema registrando auditoria o historial."
       );
     } catch (error) {
       console.error("Error anulando movimiento:", error);
-      alert(`Error al anular movimiento: ${getErrorMessage(error)}`);
+      toast.error(`Error al anular movimiento: ${getErrorMessage(error)}`);
     } finally {
       setProcesando(false);
     }
@@ -586,6 +587,7 @@ export default function FinanzasPage() {
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
       <Sidebar />
+      <Toaster position="top-right" />
 
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">

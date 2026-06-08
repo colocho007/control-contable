@@ -649,7 +649,7 @@ export default function ImportacionesPage() {
     }
 
     if (esEmpresaDePrueba(empresa)) {
-      errores.push(`No se permite importar a empresas de prueba/demo: ${nombreEmpresa}`);
+      errores.push(`No se permite importar a empresas no operativas: ${nombreEmpresa}`);
       return null;
     }
 

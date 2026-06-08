@@ -25,7 +25,7 @@ import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
 import { supabase } from "../../lib/supabase";
 import { validarAccesoModuloUsuario } from "../../lib/validarAccesoModuloUsuario";
 
-type Tab = "resumen" | "proyectos" | "presupuestos" | "movimientos" | "proximamente";
+type Tab = "resumen" | "proyectos" | "presupuestos" | "movimientos" | "fase_posterior";
 type Moneda = "GTQ" | "USD";
 
 interface Empresa {
@@ -557,14 +557,14 @@ export default function ProyectosPage() {
           {exito && <Aviso tono="verde">{exito}</Aviso>}
 
           <nav className="flex flex-wrap gap-2">{([
-            ["resumen", "Resumen"], ["proyectos", "Proyectos / centros de costo"], ["presupuestos", "Presupuestos"], ["movimientos", "Movimientos"], ["proximamente", "Fase posterior"],
+            ["resumen", "Resumen"], ["proyectos", "Proyectos / centros de costo"], ["presupuestos", "Presupuestos"], ["movimientos", "Movimientos"], ["fase_posterior", "Fase posterior"],
           ] as Array<[Tab, string]>).map(([clave, label]) => <button key={clave} type="button" onClick={() => setTab(clave)} className={`rounded-xl px-4 py-3 text-sm font-black ${tab === clave ? "bg-cyan-500 text-black" : "border border-[var(--card-border)] bg-[var(--card)] text-[var(--muted-strong)]"}`}>{label}</button>)}</nav>
 
           {tab === "resumen" && <ResumenPanel resumen={resumen} movimientos={movimientos.length} />}
           {tab === "proyectos" && <><Panel titulo="Proyectos / centros de costo" subtitulo="Catalogo operativo por empresa."><TablaProyectos proyectos={proyectos} empresasPorId={empresasPorId} /></Panel>{puedeEscribirAlguna && !auditorSoloLectura && <FormProyecto form={formProyecto} setForm={setFormProyecto} empresas={empresasEscritura} guardando={procesando} guardar={guardarProyecto} />}</>}
           {tab === "presupuestos" && <><Panel titulo="Presupuestos" subtitulo="Presupuesto, comprometido y ejecutado sin afectar saldos reales."><TablaPresupuestos presupuestos={presupuestos} empresasPorId={empresasPorId} proyectosPorId={proyectosPorId} /></Panel>{puedeEscribirAlguna && !auditorSoloLectura && <FormPresupuesto form={formPresupuesto} setForm={setFormPresupuesto} empresas={empresasEscritura} proyectos={proyectos} guardando={procesando} guardar={guardarPresupuesto} />}</>}
           {tab === "movimientos" && <><Panel titulo="Movimientos" subtitulo="Movimientos manuales sin generar pagos ni asientos contables."><TablaMovimientos movimientos={movimientos} empresasPorId={empresasPorId} proyectosPorId={proyectosPorId} /></Panel>{puedeEscribirAlguna && !auditorSoloLectura && <FormMovimiento form={formMovimiento} setForm={setFormMovimiento} empresas={empresasEscritura} proyectos={proyectos} guardando={procesando} guardar={guardarMovimiento} />}</>}
-          {tab === "proximamente" && <Panel titulo="Fase posterior" subtitulo="Integraciones no incluidas en el alcance operativo inicial."><p className="text-sm text-[var(--muted)]">Las integraciones con otros flujos permaneceran fuera de la presentacion hasta contar con validacion operativa.</p></Panel>}
+          {tab === "fase_posterior" && <Panel titulo="Fase posterior" subtitulo="Integraciones no incluidas en el alcance operativo inicial."><p className="text-sm text-[var(--muted)]">Las integraciones con otros flujos permaneceran fuera de la presentacion hasta contar con validacion operativa.</p></Panel>}
         </div>
       </main>
     </div>

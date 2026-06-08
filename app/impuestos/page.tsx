@@ -37,7 +37,7 @@ type Tab =
   | "periodos"
   | "resumen_periodo"
   | "calendario"
-  | "proximamente";
+  | "fase_posterior";
 type Moneda = "GTQ" | "USD";
 
 interface Perfil {
@@ -1319,7 +1319,7 @@ export default function ImpuestosPage() {
             </Panel>
           )}
 
-          {tab === "proximamente" && (
+          {tab === "fase_posterior" && (
             <Panel
               titulo="Fase posterior"
               subtitulo="Funciones no incluidas en el alcance operativo inicial."
@@ -1333,7 +1333,7 @@ export default function ImpuestosPage() {
                   "Adjuntar documentos desde este modulo",
                   "Sincronizar calendario operativo",
                 ].map((item) => (
-                  <BotonProximamente key={item} label={item} />
+                  <AccionFasePosterior key={item} label={item} />
                 ))}
               </div>
             </Panel>
@@ -1448,7 +1448,7 @@ function Tabs({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
     { id: "periodos", label: "Periodos", icon: <CalendarDays size={15} /> },
     { id: "resumen_periodo", label: "Resumen periodo", icon: <BadgeDollarSign size={15} /> },
     { id: "calendario", label: "Vencimientos", icon: <CalendarDays size={15} /> },
-    { id: "proximamente", label: "Fase posterior", icon: <Lock size={15} /> },
+    { id: "fase_posterior", label: "Fase posterior", icon: <Lock size={15} /> },
   ];
 
   return (
@@ -1829,7 +1829,7 @@ function TablaConfiguracion({
             <td className="px-4 py-4 text-gray-300">Compra: {item.aplica_compra ? "Si" : "No"}<br />Venta: {item.aplica_venta ? "Si" : "No"}<br />Retencion: {item.aplica_retencion ? "Si" : "No"}</td>
             <td className="px-4 py-4 text-gray-300">Proveedor {item.proveedor_id || "-"}<br />Cliente {item.cliente_id || "-"}</td>
             <td className="px-4 py-4"><Badge estado={item.activo ? "Activa" : "Inactiva"} /></td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Editar" /><BotonProximamente label="Inactivar" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Editar" /><AccionFasePosterior label="Inactivar" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1857,7 +1857,7 @@ function TablaDocumentos({ documentos, empresasPorId }: { documentos: ImpuestoDo
             <td className="px-4 py-4 text-gray-300">Doc {fechaMostrar(item.fecha_documento)}<br />Recepcion {fechaMostrar(item.fecha_recepcion)}</td>
             <td className="px-4 py-4 text-gray-300">Subtotal {monto(item.subtotal, item.moneda)}<br />IVA {monto(item.iva, item.moneda)}<br />Total {monto(item.total, item.moneda)}</td>
             <td className="px-4 py-4"><Badge estado={item.estado} /></td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Adjuntar soporte" /><BotonProximamente label="Revisar" /><BotonProximamente label="Anular" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Adjuntar soporte" /><AccionFasePosterior label="Revisar" /><AccionFasePosterior label="Anular" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1883,7 +1883,7 @@ function TablaPeriodos({ periodos, empresasPorId }: { periodos: ImpuestoPeriodo[
             <td className="px-4 py-4"><p className="font-bold">{item.anio} / {MESES[item.mes - 1] || item.mes}</p><p className="text-xs text-gray-500">{item.tipo_periodo}</p></td>
             <td className="px-4 py-4 text-gray-300">Inicio {fechaMostrar(item.fecha_inicio)}<br />Fin {fechaMostrar(item.fecha_fin)}<br />Vence {fechaMostrar(item.fecha_vencimiento)}</td>
             <td className="px-4 py-4"><Badge estado={item.estado} /></td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Cerrar" /><BotonProximamente label="Declarar" /><BotonProximamente label="Anular" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Cerrar" /><AccionFasePosterior label="Declarar" /><AccionFasePosterior label="Anular" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1921,7 +1921,7 @@ function TablaResumenes({
               <td className="px-4 py-4 text-gray-300">Credito {monto(item.credito_fiscal, item.moneda)}<br />Debito {monto(item.debito_fiscal, item.moneda)}<br />Por pagar {monto(item.iva_por_pagar, item.moneda)}<br />A favor {monto(item.iva_a_favor, item.moneda)}</td>
               <td className="px-4 py-4 text-gray-300">Ret. IVA {monto(item.retenciones_iva, item.moneda)}<br />Ret. ISR {monto(item.retenciones_isr, item.moneda)}<br />ISR est. {monto(item.isr_estimado, item.moneda)}</td>
               <td className="px-4 py-4"><Badge estado={item.estado} /></td>
-              <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Declarar" /><BotonProximamente label="Generar CxP" /><BotonProximamente label="Crear asiento" /></div></td>
+              <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Declarar" /><AccionFasePosterior label="Generar CxP" /><AccionFasePosterior label="Crear asiento" /></div></td>
             </tr>
           );
         })}
@@ -1950,7 +1950,7 @@ function TablaCalendario({ calendario, empresasPorId }: { calendario: ImpuestoCa
             <td className="px-4 py-4 text-gray-300">{fechaMostrar(item.fecha_vencimiento)}</td>
             <td className="px-4 py-4 text-gray-300">{monto(item.monto_estimado, item.moneda)}</td>
             <td className="px-4 py-4"><Badge estado={item.estado} /></td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Cumplir" /><BotonProximamente label="Conectar calendario" /><BotonProximamente label="Anular" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Cumplir" /><AccionFasePosterior label="Conectar calendario" /><AccionFasePosterior label="Anular" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1979,7 +1979,7 @@ function Badge({ estado }: { estado: string }) {
   return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${clase}`}>{estado}</span>;
 }
 
-function BotonProximamente({ label }: { label: string }) {
+function AccionFasePosterior({ label }: { label: string }) {
   void label;
   return null;
 }

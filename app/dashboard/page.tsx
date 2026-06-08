@@ -215,15 +215,15 @@ export default function DashboardPage() {
         acceso.motivo === "usuario_inactivo"
       ) {
         if (acceso.motivo === "usuario_inactivo") {
-          alert("Tu usuario está inactivo. Contacta al administrador.");
+          toast.error("Tu usuario está inactivo. Contacta al administrador.");
         }
       } else if (
         acceso.motivo === "modulo_inactivo" ||
         acceso.motivo === "modulo_no_encontrado"
       ) {
-        alert("El módulo Dashboard está desactivado.");
+        toast.error("El módulo Dashboard está desactivado.");
       } else {
-        alert("No tienes acceso al módulo Dashboard.");
+        toast.error("No tienes acceso al módulo Dashboard.");
       }
 
       setAutorizado(false);

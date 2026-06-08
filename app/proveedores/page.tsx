@@ -99,6 +99,7 @@ export default function ProveedoresPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [procesando, setProcesando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
@@ -156,28 +157,39 @@ export default function ProveedoresPage() {
   async function iniciar() {
     setValidandoAcceso(true);
     setCargando(true);
+    setErrorCarga(null);
 
-    const acceso = await validarAccesoModuloUsuario("proveedores");
-    if (!acceso.ok) {
-      if (["sin_sesion", "sin_perfil", "usuario_inactivo"].includes(acceso.motivo || "")) {
-        window.location.href = "/login";
+    try {
+      const acceso = await validarAccesoModuloUsuario("proveedores");
+      if (!acceso.ok) {
+        if (["sin_sesion", "sin_perfil", "usuario_inactivo"].includes(acceso.motivo || "")) {
+          window.location.href = "/login";
+          return;
+        }
+        window.location.href = "/dashboard";
         return;
       }
-      window.location.href = "/dashboard";
-      return;
-    }
 
-    const usuarioId = acceso.user?.id || null;
-    setUserId(usuarioId);
-    const ids = usuarioId
-      ? await obtenerEmpresasPermitidas(usuarioId, acceso.perfil?.rol || "")
-      : [];
-    const funciones = usuarioId ? await listarFuncionesOperativasUsuario(usuarioId, ids) : [];
-    setEmpresasPermitidasIds(ids);
-    setFuncionesOperativas(funciones);
-    setAutorizado(true);
-    setValidandoAcceso(false);
-    await cargarDatos(ids);
+      const usuarioId = acceso.user?.id || null;
+      setUserId(usuarioId);
+      const ids = usuarioId
+        ? await obtenerEmpresasPermitidas(usuarioId, acceso.perfil?.rol || "")
+        : [];
+      const funciones = usuarioId ? await listarFuncionesOperativasUsuario(usuarioId, ids) : [];
+      setEmpresasPermitidasIds(ids);
+      setFuncionesOperativas(funciones);
+      setAutorizado(true);
+      await cargarDatos(ids);
+    } catch (error) {
+      console.error("No se pudo inicializar Proveedores:", error);
+      setAutorizado(true);
+      setErrorCarga(
+        "No se pudo cargar Proveedores. Revisa la conexion y los permisos de las empresas asignadas."
+      );
+    } finally {
+      setValidandoAcceso(false);
+      setCargando(false);
+    }
   }
 
   async function cargarDatos(ids = empresasPermitidasIds) {
@@ -191,6 +203,7 @@ export default function ProveedoresPage() {
     }
 
     setCargando(true);
+    setErrorCarga(null);
     const filtroEmpresas = ids.join(",");
 
     const [empresasRes, proveedoresRes, cuentasRes, impuestosRes] = await Promise.all([
@@ -220,10 +233,19 @@ export default function ProveedoresPage() {
         .order("nombre", { ascending: true }),
     ]);
 
-    if (empresasRes.error) toast.error(empresasRes.error.message);
-    if (proveedoresRes.error) toast.error(proveedoresRes.error.message);
-    if (cuentasRes.error) toast.error(cuentasRes.error.message);
-    if (impuestosRes.error) toast.error(impuestosRes.error.message);
+    const errores = [
+      empresasRes.error,
+      proveedoresRes.error,
+      cuentasRes.error,
+      impuestosRes.error,
+    ].filter(Boolean);
+
+    if (errores.length) {
+      console.error("Consultas incompletas en Proveedores:", errores);
+      setErrorCarga(
+        "Algunos datos de Proveedores no pudieron cargarse. Revisa la conexion y los permisos configurados."
+      );
+    }
 
     const empresasData = (empresasRes.data || []) as Empresa[];
     setEmpresas(empresasData);
@@ -620,6 +642,19 @@ export default function ProveedoresPage() {
           <Resumen titulo="Empresas" valor={empresas.length} />
         </div>
 
+        {errorCarga && (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            {errorCarga}
+          </div>
+        )}
+
+        {!empresas.length && !cargando && (
+          <div className="mb-6 rounded-lg border border-dashed bg-white p-8 text-center text-gray-600 shadow-sm">
+            No hay empresas operativas asignadas para gestionar proveedores.
+          </div>
+        )}
+
+        {!!empresas.length && (
         <section className="mb-6 rounded-lg border bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
             <Truck className="h-5 w-5 text-blue-600" />
@@ -879,6 +914,7 @@ export default function ProveedoresPage() {
             )}
           </div>
         </section>
+        )}
 
         <section className="rounded-lg border bg-white p-5 shadow-sm">
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -901,7 +937,9 @@ export default function ProveedoresPage() {
             </div>
           ) : proveedoresFiltrados.length === 0 ? (
             <div className="rounded-md border border-dashed p-8 text-center text-gray-500">
-              No hay proveedores para los filtros seleccionados.
+              {busqueda.trim()
+                ? "No hay proveedores para los filtros seleccionados."
+                : "No hay proveedores registrados para esta empresa."}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">

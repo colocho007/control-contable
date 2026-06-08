@@ -37,7 +37,7 @@ type Tab =
   | "movimientos"
   | "vinculos"
   | "ajustes"
-  | "proximamente";
+  | "fase_posterior";
 type Moneda = "GTQ" | "USD";
 
 interface Perfil {
@@ -1250,7 +1250,7 @@ export default function ConciliacionBancariaPage() {
                 </Panel>
               )}
 
-              {tab === "proximamente" && (
+              {tab === "fase_posterior" && (
                 <Panel titulo="Fase posterior" subtitulo="Funciones no incluidas en el alcance operativo inicial.">
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {[
@@ -1262,7 +1262,7 @@ export default function ConciliacionBancariaPage() {
                       "Crear asiento contable",
                       "Calendario operativo",
                     ].map((item) => (
-                      <BotonProximamente key={item} label={item} />
+                      <AccionFasePosterior key={item} label={item} />
                     ))}
                   </div>
                 </Panel>
@@ -1383,7 +1383,7 @@ function Tabs({ tab, setTab }: { tab: Tab; setTab: (tab: Tab) => void }) {
     { id: "movimientos", label: "Movimientos", icon: <FileText size={15} /> },
     { id: "vinculos", label: "Vinculos", icon: <GitBranch size={15} /> },
     { id: "ajustes", label: "Ajustes", icon: <BadgeDollarSign size={15} /> },
-    { id: "proximamente", label: "Fase posterior", icon: <Lock size={15} /> },
+    { id: "fase_posterior", label: "Fase posterior", icon: <Lock size={15} /> },
   ];
   return (
     <div className="flex flex-wrap gap-2 rounded-2xl border border-[var(--card-border)] bg-[var(--card)] p-2">
@@ -1709,7 +1709,7 @@ function TablaCuentas({ cuentas, empresasPorId }: { cuentas: CuentaBancaria[]; e
             <td className="px-4 py-4 text-gray-300">{monto(cuenta.saldo_inicial, cuenta.moneda)}<br />{fechaMostrar(cuenta.fecha_saldo_inicial)}</td>
             <td className="px-4 py-4"><Badge estado={cuenta.activo ? cuenta.estado : "Inactiva"} /></td>
             <td className="px-4 py-4 text-gray-300">{cuenta.observaciones || "-"}</td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Editar" /><BotonProximamente label="Inactivar" /></div></td>
+            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Editar" /><AccionFasePosterior label="Inactivar" /></div></td>
           </tr>
         ))}
       </tbody>
@@ -1733,7 +1733,7 @@ function TablaEstados({ estados, empresasPorId, cuentasPorId }: { estados: Estad
               <td className="px-4 py-4 text-gray-300">{fechaMostrar(estado.fecha_inicio)} - {fechaMostrar(estado.fecha_fin)}</td>
               <td className="px-4 py-4 text-gray-300">Inicial {monto(estado.saldo_inicial, estado.moneda)}<br />Final {monto(estado.saldo_final, estado.moneda)}</td>
               <td className="px-4 py-4"><Badge estado={estado.estado} /></td>
-              <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Cerrar" /><BotonProximamente label="Conciliar" /><BotonProximamente label="Anular" /></div></td>
+              <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Cerrar" /><AccionFasePosterior label="Conciliar" /><AccionFasePosterior label="Anular" /></div></td>
             </tr>
           );
         })}
@@ -1759,7 +1759,7 @@ function TablaMovimientos({ movimientos, empresasPorId, cuentasPorId, estadosPor
               <td className="px-4 py-4 text-gray-300">{movimiento.referencia || "-"}</td>
               <td className="px-4 py-4 text-gray-300">Debito {monto(movimiento.debito, movimiento.moneda)}<br />Credito {monto(movimiento.credito, movimiento.moneda)}<br />Saldo {monto(movimiento.saldo_banco, movimiento.moneda)}</td>
               <td className="px-4 py-4"><Badge estado={movimiento.conciliado ? "Conciliado" : movimiento.estado} /></td>
-              <td className="px-4 py-4"><BotonProximamente label="Conciliar" /></td>
+              <td className="px-4 py-4"><AccionFasePosterior label="Conciliar" /></td>
             </tr>
           );
         })}
@@ -1784,7 +1784,7 @@ function TablaVinculos({ vinculos, empresasPorId, movimientosPorId }: { vinculos
               <td className="px-4 py-4 font-bold">{vinculo.tipo_vinculo}</td>
               <td className="px-4 py-4 text-gray-300">{monto(vinculo.monto_vinculado, vinculo.moneda)}</td>
               <td className="px-4 py-4"><Badge estado={vinculo.estado} /></td>
-              <td className="px-4 py-4"><BotonProximamente label="Revertir" /></td>
+              <td className="px-4 py-4"><AccionFasePosterior label="Revertir" /></td>
             </tr>
           );
         })}
@@ -1812,7 +1812,7 @@ function TablaAjustes({ ajustes, empresasPorId, cuentasPorId, estadosPorId, movi
               <td className="px-4 py-4 text-gray-300">{monto(ajuste.monto, ajuste.moneda)}</td>
               <td className="px-4 py-4 text-gray-300">{ajuste.requiere_contabilidad ? "Si" : "No"}</td>
               <td className="px-4 py-4"><Badge estado={ajuste.estado} /></td>
-              <td className="px-4 py-4"><div className="flex flex-col gap-2"><BotonProximamente label="Aprobar" /><BotonProximamente label="Contabilizar" /><BotonProximamente label="Anular" /></div></td>
+              <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Aprobar" /><AccionFasePosterior label="Contabilizar" /><AccionFasePosterior label="Anular" /></div></td>
             </tr>
           );
         })}
@@ -1841,7 +1841,7 @@ function Badge({ estado }: { estado: string }) {
   return <span className={`inline-flex rounded-full border px-2 py-1 text-xs font-bold ${clase}`}>{estado}</span>;
 }
 
-function BotonProximamente({ label }: { label: string }) {
+function AccionFasePosterior({ label }: { label: string }) {
   void label;
   return null;
 }

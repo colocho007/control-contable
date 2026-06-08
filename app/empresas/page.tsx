@@ -22,6 +22,7 @@ import {
   Save,
   XCircle,
 } from "lucide-react";
+import toast, { Toaster } from "react-hot-toast";
 
 type EstadoEmpresa = "Activa" | "Pendiente" | "Inactiva" | "Archivada";
 
@@ -228,14 +229,14 @@ export default function EmpresasPage() {
             acceso.motivo === "usuario_inactivo"
           ) {
             if (acceso.motivo === "usuario_inactivo") {
-              alert("Tu usuario esta inactivo. Contacta al administrador.");
+              toast.error("Tu usuario esta inactivo. Contacta al administrador.");
             }
 
             router.replace("/login");
             return;
           }
 
-          alert(
+          toast.error(
             acceso.motivo === "modulo_inactivo" ||
               acceso.motivo === "modulo_no_encontrado"
               ? "El modulo de Empresas esta desactivado."
@@ -268,7 +269,7 @@ export default function EmpresasPage() {
         setAutorizado(true);
       } catch (error) {
         console.error("Error inicializando Empresas:", error);
-        alert("No se pudo cargar el modulo de Empresas.");
+        toast.error("No se pudo cargar el modulo de Empresas.");
       } finally {
         setValidandoAcceso(false);
       }
@@ -377,7 +378,7 @@ export default function EmpresasPage() {
 
   async function guardarEmpresa() {
     if (!puedeCrearActualizar) {
-      alert("No tienes permiso para guardar empresas.");
+      toast.error("No tienes permiso para guardar empresas.");
       return;
     }
 
@@ -387,7 +388,7 @@ export default function EmpresasPage() {
       payload = payloadEmpresa(form);
       if (editandoId !== null) validarEmpresaPermitida(editandoId);
     } catch (error) {
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
       return;
     }
 
@@ -469,7 +470,7 @@ export default function EmpresasPage() {
       await obtenerEmpresas();
     } catch (error) {
       console.error("Error guardando empresa:", error);
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -505,21 +506,21 @@ export default function EmpresasPage() {
     accion: string
   ) {
     if (estadoNuevo === "Archivada" && !puedeArchivar) {
-      alert("Solo admin o jefe pueden archivar empresas.");
+      toast.error("Solo admin o jefe pueden archivar empresas.");
       return;
     }
 
     try {
       validarEmpresaPermitida(empresa.id);
     } catch (error) {
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
       return;
     }
 
     const motivo = window.prompt(`Motivo para marcar la empresa como ${estadoNuevo}:`);
 
     if (!motivo || motivo.trim().length < 5) {
-      alert("Debes escribir un motivo valido.");
+      toast.error("Debes escribir un motivo valido.");
       return;
     }
 
@@ -568,7 +569,7 @@ export default function EmpresasPage() {
       await obtenerEmpresas();
     } catch (error) {
       console.error("Error cambiando estado de empresa:", error);
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -598,7 +599,7 @@ export default function EmpresasPage() {
     try {
       validarEmpresaPermitida(empresa.id);
     } catch (error) {
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
       return;
     }
 
@@ -648,7 +649,7 @@ export default function EmpresasPage() {
       );
     } catch (error) {
       console.error("Error previsualizando limpieza:", error);
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -656,14 +657,14 @@ export default function EmpresasPage() {
 
   async function eliminarEmpresaVacia(empresa: Empresa) {
     if (perfilActual?.rol !== "admin") {
-      alert("Solo admin puede eliminar definitivamente una empresa vacia.");
+      toast.error("Solo admin puede eliminar definitivamente una empresa vacia.");
       return;
     }
 
     try {
       validarEmpresaPermitida(empresa.id);
     } catch (error) {
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
       return;
     }
 
@@ -686,7 +687,7 @@ export default function EmpresasPage() {
           total_dependencias: total,
         },
       });
-      alert("No se permite eliminar fisicamente empresas reales activas.");
+      toast.error("No se permite eliminar fisicamente empresas reales activas.");
       return;
     }
 
@@ -708,7 +709,7 @@ export default function EmpresasPage() {
           instruccion: "Archivar o inactivar; no eliminar fisicamente.",
         },
       });
-      alert("La empresa tiene dependencias. Solo se permite archivarla o inactivarla.");
+      toast.error("La empresa tiene dependencias. Solo se permite archivarla o inactivarla.");
       return;
     }
 
@@ -721,7 +722,7 @@ export default function EmpresasPage() {
       'Escribe exactamente "ELIMINAR EMPRESA" para confirmar la eliminacion fisica:'
     );
     if (confirmacion !== "ELIMINAR EMPRESA") {
-      alert("Confirmacion incorrecta. No se elimino la empresa.");
+      toast.error("Confirmacion incorrecta. No se elimino la empresa.");
       return;
     }
 
@@ -736,7 +737,7 @@ export default function EmpresasPage() {
 
       if (error) throw error;
       if (data && typeof data === "object" && "ok" in data && data.ok === false) {
-        alert(typeof data.mensaje === "string" ? data.mensaje : "No se pudo eliminar la empresa.");
+        toast.error(typeof data.mensaje === "string" ? data.mensaje : "No se pudo eliminar la empresa.");
         return;
       }
 
@@ -747,7 +748,7 @@ export default function EmpresasPage() {
       console.info("Eliminacion segura de empresa:", data);
     } catch (error) {
       console.error("Error eliminando empresa vacia:", error);
-      alert(mensajeError(error));
+      toast.error(mensajeError(error));
     } finally {
       setProcesando(false);
     }
@@ -793,6 +794,7 @@ export default function EmpresasPage() {
   return (
     <div className="flex bg-[#020617] min-h-screen text-white">
       <Sidebar />
+      <Toaster position="top-right" />
 
       <main className="flex-1 p-8">
         <div className="max-w-7xl mx-auto">
