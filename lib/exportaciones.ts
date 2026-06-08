@@ -14,6 +14,11 @@ export interface SeccionExportacion<T extends FilaExportacion = FilaExportacion>
   resumen?: Record<string, unknown>;
 }
 
+export interface DocumentoExportacionInfo {
+  encabezado?: Record<string, unknown>;
+  notaPie?: string;
+}
+
 function obtenerValor<T extends FilaExportacion>(
   fila: T,
   columna: ColumnaExportacion<T>
@@ -54,12 +59,18 @@ export function formatearValorExportacion(valor: unknown): string {
   if (typeof valor === "boolean") return valor ? "Si" : "No";
   if (typeof valor === "number") return Number.isFinite(valor) ? String(valor) : "";
   if (typeof valor === "string") return esFechaIso(valor) ? formatearFechaIso(valor) : valor;
-  if (Array.isArray(valor) || typeof valor === "object") {
-    try {
-      return JSON.stringify(valor);
-    } catch {
-      return String(valor);
-    }
+  if (Array.isArray(valor)) {
+    return valor.every(
+      (item) =>
+        item === null ||
+        item === undefined ||
+        ["string", "number", "boolean"].includes(typeof item)
+    )
+      ? valor.map((item) => formatearValorExportacion(item)).join(" | ")
+      : "[Contenido estructurado no exportado]";
+  }
+  if (typeof valor === "object") {
+    return "[Contenido estructurado no exportado]";
   }
 
   return String(valor);
@@ -91,7 +102,14 @@ function escaparCsv(valor: unknown) {
 }
 
 function limpiarNombreArchivo(nombreArchivo: string) {
-  const nombre = nombreArchivo.trim() || "exportacion.csv";
+  const nombre =
+    nombreArchivo
+      .trim()
+      .replaceAll("\\", "-")
+      .replaceAll("/", "-")
+      .replace(/[^a-zA-Z0-9._-]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^[-.]+|[-.]+$/g, "") || "exportacion.csv";
   return nombre.endsWith(".csv") ? nombre : `${nombre}.csv`;
 }
 
@@ -135,9 +153,17 @@ export function descargarCsv<T extends FilaExportacion>(
 
 export function descargarCsvSecciones(
   nombreArchivo: string,
-  secciones: SeccionExportacion[]
+  secciones: SeccionExportacion[],
+  info?: DocumentoExportacionInfo
 ) {
   const lineas: string[] = [];
+
+  if (info?.encabezado) {
+    Object.entries(info.encabezado).forEach(([clave, valor]) => {
+      lineas.push([escaparCsv(clave), escaparCsv(valor)].join(","));
+    });
+    lineas.push("");
+  }
 
   secciones.forEach((seccion, index) => {
     if (index > 0) lineas.push("");
@@ -156,6 +182,10 @@ export function descargarCsvSecciones(
 
     lineas.push(...crearLineasCsv(seccion.columnas, seccion.filas));
   });
+
+  if (info?.notaPie) {
+    lineas.push("", escaparCsv(info.notaPie));
+  }
 
   descargarTexto(nombreArchivo, `\uFEFF${lineas.join("\r\n")}`);
 }
@@ -218,7 +248,8 @@ function abrirHtmlImprimible(html: string) {
 function plantillaImprimible(
   titulo: string,
   subtitulo: string | undefined,
-  contenido: string
+  contenido: string,
+  info?: DocumentoExportacionInfo
 ) {
   return `<!doctype html>
 <html lang="es">
@@ -238,6 +269,7 @@ function plantillaImprimible(
     th { background: #e2e8f0; }
     .resumen { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 16px 0; font-size: 13px; }
     .seccion { break-inside: avoid; margin-bottom: 28px; }
+    footer { border-top: 1px solid #cbd5e1; color: #64748b; margin-top: 28px; padding-top: 12px; font-size: 11px; }
     @media print {
       body { margin: 18mm; }
       .acciones { display: none; }
@@ -249,9 +281,11 @@ function plantillaImprimible(
     <h1>${escaparHtml(titulo)}</h1>
     ${subtitulo ? `<p>${escaparHtml(subtitulo)}</p>` : ""}
     <p>Generado: ${escaparHtml(new Date())}</p>
+    ${renderResumen(info?.encabezado)}
     <div class="acciones"><button onclick="window.print()">Imprimir / guardar PDF</button></div>
   </header>
   ${contenido}
+  ${info?.notaPie ? `<footer>${escaparHtml(info.notaPie)}</footer>` : ""}
 </body>
 </html>`;
 }
@@ -270,7 +304,8 @@ export function abrirVistaImprimible<T extends FilaExportacion>(
 export function abrirVistaImprimibleSecciones(
   titulo: string,
   subtitulo: string,
-  secciones: SeccionExportacion[]
+  secciones: SeccionExportacion[],
+  info?: DocumentoExportacionInfo
 ) {
   const contenido = secciones
     .map(
@@ -283,5 +318,5 @@ export function abrirVistaImprimibleSecciones(
     )
     .join("");
 
-  abrirHtmlImprimible(plantillaImprimible(titulo, subtitulo, contenido));
+  abrirHtmlImprimible(plantillaImprimible(titulo, subtitulo, contenido, info));
 }

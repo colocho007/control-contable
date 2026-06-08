@@ -206,6 +206,7 @@ Notas:
 | POS-15 | Auditor | `auditor_solo_lectura` | Consultar contabilidad y movimientos | Puede consultar empresa asignada sin controles de escritura | | Pendiente |
 | POS-16 | Usuarios asignados | Segun perfil | Abrir Reportes, Dashboard y Flujo Efectivo | Solo muestran empresas asignadas y datos coherentes | | Pendiente |
 | POS-17 | Auditor | `auditor_solo_lectura` | Consultar balance, diario, mayor, resultados, movimientos y cierres | Puede consultar sin escribir; solo asientos registrados en reportes formales | | Pendiente |
+| POS-18 | Auditor | `auditor_solo_lectura` | Exportar CSV y abrir vistas imprimibles de reportes permitidos | Exporta exactamente datos filtrados, con encabezado, pie Control+ y sin metadatos internos | | Pendiente |
 
 ## 8. Checklist negativo de permisos y validaciones
 
@@ -241,6 +242,8 @@ intentar la operacion mediante una llamada autenticada sin service role.
 | NEG-25 | Admin cierre | Intentar cerrar periodo bloqueado o cerrado | UI no ofrece cierre y RPC rechaza por estado | | Pendiente |
 | NEG-26 | Usuario sin empresa | Consultar reportes contables | No obtiene empresas, asientos, movimientos ni periodos | | Pendiente |
 | NEG-27 | Usuario asignado | Consultar reportes formales con borradores/anulados existentes | Borradores y anulados no aparecen en balance, diario, mayor ni resultados | | Pendiente |
+| NEG-28 | Usuario sin empresa | Intentar exportar reportes | No hay datos ni acciones efectivas de exportacion | | Pendiente |
+| NEG-29 | Usuario asignado | Exportar texto iniciado con formula CSV | Celda se neutraliza y no se ejecuta como formula en Excel | | Pendiente |
 
 ## 9. Casos de coherencia e idempotencia
 

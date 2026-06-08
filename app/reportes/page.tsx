@@ -69,6 +69,14 @@ interface FiltrosReportes {
   proveedorClienteId: string;
 }
 
+type ReporteEntregaExportable =
+  | "balance_comprobacion"
+  | "libro_diario"
+  | "libro_mayor"
+  | "estado_resultados"
+  | "movimientos_operativos"
+  | "cierres_periodos";
+
 const LIMITE_REPORTES = 100;
 const LIMITE_FILAS_EXPORTACION_REPORTES = 1000;
 const RATE_LIMIT_EXPORTACIONES_REPORTES = 10;
@@ -164,6 +172,8 @@ export default function ReportesPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [filtros, setFiltros] = useState<FiltrosReportes>(FILTROS_INICIALES);
+  const [filtrosCargados, setFiltrosCargados] =
+    useState<FiltrosReportes>(FILTROS_INICIALES);
   const [reporte, setReporte] = useState<ReporteMensual | null>(null);
   const [estadosFinancieros, setEstadosFinancieros] =
     useState<EstadosFinancierosFormales | null>(null);
@@ -359,6 +369,7 @@ export default function ReportesPage() {
       ]);
       setReporte(reporteMensual);
       setEstadosFinancieros(estadosFormales);
+      setFiltrosCargados(filtrosAplicados);
       await auditarReporte("consultar_reporte", {
         filtros: filtrosAplicados,
         empresas_consultadas: idsPermitidos,
@@ -432,8 +443,88 @@ export default function ReportesPage() {
   }, [reporte]);
 
   function textoEmpresaFiltro() {
-    if (!filtros.empresaId) return "Todas las empresas permitidas";
-    return empresasPorId.get(Number(filtros.empresaId)) || `Empresa #${filtros.empresaId}`;
+    if (!filtrosCargados.empresaId) return "Todas las empresas permitidas";
+    return (
+      empresasPorId.get(Number(filtrosCargados.empresaId)) ||
+      `Empresa #${filtrosCargados.empresaId}`
+    );
+  }
+
+  function textoPeriodoFiltro() {
+    if (!filtrosCargados.periodoId) return "Rango de fechas";
+    const periodo = periodosDisponibles.find(
+      (opcion) => String(opcion.id) === String(filtrosCargados.periodoId)
+    );
+    return periodo
+      ? `${periodo.mes}/${periodo.anio} - ${textoLegible(periodo.estado)}`
+      : String(filtrosCargados.periodoId);
+  }
+
+  function infoDocumentoExportacion(nombreReporte: string) {
+    return {
+      encabezado: {
+        Reporte: nombreReporte,
+        Empresa: textoEmpresaFiltro(),
+        Periodo: textoPeriodoFiltro(),
+        Moneda: filtrosCargados.moneda || "Todas",
+        "Fecha desde": filtrosCargados.fechaDesde || "",
+        "Fecha hasta": filtrosCargados.fechaHasta || "",
+        "Fecha de generacion": new Date(),
+      },
+      notaPie: "Control+ | Reporte generado desde el sistema.",
+    };
+  }
+
+  function configuracionReporteEntrega(tipo: ReporteEntregaExportable) {
+    const configuraciones: Record<
+      ReporteEntregaExportable,
+      { titulo: string; tituloSeccion: string; archivo: string; imprimible: boolean }
+    > = {
+      balance_comprobacion: {
+        titulo: "Balance de comprobacion",
+        tituloSeccion: "Balance de comprobacion formal",
+        archivo: "balance-comprobacion",
+        imprimible: true,
+      },
+      libro_diario: {
+        titulo: "Libro diario",
+        tituloSeccion: "Libro diario formal",
+        archivo: "libro-diario",
+        imprimible: true,
+      },
+      libro_mayor: {
+        titulo: "Libro mayor",
+        tituloSeccion: "Libro mayor formal",
+        archivo: "libro-mayor",
+        imprimible: true,
+      },
+      estado_resultados: {
+        titulo: "Estado de resultados",
+        tituloSeccion: "Estado de resultados formal",
+        archivo: "estado-resultados",
+        imprimible: true,
+      },
+      movimientos_operativos: {
+        titulo: "Resumen de movimientos operativos",
+        tituloSeccion: "Movimientos operativos por moneda",
+        archivo: "movimientos-operativos",
+        imprimible: false,
+      },
+      cierres_periodos: {
+        titulo: "Cierres y periodos contables",
+        tituloSeccion: "Cierres y periodos contables",
+        archivo: "cierres-periodos",
+        imprimible: true,
+      },
+    };
+    return configuraciones[tipo];
+  }
+
+  function seccionesReporteEntrega(tipo: ReporteEntregaExportable) {
+    const configuracion = configuracionReporteEntrega(tipo);
+    return seccionesExportacionReportes().filter(
+      (seccion) => seccion.titulo === configuracion.tituloSeccion
+    );
   }
 
   function seccionesExportacionReportes(): SeccionExportacion[] {
@@ -441,12 +532,12 @@ export default function ReportesPage() {
 
     const filtrosResumen = {
       Empresa: textoEmpresaFiltro(),
-      "Fecha desde": filtros.fechaDesde || "",
-      "Fecha hasta": filtros.fechaHasta || "",
-      Moneda: filtros.moneda || "Todas",
-      Periodo: filtros.periodoId || "Rango de fechas",
-      Estado: filtros.estado || "Todos",
-      "Proveedor/cliente ID": filtros.proveedorClienteId || "Todos",
+      "Fecha desde": filtrosCargados.fechaDesde || "",
+      "Fecha hasta": filtrosCargados.fechaHasta || "",
+      Moneda: filtrosCargados.moneda || "Todas",
+      Periodo: textoPeriodoFiltro(),
+      Estado: filtrosCargados.estado || "Todos",
+      "Proveedor/cliente ID": filtrosCargados.proveedorClienteId || "Todos",
     };
 
     const secciones: SeccionExportacion[] = [
@@ -797,7 +888,7 @@ export default function ReportesPage() {
       window.alert(rateLimit.mensaje);
       void auditarReporte("bloquear_exportacion_reporte", {
         formato: "csv",
-        filtros,
+        filtros: filtrosCargados,
         motivo: "rate_limit_excedido",
         filas_aproximadas: totalFilas,
         retry_after_segundos: rateLimit.retry_after_segundos,
@@ -808,13 +899,20 @@ export default function ReportesPage() {
 
     void auditarReporte("exportar_reporte", {
       formato: "csv",
-      filtros,
+      filtros: filtrosCargados,
       secciones: secciones.length,
       filas_aproximadas: totalFilas,
-      rango_fechas: { desde: filtros.fechaDesde, hasta: filtros.fechaHasta },
+      rango_fechas: {
+        desde: filtrosCargados.fechaDesde,
+        hasta: filtrosCargados.fechaHasta,
+      },
     });
     try {
-      descargarCsvSecciones(`reportes-${fechaLocalISO()}.csv`, secciones);
+      descargarCsvSecciones(
+        `reportes-${fechaLocalISO()}.csv`,
+        secciones,
+        infoDocumentoExportacion("Reportes financieros y operativos")
+      );
     } finally {
       liberarExportacionReporte();
     }
@@ -841,7 +939,7 @@ export default function ReportesPage() {
       window.alert(rateLimit.mensaje);
       void auditarReporte("bloquear_exportacion_reporte", {
         formato: "pdf_vista_imprimible",
-        filtros,
+        filtros: filtrosCargados,
         motivo: "rate_limit_excedido",
         filas_aproximadas: totalFilas,
         retry_after_segundos: rateLimit.retry_after_segundos,
@@ -852,17 +950,83 @@ export default function ReportesPage() {
 
     void auditarReporte("imprimir_reporte", {
       formato: "pdf_vista_imprimible",
-      filtros,
+      filtros: filtrosCargados,
       secciones: secciones.length,
       filas_aproximadas: totalFilas,
-      rango_fechas: { desde: filtros.fechaDesde, hasta: filtros.fechaHasta },
+      rango_fechas: {
+        desde: filtrosCargados.fechaDesde,
+        hasta: filtrosCargados.fechaHasta,
+      },
     });
     try {
       abrirVistaImprimibleSecciones(
         "Reportes",
         "Resumen financiero y operativo por empresa",
-        secciones
+        secciones,
+        infoDocumentoExportacion("Reportes financieros y operativos")
       );
+    } finally {
+      liberarExportacionReporte();
+    }
+  }
+
+  async function exportarReporteEntrega(
+    tipo: ReporteEntregaExportable,
+    formato: "csv" | "pdf_vista_imprimible"
+  ) {
+    const configuracion = configuracionReporteEntrega(tipo);
+    if (formato === "pdf_vista_imprimible" && !configuracion.imprimible) return;
+
+    const secciones = seccionesReporteEntrega(tipo);
+    const totalFilas = totalFilasSecciones(secciones);
+    if (!secciones.length || totalFilas === 0) {
+      window.alert(`No hay datos filtrados para ${configuracion.titulo}.`);
+      return;
+    }
+
+    const alcanceFormato = `${formato}_${tipo}`;
+    if (!validarExportacionReporte(alcanceFormato, totalFilas)) return;
+
+    const rateLimit = await validarRateLimitExportacionReporte(alcanceFormato, totalFilas);
+    if (!rateLimit.permitido) {
+      liberarExportacionReporte();
+      window.alert(rateLimit.mensaje);
+      void auditarReporte("bloquear_exportacion_reporte", {
+        formato,
+        reporte: tipo,
+        filtros: filtrosCargados,
+        motivo: "rate_limit_excedido",
+        filas_aproximadas: totalFilas,
+      });
+      return;
+    }
+
+    const info = infoDocumentoExportacion(configuracion.titulo);
+    void auditarReporte(
+      formato === "csv" ? "exportar_reporte" : "imprimir_reporte",
+      {
+        formato,
+        reporte: tipo,
+        filtros: filtrosCargados,
+        filas_aproximadas: totalFilas,
+      }
+    );
+
+    try {
+      if (formato === "csv") {
+        descargarCsvSecciones(
+          `${configuracion.archivo}-${fechaLocalISO()}.csv`,
+          secciones,
+          info
+        );
+      } else {
+        abrirVistaImprimibleSecciones(
+          configuracion.titulo,
+          "Reporte contable filtrado para entrega operativa",
+          secciones,
+          info
+        );
+      }
     } finally {
       liberarExportacionReporte();
     }
@@ -874,7 +1038,9 @@ export default function ReportesPage() {
 
   function validarExportacionReporte(formato: string, totalFilas: number) {
     const ahora = Date.now();
-    const empresaFiltrada = filtros.empresaId ? Number(filtros.empresaId) : null;
+    const empresaFiltrada = filtrosCargados.empresaId
+      ? Number(filtrosCargados.empresaId)
+      : null;
 
     if (
       empresaFiltrada !== null &&
@@ -883,14 +1049,14 @@ export default function ReportesPage() {
       window.alert("La empresa seleccionada no esta autorizada para exportar.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
-        filtros,
+        filtros: filtrosCargados,
         motivo: "empresa_no_permitida",
         filas_aproximadas: totalFilas,
       });
       void registrarIntentoBloqueadoReporte("empresa_no_permitida", {
         accion: "exportar_reporte",
         formato,
-        filtros,
+        filtros: filtrosCargados,
         filas_aproximadas: totalFilas,
       });
       return false;
@@ -904,13 +1070,13 @@ export default function ReportesPage() {
       window.alert("Ya hay una exportacion de reportes en proceso. Espera un momento.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
-        filtros,
+        filtros: filtrosCargados,
         motivo: "exportacion_repetida",
         filas_aproximadas: totalFilas,
       });
       void registrarIntentoBloqueadoReporte("exportacion_repetida", {
         formato,
-        filtros,
+        filtros: filtrosCargados,
         filas_aproximadas: totalFilas,
       });
       return false;
@@ -920,14 +1086,14 @@ export default function ReportesPage() {
       window.alert("La exportacion supera el limite operativo de filas. Ajusta filtros.");
       void auditarReporte("bloquear_exportacion_reporte", {
         formato,
-        filtros,
+        filtros: filtrosCargados,
         motivo: "limite_filas",
         filas_aproximadas: totalFilas,
         limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
       });
       void registrarIntentoBloqueadoReporte("limite_filas_exportacion", {
         formato,
-        filtros,
+        filtros: filtrosCargados,
         filas_aproximadas: totalFilas,
         limite_filas: LIMITE_FILAS_EXPORTACION_REPORTES,
       });
@@ -950,7 +1116,9 @@ export default function ReportesPage() {
       return { permitido: true, mensaje: "", retry_after_segundos: 0, rpc_disponible: false };
     }
 
-    const empresaId = filtros.empresaId ? Number(filtros.empresaId) : null;
+    const empresaId = filtrosCargados.empresaId
+      ? Number(filtrosCargados.empresaId)
+      : null;
     const empresaPermitida =
       empresaId !== null && Number.isInteger(empresaId) && empresasPermitidasIds.includes(empresaId)
         ? empresaId
@@ -967,9 +1135,9 @@ export default function ReportesPage() {
       metadatos: {
         formato,
         filas_aproximadas: totalFilas,
-        fecha_desde: filtros.fechaDesde || null,
-        fecha_hasta: filtros.fechaHasta || null,
-        moneda: filtros.moneda || null,
+        fecha_desde: filtrosCargados.fechaDesde || null,
+        fecha_hasta: filtrosCargados.fechaHasta || null,
+        moneda: filtrosCargados.moneda || null,
         exportacion_pesada: totalFilas > UMBRAL_EXPORTACION_PESADA_REPORTES,
       },
     });
@@ -990,8 +1158,8 @@ export default function ReportesPage() {
       metadatos: {
         formato,
         filas_aproximadas: totalFilas,
-        fecha_desde: filtros.fechaDesde || null,
-        fecha_hasta: filtros.fechaHasta || null,
+        fecha_desde: filtrosCargados.fechaDesde || null,
+        fecha_hasta: filtrosCargados.fechaHasta || null,
         tipo_control: "exportacion_pesada",
       },
     });
@@ -999,8 +1167,14 @@ export default function ReportesPage() {
 
   async function auditarReporte(accion: string, metadatos: Record<string, unknown>) {
     try {
+      const filtrosAuditoria =
+        metadatos.filtros && typeof metadatos.filtros === "object"
+          ? (metadatos.filtros as Partial<FiltrosReportes>)
+          : filtros;
       await registrarAuditoriaEvento({
-        empresa_id: filtros.empresaId ? Number(filtros.empresaId) : null,
+        empresa_id: filtrosAuditoria.empresaId
+          ? Number(filtrosAuditoria.empresaId)
+          : null,
         modulo: "reportes",
         accion,
         entidad_tipo: "reporte",
@@ -1026,8 +1200,8 @@ export default function ReportesPage() {
     const empresaId =
       motivo === "empresa_no_permitida"
         ? null
-        : filtros.empresaId
-          ? Number(filtros.empresaId)
+        : filtrosCargados.empresaId
+          ? Number(filtrosCargados.empresaId)
           : null;
 
     try {
@@ -1246,6 +1420,63 @@ export default function ReportesPage() {
               Cargando reportes...
             </div>
           )}
+
+          <section className="mb-8 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+            <div className="mb-4">
+              <h2 className="text-xl font-black">Exportaciones para entrega</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Cada archivo y vista imprimible usa exactamente los filtros activos.
+              </p>
+            </div>
+            <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(
+                [
+                  "balance_comprobacion",
+                  "libro_diario",
+                  "libro_mayor",
+                  "estado_resultados",
+                  "movimientos_operativos",
+                  "cierres_periodos",
+                ] as ReporteEntregaExportable[]
+              ).map((tipo) => {
+                const configuracion = configuracionReporteEntrega(tipo);
+                const disponible =
+                  tipo === "movimientos_operativos"
+                    ? Boolean(reporte)
+                    : Boolean(estadosFinancieros);
+                return (
+                  <article
+                    key={tipo}
+                    className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
+                  >
+                    <p className="font-black text-cyan-100">{configuracion.titulo}</p>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      <button
+                        type="button"
+                        onClick={() => exportarReporteEntrega(tipo, "csv")}
+                        disabled={!disponible || cargandoReportes}
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <Download size={15} /> CSV Excel
+                      </button>
+                      {configuracion.imprimible && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            exportarReporteEntrega(tipo, "pdf_vista_imprimible")
+                          }
+                          disabled={!disponible || cargandoReportes}
+                          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold hover:bg-white/10 disabled:opacity-50"
+                        >
+                          <Printer size={15} /> Vista imprimible
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
 
           <section className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
             <StatCard
