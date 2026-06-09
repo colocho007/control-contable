@@ -220,6 +220,11 @@ export default function ProveedoresPage() {
     );
   }, [impuestos, form.empresaId]);
 
+  const impuestosPorId = useMemo(
+    () => new Map(impuestos.map((impuesto) => [String(impuesto.id), impuesto.nombre])),
+    [impuestos]
+  );
+
   async function iniciar() {
     setValidandoAcceso(true);
     setCargando(true);
@@ -1004,6 +1009,14 @@ export default function ProveedoresPage() {
                     <Dato etiqueta="Banco" valor={proveedor.banco} />
                     <Dato etiqueta="Cuenta bancaria" valor={proveedor.cuenta_bancaria} />
                     <Dato etiqueta="Tipo proveedor" valor={proveedor.tipo_proveedor} />
+                    <Dato
+                      etiqueta="Plan fiscal"
+                      valor={
+                        proveedor.plan_impuesto_id
+                          ? impuestosPorId.get(String(proveedor.plan_impuesto_id)) || "Plan fiscal asignado"
+                          : "Sin plan fiscal asignado."
+                      }
+                    />
                     <Dato
                       etiqueta="Saldo pendiente"
                       valor={`${proveedor.moneda || "GTQ"} ${Number(

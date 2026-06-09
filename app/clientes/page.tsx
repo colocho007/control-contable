@@ -527,6 +527,11 @@ export default function ClientesPage() {
     );
   }, [impuestos, form.empresaId]);
 
+  const impuestosPorId = useMemo(
+    () => new Map(impuestos.map((impuesto) => [String(impuesto.id), impuesto.nombre])),
+    [impuestos]
+  );
+
   const clientesFiltrados = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
     const empresaId = Number(form.empresaId);
@@ -778,6 +783,12 @@ export default function ClientesPage() {
                       <p>Contacto: {cliente.contacto || "N/A"}</p>
                       <p>Limite credito: {cliente.limite_credito ?? "N/A"}</p>
                       <p>Dias credito: {cliente.dias_credito ?? "N/A"}</p>
+                      <p>
+                        Plan fiscal:{" "}
+                        {cliente.plan_impuesto_id
+                          ? impuestosPorId.get(String(cliente.plan_impuesto_id)) || "Plan fiscal asignado"
+                          : "Sin plan fiscal asignado."}
+                      </p>
                       <p>Observaciones: {cliente.observaciones || "N/A"}</p>
                     </div>
 

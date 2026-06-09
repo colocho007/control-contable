@@ -161,6 +161,13 @@ const TIPOS_IMPUESTO = [
   "OTRO",
   "Otro",
 ];
+const REGIMENES_CONFIGURABLES = [
+  "Pequeño contribuyente",
+  "Régimen general",
+  "Exento / no sujeto",
+  "Sujeto a retención",
+  "Caso especial manual",
+];
 const TIPOS_DOCUMENTO = [
   "FACTURA_COMPRA",
   "FACTURA_VENTA",
@@ -1175,12 +1182,12 @@ export default function ImpuestosPage() {
                 <Receipt className="text-cyan-500" size={42} />
                 <h1 className="text-4xl font-black md:text-5xl">Impuestos</h1>
                 <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-xs font-black uppercase tracking-wide text-cyan-200">
-                  Base operativa
+                  Base operativa configurable
                 </span>
               </div>
               <p className="mt-3 max-w-3xl text-[var(--muted)]">
-                Registro fiscal revisable para configuracion, documentos, periodos,
-                resumenes y vencimientos. No genera pagos, CxP ni asientos contables.
+                La configuración fiscal debe ser revisada y validada por el área
+                contable antes de afectar reportes, pagos o contabilidad.
               </p>
             </div>
             <button
@@ -1230,7 +1237,26 @@ export default function ImpuestosPage() {
           )}
 
           {tab === "configuracion" && (
-            <Panel titulo="Configuracion fiscal" subtitulo="Altas basicas de impuestos y retenciones.">
+            <Panel
+              titulo="Configuración fiscal por empresa"
+              subtitulo="Base operativa configurable; no garantiza ni aplica un cálculo fiscal definitivo."
+            >
+              <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.06] p-4">
+                <p className="text-sm font-bold text-cyan-100">Regímenes configurables de referencia</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {REGIMENES_CONFIGURABLES.map((regimen) => (
+                    <span
+                      key={regimen}
+                      className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-xs font-semibold text-cyan-100"
+                    >
+                      {regimen}
+                    </span>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-cyan-100/70">
+                  Cada configuración debe validarse con el área contable antes de utilizarse.
+                </p>
+              </div>
               {configuracionHabilitada ? (
                 <FormularioConfiguracion
                   form={formConfiguracion}
@@ -1247,7 +1273,7 @@ export default function ImpuestosPage() {
           )}
 
           {tab === "documentos" && (
-            <Panel titulo="Documentos fiscales" subtitulo="Metadata fiscal; adjuntos siguen en documentos_tramites.">
+            <Panel titulo="Documentos fiscales en revisión" subtitulo="Captura para revisión y validación; no determina impuestos definitivos.">
               {escrituraHabilitada ? (
                 <FormularioDocumento
                   form={formDocumento}
@@ -1322,7 +1348,7 @@ export default function ImpuestosPage() {
           {tab === "fase_posterior" && (
             <Panel
               titulo="Fase posterior"
-              subtitulo="Funciones no incluidas en el alcance operativo inicial."
+              subtitulo="Aplicación automática validada de impuestos, retenciones y asientos fiscales."
             >
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {[
@@ -1809,12 +1835,12 @@ function TablaConfiguracion({
   configuraciones: ImpuestoConfiguracion[];
   empresasPorId: Map<number, string>;
 }) {
-  if (!configuraciones.length) return <EmptyState texto="No hay configuraciones fiscales para mostrar." />;
+  if (!configuraciones.length) return <EmptyState texto="No hay configuraciones fiscales registradas para esta empresa." />;
   return (
     <Tabla>
       <thead className="bg-white/5 text-xs uppercase text-gray-400">
         <tr>
-          {["Empresa", "Nombre", "Tipo", "Porcentaje", "Aplica", "Proveedor/Cliente", "Estado", "Acciones"].map((col) => (
+          {["Empresa", "Nombre", "Tipo", "Porcentaje", "Aplica", "Estado", "Observaciones"].map((col) => (
             <th key={col} className="px-4 py-3 text-left">{col}</th>
           ))}
         </tr>
@@ -1827,9 +1853,8 @@ function TablaConfiguracion({
             <td className="px-4 py-4 text-gray-300">{item.tipo}</td>
             <td className="px-4 py-4 text-gray-300">{Number(item.porcentaje || 0).toFixed(4)}%</td>
             <td className="px-4 py-4 text-gray-300">Compra: {item.aplica_compra ? "Si" : "No"}<br />Venta: {item.aplica_venta ? "Si" : "No"}<br />Retencion: {item.aplica_retencion ? "Si" : "No"}</td>
-            <td className="px-4 py-4 text-gray-300">Proveedor {item.proveedor_id || "-"}<br />Cliente {item.cliente_id || "-"}</td>
             <td className="px-4 py-4"><Badge estado={item.activo ? "Activa" : "Inactiva"} /></td>
-            <td className="px-4 py-4"><div className="flex flex-col gap-2"><AccionFasePosterior label="Editar" /><AccionFasePosterior label="Inactivar" /></div></td>
+            <td className="max-w-xs px-4 py-4 text-gray-300">{item.observaciones || "Sin observaciones."}</td>
           </tr>
         ))}
       </tbody>
