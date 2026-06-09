@@ -70,6 +70,8 @@ const COLUMNAS_PROVEEDOR =
 
 const ESTADOS_PROVEEDOR = ["Activo", "Inactivo"];
 const MONEDAS = ["GTQ", "USD"];
+const MENSAJE_ERROR_PROVEEDORES =
+  "No se pudo completar la operacion de Proveedores. Revisa la conexion y los permisos e intenta nuevamente.";
 
 const formularioInicial = {
   empresaId: "",
@@ -117,9 +119,13 @@ export default function ProveedoresPage() {
 
   const proveedoresFiltrados = useMemo(() => {
     const termino = busqueda.trim().toLowerCase();
-    if (!termino) return proveedores;
+    const empresaId = Number(form.empresaId);
+    const proveedoresEmpresa = Number.isFinite(empresaId)
+      ? proveedores.filter((proveedor) => Number(proveedor.empresa_id) === empresaId)
+      : [];
+    if (!termino) return proveedoresEmpresa;
 
-    return proveedores.filter((proveedor) =>
+    return proveedoresEmpresa.filter((proveedor) =>
       [
         proveedor.nit,
         proveedor.nombre,
@@ -132,7 +138,7 @@ export default function ProveedoresPage() {
         .filter(Boolean)
         .some((valor) => String(valor).toLowerCase().includes(termino))
     );
-  }, [busqueda, proveedores]);
+  }, [busqueda, form.empresaId, proveedores]);
 
   const cuentasDisponibles = useMemo(() => {
     const empresaId = Number(form.empresaId);
@@ -182,7 +188,6 @@ export default function ProveedoresPage() {
       await cargarDatos(ids);
     } catch (error) {
       console.error("No se pudo inicializar Proveedores:", error);
-      setAutorizado(true);
       setErrorCarga(
         "No se pudo cargar Proveedores. Revisa la conexion y los permisos de las empresas asignadas."
       );
@@ -482,7 +487,8 @@ export default function ProveedoresPage() {
 
     const { data, error } = await consulta;
     if (error) {
-      toast.error(error.message);
+      console.error("No se pudo guardar el proveedor:", error);
+      toast.error(MENSAJE_ERROR_PROVEEDORES);
       setProcesando(false);
       return;
     }
@@ -515,12 +521,7 @@ export default function ProveedoresPage() {
         cuenta_por_pagar_id: payload.cuenta_por_pagar_id,
         plan_impuesto_id: payload.plan_impuesto_id,
         dias_credito: payload.dias_credito,
-        preparado_cxp: true,
-        preparado_documentos_contables: true,
-        preparado_cheques: true,
-        preparado_impuestos: true,
-        preparado_sat_rtu: true,
-        depende_sat: false,
+        relacion_cxp_impuestos: "fase_posterior",
       },
       origen: "modulo_proveedores",
     });
@@ -530,75 +531,7 @@ export default function ProveedoresPage() {
     setProcesando(false);
   }
 
-  async function inactivarProveedor(proveedor: Proveedor) {
-    const empresaId = Number(proveedor.empresa_id);
-    if (!validarEmpresaPermitida(empresaId)) {
-      toast.error("Empresa no permitida para este usuario.");
-      return;
-    }
-    if (esAuditorSoloLectura(empresaId)) {
-      await bloquearAuditor("inactivar_proveedor", empresaId, proveedor.id);
-      return;
-    }
-
-    const motivo = window.prompt("Motivo de inactivación del proveedor:");
-    if (!motivo || motivo.trim().length < 5) {
-      toast.error("Indica un motivo válido para inactivar.");
-      return;
-    }
-
-    setProcesando(true);
-    const { data, error } = await supabase
-      .from("proveedores")
-      .update({
-        estado: "Inactivo",
-        observaciones: motivo.trim(),
-        actualizado_at: new Date().toISOString(),
-        actualizado_por: userId,
-      })
-      .eq("id", proveedor.id)
-      .eq("empresa_id", empresaId)
-      .select(COLUMNAS_PROVEEDOR)
-      .single();
-
-    if (error) {
-      toast.error(error.message);
-      setProcesando(false);
-      return;
-    }
-
-    const actualizado = normalizarProveedor(data as Proveedor);
-    setProveedores((actuales) =>
-      actuales.map((item) => (String(item.id) === String(actualizado.id) ? actualizado : item))
-    );
-
-    await registrarAuditoriaEvento({
-      empresa_id: empresaId,
-      modulo: "proveedores",
-      accion: "inactivar_proveedor",
-      entidad_tipo: "proveedor",
-      entidad_id: String(proveedor.id),
-      estado_anterior: proveedor.estado || "Activo",
-      estado_nuevo: "Inactivo",
-      sensible: true,
-      descripcion: "Proveedor inactivado sin borrado fisico.",
-      metadatos: {
-        nit: proveedor.nit,
-        nombre: proveedor.nombre,
-        motivo: motivo.trim(),
-        conserva_cxp: true,
-        conserva_documentos_contables: true,
-        conserva_cheques: true,
-      },
-      origen: "modulo_proveedores",
-    });
-
-    toast.success("Proveedor inactivado.");
-    if (String(proveedorEditandoId || "") === String(proveedor.id)) limpiarFormulario();
-    setProcesando(false);
-  }
-
-  if (validandoAcceso || !autorizado) {
+  if (validandoAcceso) {
     return (
       <div className="flex min-h-screen bg-gray-50">
         <Sidebar />
@@ -606,6 +539,19 @@ export default function ProveedoresPage() {
           <div className="flex items-center gap-3 rounded-lg border bg-white px-5 py-4 text-gray-700 shadow-sm">
             <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
             Validando acceso a proveedores...
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!autorizado) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <Sidebar />
+        <main className="flex flex-1 items-center justify-center p-6">
+          <div className="max-w-lg rounded-lg border border-amber-200 bg-white p-6 text-center text-gray-700 shadow-sm">
+            {errorCarga || "No se pudo validar el acceso a Proveedores."}
           </div>
         </main>
       </div>
@@ -622,17 +568,17 @@ export default function ProveedoresPage() {
             <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Proveedores</p>
             <h1 className="text-3xl font-bold text-gray-900">Registro formal por NIT</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Base para CxP, documentos contables, impuestos, cheques y reportes sin dependencia SAT.
+              Relacion con CxP e impuestos: Fase posterior.
             </p>
           </div>
-          <button
+          {!!empresas.length && !esAuditorSoloLectura(form.empresaId) && <button
             type="button"
             onClick={() => limpiarFormulario()}
             className="inline-flex items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
           >
             <Plus className="h-4 w-4" />
             Nuevo proveedor
-          </button>
+          </button>}
         </div>
 
         <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -654,7 +600,7 @@ export default function ProveedoresPage() {
           </div>
         )}
 
-        {!!empresas.length && (
+        {!!empresas.length && !esAuditorSoloLectura(form.empresaId) && (
         <section className="mb-6 rounded-lg border bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
             <Truck className="h-5 w-5 text-blue-600" />
@@ -970,15 +916,6 @@ export default function ProveedoresPage() {
                           className="rounded-md border border-blue-200 px-3 py-1.5 text-sm font-semibold text-blue-700 hover:bg-blue-50"
                         >
                           Editar
-                        </button>
-                      )}
-                      {proveedor.estado !== "Inactivo" && !esAuditorSoloLectura(proveedor.empresa_id) && (
-                        <button
-                          type="button"
-                          onClick={() => inactivarProveedor(proveedor)}
-                          className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-semibold text-red-700 hover:bg-red-50"
-                        >
-                          Inactivar
                         </button>
                       )}
                     </div>

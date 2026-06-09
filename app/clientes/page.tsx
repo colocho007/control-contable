@@ -11,7 +11,7 @@ import {
   listarFuncionesOperativasUsuario,
   type UsuarioFuncionOperativa,
 } from "../../lib/funcionesOperativas";
-import { Building2, Loader2, Plus, Search, UserRound, XCircle } from "lucide-react";
+import { Loader2, Plus, Search, UserRound } from "lucide-react";
 import { toast, Toaster } from "react-hot-toast";
 
 interface Empresa {
@@ -78,7 +78,18 @@ function numeroOpcional(valor: string) {
 }
 
 function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "Error inesperado.";
+  if (error instanceof Error && error.message === "Los valores numericos no pueden ser negativos.") {
+    return error.message;
+  }
+  if (
+    error instanceof Error &&
+    ["Selecciona una empresa valida.", "No tienes permiso para operar sobre esa empresa."].includes(
+      error.message
+    )
+  ) {
+    return error.message;
+  }
+  return "No se pudo completar la operacion de Clientes. Revisa la conexion y los permisos e intenta nuevamente.";
 }
 
 export default function ClientesPage() {
@@ -86,6 +97,7 @@ export default function ClientesPage() {
   const [autorizado, setAutorizado] = useState(false);
   const [cargando, setCargando] = useState(false);
   const [procesando, setProcesando] = useState(false);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [empresasPermitidasIds, setEmpresasPermitidasIds] = useState<number[]>([]);
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
@@ -151,7 +163,9 @@ export default function ClientesPage() {
       await cargarDatos(idsPermitidos);
     } catch (error) {
       console.error("Error cargando clientes:", error);
-      toast.error("Error cargando Clientes.");
+      setErrorCarga(
+        "No se pudo cargar Clientes. Revisa la conexion y los permisos de las empresas asignadas."
+      );
     } finally {
       setCargando(false);
       setValidandoAcceso(false);
@@ -164,9 +178,11 @@ export default function ClientesPage() {
       setClientes([]);
       setCuentas([]);
       setImpuestos([]);
+      setErrorCarga(null);
       return;
     }
 
+    setErrorCarga(null);
     const [resEmpresas, resClientes, resCuentas, resImpuestos] = await Promise.all([
       supabase
         .from("empresas")
@@ -194,10 +210,18 @@ export default function ClientesPage() {
         .order("nombre", { ascending: true }),
     ]);
 
-    if (resEmpresas.error) throw resEmpresas.error;
-    if (resClientes.error) throw resClientes.error;
-    if (resCuentas.error) throw resCuentas.error;
-    if (resImpuestos.error) throw resImpuestos.error;
+    const errores = [
+      resEmpresas.error,
+      resClientes.error,
+      resCuentas.error,
+      resImpuestos.error,
+    ].filter(Boolean);
+    if (errores.length) {
+      console.error("Consultas incompletas en Clientes:", errores);
+      setErrorCarga(
+        "Algunos datos de Clientes no pudieron cargarse. Revisa la conexion y los permisos configurados."
+      );
+    }
 
     setEmpresas((resEmpresas.data || []) as Empresa[]);
     setClientes((resClientes.data || []) as Cliente[]);
@@ -296,9 +320,7 @@ export default function ClientesPage() {
           nombre: cliente.nombre,
           cuenta_por_cobrar_id: cliente.cuenta_por_cobrar_id,
           plan_impuesto_id: cliente.plan_impuesto_id,
-          preparado_cxc: true,
-          preparado_facturas_venta: true,
-          preparado_documentos_contables: true,
+          relacion_cxc_impuestos: "fase_posterior",
         },
         origen: "modulo_clientes",
       });
@@ -410,55 +432,6 @@ export default function ClientesPage() {
     }
   }
 
-  async function inactivarCliente(cliente: Cliente) {
-    if (esAuditorSoloLectura(cliente.empresa_id)) {
-      await bloquearAuditor("inactivar_cliente", cliente.empresa_id, cliente.id);
-      return;
-    }
-
-    try {
-      validarEmpresaPermitida(cliente.empresa_id);
-    } catch (error) {
-      toast.error(getErrorMessage(error));
-      return;
-    }
-
-    const motivo = window.prompt("Motivo para inactivar el cliente:");
-    if (!motivo || motivo.trim().length < 5) {
-      toast.error("Debes indicar un motivo valido.");
-      return;
-    }
-
-    setProcesando(true);
-    const toastId = toast.loading("Inactivando cliente...");
-
-    try {
-      const { data, error } = await supabase
-        .from("clientes")
-        .update({
-          estado: "Inactivo",
-          observaciones: motivo.trim(),
-          actualizado_at: new Date().toISOString(),
-          actualizado_por: userId,
-        })
-        .eq("id", cliente.id)
-        .eq("empresa_id", cliente.empresa_id)
-        .select(COLUMNAS_CLIENTE)
-        .single();
-
-      if (error) throw error;
-
-      await auditarCliente("inactivar_cliente", data as Cliente, cliente.estado, motivo.trim());
-      await cargarDatos();
-      toast.success("Cliente inactivado.", { id: toastId });
-    } catch (error) {
-      console.error("Error inactivando cliente:", error);
-      toast.error(getErrorMessage(error), { id: toastId });
-    } finally {
-      setProcesando(false);
-    }
-  }
-
   function cargarClienteParaEditar(cliente: Cliente) {
     if (esAuditorSoloLectura(cliente.empresa_id)) {
       void bloquearAuditor("editar_cliente", cliente.empresa_id, cliente.id);
@@ -524,9 +497,13 @@ export default function ClientesPage() {
 
   const clientesFiltrados = useMemo(() => {
     const texto = busqueda.trim().toLowerCase();
-    if (!texto) return clientes;
+    const empresaId = Number(form.empresaId);
+    const clientesEmpresa = Number.isFinite(empresaId)
+      ? clientes.filter((cliente) => Number(cliente.empresa_id) === empresaId)
+      : [];
+    if (!texto) return clientesEmpresa;
 
-    return clientes.filter((cliente) =>
+    return clientesEmpresa.filter((cliente) =>
       [
         cliente.nit,
         cliente.nombre,
@@ -542,13 +519,26 @@ export default function ClientesPage() {
         .toLowerCase()
         .includes(texto)
     );
-  }, [busqueda, clientes]);
+  }, [busqueda, clientes, form.empresaId]);
 
-  if (validandoAcceso || !autorizado) {
+  if (validandoAcceso) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
         <Loader2 className="animate-spin mr-2" />
         Validando acceso...
+      </div>
+    );
+  }
+
+  if (!autorizado) {
+    return (
+      <div className="flex min-h-screen bg-[#020617] text-white">
+        <Sidebar />
+        <main className="flex flex-1 items-center justify-center p-6">
+          <div className="max-w-lg rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-center text-amber-100">
+            {errorCarga || "No se pudo validar el acceso a Clientes."}
+          </div>
+        </main>
       </div>
     );
   }
@@ -573,7 +563,7 @@ export default function ClientesPage() {
             <div>
               <h1 className="text-5xl font-black tracking-tight">Clientes</h1>
               <p className="text-gray-400 mt-2">
-                Base comercial y contable para CxC, facturas de venta, impuestos y reportes
+                Relacion con CxC e impuestos: Fase posterior.
               </p>
             </div>
 
@@ -592,6 +582,18 @@ export default function ClientesPage() {
             </div>
           </header>
 
+          {errorCarga && (
+            <section className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-5 text-sm text-amber-100">
+              {errorCarga}
+            </section>
+          )}
+
+          {!empresas.length && !cargando && (
+            <section className="mb-6 rounded-2xl border border-dashed border-white/10 bg-white/[0.03] p-8 text-center text-gray-400">
+              No hay empresas operativas asignadas para gestionar clientes.
+            </section>
+          )}
+
           {cargando ? (
             <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-10 flex items-center justify-center text-cyan-400">
               <Loader2 className="animate-spin mr-2" />
@@ -599,7 +601,7 @@ export default function ClientesPage() {
             </section>
           ) : (
             <>
-              <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
+              {!!empresas.length && !esAuditorSoloLectura(form.empresaId) && <section className="bg-white/[0.03] border border-white/10 rounded-[2rem] p-6 mb-8 border-l-4 border-l-cyan-500">
                 <h2 className="text-sm font-bold mb-6 text-gray-400 tracking-widest uppercase flex items-center gap-2">
                   <Plus size={16} className="text-cyan-500" />
                   {clienteEditandoId ? "Editar cliente" : "Registrar cliente"}
@@ -668,7 +670,7 @@ export default function ClientesPage() {
                     </button>
                   )}
                 </div>
-              </section>
+              </section>}
 
               <section className="mb-6 flex items-center gap-3">
                 <div className="relative w-full md:w-[520px]">
@@ -714,11 +716,6 @@ export default function ClientesPage() {
                           Editar
                         </button>
                       )}
-                      {cliente.estado !== "Inactivo" && !esAuditorSoloLectura(cliente.empresa_id) && (
-                        <button onClick={() => inactivarCliente(cliente)} className="flex-1 rounded-xl bg-red-500/10 border border-red-500/20 text-red-200 text-xs font-black py-3">
-                          Inactivar
-                        </button>
-                      )}
                     </div>
                   </div>
                 ))}
@@ -726,7 +723,11 @@ export default function ClientesPage() {
                 {clientesFiltrados.length === 0 && (
                   <div className="md:col-span-2 xl:col-span-3 text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem]">
                     <UserRound className="mx-auto text-gray-600 mb-3" />
-                    <p className="text-gray-500">No hay clientes para mostrar.</p>
+                    <p className="text-gray-500">
+                      {busqueda.trim()
+                        ? "No hay clientes para los filtros seleccionados."
+                        : "No hay clientes registrados para esta empresa."}
+                    </p>
                   </div>
                 )}
               </section>
