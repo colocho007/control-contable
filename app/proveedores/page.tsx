@@ -65,8 +65,31 @@ interface Proveedor {
   actualizado_at?: string | null;
 }
 
+interface CuentaPorPagarResumen {
+  id: string;
+  empresa_id: number;
+  proveedor_id: number;
+  numero_documento: string;
+  fecha_documento: string;
+  fecha_vencimiento: string;
+  moneda: string;
+  saldo_pendiente: number;
+  estado: string;
+}
+
+interface ResumenCxPProveedor {
+  cantidad: number;
+  vencidas: number;
+  saldoPendiente: number;
+  moneda: string;
+  ultimaCuenta: CuentaPorPagarResumen | null;
+  estadoGeneral: string;
+}
+
 const COLUMNAS_PROVEEDOR =
   "id,empresa_id,empresa,nit,nombre,razon_social,nombre_comercial,direccion,telefono,correo,contacto,estado,observaciones,cuenta_por_pagar_id,plan_impuesto_id,dias_credito,banco,cuenta_bancaria,tipo_cuenta,moneda,tipo_proveedor,saldo_pendiente,created_at,actualizado_at";
+const COLUMNAS_RESUMEN_CXP =
+  "id,empresa_id,proveedor_id,numero_documento,fecha_documento,fecha_vencimiento,moneda,saldo_pendiente,estado";
 
 const ESTADOS_PROVEEDOR = ["Activo", "Inactivo"];
 const MONEDAS = ["GTQ", "USD"];
@@ -107,6 +130,7 @@ export default function ProveedoresPage() {
   const [funcionesOperativas, setFuncionesOperativas] = useState<UsuarioFuncionOperativa[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
+  const [cuentasPorPagar, setCuentasPorPagar] = useState<CuentaPorPagarResumen[]>([]);
   const [cuentas, setCuentas] = useState<CuentaContable[]>([]);
   const [impuestos, setImpuestos] = useState<ImpuestoConfiguracion[]>([]);
   const [busqueda, setBusqueda] = useState("");
@@ -139,6 +163,42 @@ export default function ProveedoresPage() {
         .some((valor) => String(valor).toLowerCase().includes(termino))
     );
   }, [busqueda, form.empresaId, proveedores]);
+
+  const resumenCxPPorProveedor = useMemo(() => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const resumenes = new Map<string, ResumenCxPProveedor>();
+
+    proveedores.forEach((proveedor) => {
+      const relacionadas = cuentasPorPagar
+        .filter(
+          (cuenta) =>
+            String(cuenta.proveedor_id) === String(proveedor.id) &&
+            Number(cuenta.empresa_id) === Number(proveedor.empresa_id)
+        )
+        .sort((a, b) => b.fecha_documento.localeCompare(a.fecha_documento));
+      const saldoPendiente = relacionadas.reduce(
+        (total, cuenta) => total + Number(cuenta.saldo_pendiente || 0),
+        0
+      );
+      const vencidas = relacionadas.filter(
+        (cuenta) =>
+          cuenta.fecha_vencimiento < hoy &&
+          Number(cuenta.saldo_pendiente || 0) > 0 &&
+          cuenta.estado !== "Anulado"
+      ).length;
+
+      resumenes.set(String(proveedor.id), {
+        cantidad: relacionadas.length,
+        vencidas,
+        saldoPendiente,
+        moneda: relacionadas[0]?.moneda || proveedor.moneda || "GTQ",
+        ultimaCuenta: relacionadas[0] || null,
+        estadoGeneral: vencidas > 0 ? "Con cuentas vencidas" : saldoPendiente > 0 ? "Pendiente" : relacionadas.length ? "Al día" : "Sin cuentas",
+      });
+    });
+
+    return resumenes;
+  }, [cuentasPorPagar, proveedores]);
 
   const cuentasDisponibles = useMemo(() => {
     const empresaId = Number(form.empresaId);
@@ -201,6 +261,7 @@ export default function ProveedoresPage() {
     if (!ids.length) {
       setEmpresas([]);
       setProveedores([]);
+      setCuentasPorPagar([]);
       setCuentas([]);
       setImpuestos([]);
       setCargando(false);
@@ -211,7 +272,7 @@ export default function ProveedoresPage() {
     setErrorCarga(null);
     const filtroEmpresas = ids.join(",");
 
-    const [empresasRes, proveedoresRes, cuentasRes, impuestosRes] = await Promise.all([
+    const [empresasRes, proveedoresRes, cuentasPorPagarRes, cuentasRes, impuestosRes] = await Promise.all([
       supabase
         .from("empresas")
         .select("id,nombre")
@@ -222,6 +283,11 @@ export default function ProveedoresPage() {
         .select(COLUMNAS_PROVEEDOR)
         .in("empresa_id", ids)
         .order("nombre", { ascending: true }),
+      supabase
+        .from("cuentas_por_pagar")
+        .select(COLUMNAS_RESUMEN_CXP)
+        .in("empresa_id", ids)
+        .order("fecha_documento", { ascending: false }),
       supabase
         .from("catalogo_cuentas")
         .select("id,empresa_id,codigo,nombre,activo,permite_movimientos")
@@ -241,6 +307,7 @@ export default function ProveedoresPage() {
     const errores = [
       empresasRes.error,
       proveedoresRes.error,
+      cuentasPorPagarRes.error,
       cuentasRes.error,
       impuestosRes.error,
     ].filter(Boolean);
@@ -255,6 +322,7 @@ export default function ProveedoresPage() {
     const empresasData = (empresasRes.data || []) as Empresa[];
     setEmpresas(empresasData);
     setProveedores(((proveedoresRes.data || []) as Proveedor[]).map(normalizarProveedor));
+    setCuentasPorPagar((cuentasPorPagarRes.data || []) as CuentaPorPagarResumen[]);
     setCuentas((cuentasRes.data || []) as CuentaContable[]);
     setImpuestos((impuestosRes.data || []) as ImpuestoConfiguracion[]);
 
@@ -568,7 +636,7 @@ export default function ProveedoresPage() {
             <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Proveedores</p>
             <h1 className="text-3xl font-bold text-gray-900">Registro formal por NIT</h1>
             <p className="mt-1 text-sm text-gray-600">
-              Relacion con CxP e impuestos: Fase posterior.
+              Fase posterior: pagos, impuestos y contabilidad con validación.
             </p>
           </div>
           {!!empresas.length && !esAuditorSoloLectura(form.empresaId) && <button
@@ -889,7 +957,10 @@ export default function ProveedoresPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {proveedoresFiltrados.map((proveedor) => (
+              {proveedoresFiltrados.map((proveedor) => {
+                const resumenCxP = resumenCxPPorProveedor.get(String(proveedor.id));
+
+                return (
                 <article key={proveedor.id} className="rounded-lg border p-4 shadow-sm">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -945,8 +1016,32 @@ export default function ProveedoresPage() {
                       {proveedor.observaciones}
                     </p>
                   )}
+                  <section className="mt-4 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-semibold text-blue-950">Resumen de cuentas por pagar</h4>
+                      <span className="rounded-full bg-white px-2 py-1 text-xs font-semibold text-blue-800">
+                        {resumenCxP?.estadoGeneral || "Sin cuentas"}
+                      </span>
+                    </div>
+                    {!resumenCxP?.cantidad ? (
+                      <p className="text-sm text-blue-800">
+                        Este proveedor aún no tiene cuentas por pagar registradas.
+                      </p>
+                    ) : (
+                      <dl className="grid grid-cols-2 gap-3 text-sm text-blue-950">
+                        <Dato etiqueta="Saldo por pagar" valor={`${resumenCxP.moneda} ${formatoMonto(resumenCxP.saldoPendiente)}`} />
+                        <Dato etiqueta="Cuentas registradas" valor={resumenCxP.cantidad} />
+                        <Dato etiqueta="Cuentas vencidas" valor={resumenCxP.vencidas} />
+                        <Dato
+                          etiqueta="Última cuenta"
+                          valor={`${resumenCxP.ultimaCuenta?.numero_documento || "Sin número"} | ${resumenCxP.ultimaCuenta?.fecha_documento || "Sin fecha"}`}
+                        />
+                      </dl>
+                    )}
+                  </section>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -971,4 +1066,11 @@ function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | number | 
       <dd className="mt-0.5 break-words text-gray-800">{valor || "No definido"}</dd>
     </div>
   );
+}
+
+function formatoMonto(valor: number) {
+  return Number(valor || 0).toLocaleString("es-GT", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }

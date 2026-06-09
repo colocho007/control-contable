@@ -59,9 +59,32 @@ interface Cliente {
   actualizado_at?: string | null;
 }
 
+interface CuentaPorCobrarResumen {
+  id: string;
+  empresa_id: number;
+  cliente_id: string;
+  numero_documento: string;
+  fecha_documento: string;
+  fecha_vencimiento: string;
+  moneda: string;
+  saldo_pendiente: number;
+  estado: string;
+}
+
+interface ResumenCxCCliente {
+  cantidad: number;
+  vencidas: number;
+  saldoPendiente: number;
+  moneda: string;
+  ultimaCuenta: CuentaPorCobrarResumen | null;
+  estadoGeneral: string;
+}
+
 const ESTADOS_CLIENTE = ["Activo", "Inactivo", "Suspendido"];
 const COLUMNAS_CLIENTE =
   "id,empresa_id,nit,nombre,razon_social,nombre_comercial,direccion,telefono,correo,contacto,estado,observaciones,cuenta_por_cobrar_id,plan_impuesto_id,limite_credito,dias_credito,creado_at,actualizado_at";
+const COLUMNAS_RESUMEN_CXC =
+  "id,empresa_id,cliente_id,numero_documento,fecha_documento,fecha_vencimiento,moneda,saldo_pendiente,estado";
 
 function limpiarTexto(valor: string) {
   const texto = valor.trim();
@@ -104,6 +127,7 @@ export default function ClientesPage() {
 
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [cuentasPorCobrar, setCuentasPorCobrar] = useState<CuentaPorCobrarResumen[]>([]);
   const [cuentas, setCuentas] = useState<CuentaContable[]>([]);
   const [impuestos, setImpuestos] = useState<ImpuestoConfig[]>([]);
   const [busqueda, setBusqueda] = useState("");
@@ -176,6 +200,7 @@ export default function ClientesPage() {
     if (!idsPermitidos.length) {
       setEmpresas([]);
       setClientes([]);
+      setCuentasPorCobrar([]);
       setCuentas([]);
       setImpuestos([]);
       setErrorCarga(null);
@@ -183,7 +208,7 @@ export default function ClientesPage() {
     }
 
     setErrorCarga(null);
-    const [resEmpresas, resClientes, resCuentas, resImpuestos] = await Promise.all([
+    const [resEmpresas, resClientes, resCuentasPorCobrar, resCuentas, resImpuestos] = await Promise.all([
       supabase
         .from("empresas")
         .select("id,nombre")
@@ -194,6 +219,11 @@ export default function ClientesPage() {
         .select(COLUMNAS_CLIENTE)
         .in("empresa_id", idsPermitidos)
         .order("nombre", { ascending: true }),
+      supabase
+        .from("cuentas_por_cobrar")
+        .select(COLUMNAS_RESUMEN_CXC)
+        .in("empresa_id", idsPermitidos)
+        .order("fecha_documento", { ascending: false }),
       supabase
         .from("catalogo_cuentas")
         .select("id,empresa_id,codigo,nombre,activo,permite_movimientos")
@@ -213,6 +243,7 @@ export default function ClientesPage() {
     const errores = [
       resEmpresas.error,
       resClientes.error,
+      resCuentasPorCobrar.error,
       resCuentas.error,
       resImpuestos.error,
     ].filter(Boolean);
@@ -225,6 +256,7 @@ export default function ClientesPage() {
 
     setEmpresas((resEmpresas.data || []) as Empresa[]);
     setClientes((resClientes.data || []) as Cliente[]);
+    setCuentasPorCobrar((resCuentasPorCobrar.data || []) as CuentaPorCobrarResumen[]);
     setCuentas((resCuentas.data || []) as CuentaContable[]);
     setImpuestos((resImpuestos.data || []) as ImpuestoConfig[]);
 
@@ -521,6 +553,42 @@ export default function ClientesPage() {
     );
   }, [busqueda, clientes, form.empresaId]);
 
+  const resumenCxCPorCliente = useMemo(() => {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const resumenes = new Map<string, ResumenCxCCliente>();
+
+    clientes.forEach((cliente) => {
+      const relacionadas = cuentasPorCobrar
+        .filter(
+          (cuenta) =>
+            String(cuenta.cliente_id) === String(cliente.id) &&
+            Number(cuenta.empresa_id) === Number(cliente.empresa_id)
+        )
+        .sort((a, b) => b.fecha_documento.localeCompare(a.fecha_documento));
+      const saldoPendiente = relacionadas.reduce(
+        (total, cuenta) => total + Number(cuenta.saldo_pendiente || 0),
+        0
+      );
+      const vencidas = relacionadas.filter(
+        (cuenta) =>
+          cuenta.fecha_vencimiento < hoy &&
+          Number(cuenta.saldo_pendiente || 0) > 0 &&
+          cuenta.estado !== "Anulado"
+      ).length;
+
+      resumenes.set(String(cliente.id), {
+        cantidad: relacionadas.length,
+        vencidas,
+        saldoPendiente,
+        moneda: relacionadas[0]?.moneda || "GTQ",
+        ultimaCuenta: relacionadas[0] || null,
+        estadoGeneral: vencidas > 0 ? "Con cuentas vencidas" : saldoPendiente > 0 ? "Pendiente" : relacionadas.length ? "Al día" : "Sin cuentas",
+      });
+    });
+
+    return resumenes;
+  }, [clientes, cuentasPorCobrar]);
+
   if (validandoAcceso) {
     return (
       <div className="h-screen bg-[#020617] text-cyan-400 flex items-center justify-center">
@@ -563,7 +631,7 @@ export default function ClientesPage() {
             <div>
               <h1 className="text-5xl font-black tracking-tight">Clientes</h1>
               <p className="text-gray-400 mt-2">
-                Relacion con CxC e impuestos: Fase posterior.
+                Fase posterior: cobros, impuestos y contabilidad con validación.
               </p>
             </div>
 
@@ -685,7 +753,10 @@ export default function ClientesPage() {
               </section>
 
               <section className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {clientesFiltrados.map((cliente) => (
+                {clientesFiltrados.map((cliente) => {
+                  const resumenCxC = resumenCxCPorCliente.get(String(cliente.id));
+
+                  return (
                   <div key={cliente.id} className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
                     <div className="flex items-start justify-between gap-3 mb-4">
                       <div>
@@ -710,6 +781,32 @@ export default function ClientesPage() {
                       <p>Observaciones: {cliente.observaciones || "N/A"}</p>
                     </div>
 
+                    <section className="mt-5 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.06] p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <h4 className="text-xs font-black uppercase tracking-widest text-cyan-200">
+                          Resumen de cuentas por cobrar
+                        </h4>
+                        <span className="rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[10px] font-black text-cyan-100">
+                          {resumenCxC?.estadoGeneral || "Sin cuentas"}
+                        </span>
+                      </div>
+                      {!resumenCxC?.cantidad ? (
+                        <p className="text-xs text-cyan-100/80">
+                          Este cliente aún no tiene cuentas por cobrar registradas.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-3 text-xs text-gray-300">
+                          <DatoCxC etiqueta="Saldo por cobrar" valor={`${resumenCxC.moneda} ${formatoMonto(resumenCxC.saldoPendiente)}`} />
+                          <DatoCxC etiqueta="Cuentas registradas" valor={resumenCxC.cantidad} />
+                          <DatoCxC etiqueta="Cuentas vencidas" valor={resumenCxC.vencidas} />
+                          <DatoCxC
+                            etiqueta="Última cuenta"
+                            valor={`${resumenCxC.ultimaCuenta?.numero_documento || "Sin número"} | ${resumenCxC.ultimaCuenta?.fecha_documento || "Sin fecha"}`}
+                          />
+                        </div>
+                      )}
+                    </section>
+
                     <div className="flex gap-2 mt-5">
                       {!esAuditorSoloLectura(cliente.empresa_id) && (
                         <button onClick={() => cargarClienteParaEditar(cliente)} className="flex-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-200 text-xs font-black py-3">
@@ -718,7 +815,8 @@ export default function ClientesPage() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
 
                 {clientesFiltrados.length === 0 && (
                   <div className="md:col-span-2 xl:col-span-3 text-center py-16 border-2 border-dashed border-white/10 rounded-[2rem]">
@@ -776,4 +874,26 @@ function Resumen({
       <h2 className={`text-2xl font-black mt-1 ${color}`}>{valor}</h2>
     </div>
   );
+}
+
+function DatoCxC({
+  etiqueta,
+  valor,
+}: {
+  etiqueta: string;
+  valor: string | number;
+}) {
+  return (
+    <div>
+      <p className="text-[9px] font-black uppercase tracking-widest text-gray-500">{etiqueta}</p>
+      <p className="mt-1 break-words text-cyan-50">{valor}</p>
+    </div>
+  );
+}
+
+function formatoMonto(valor: number) {
+  return Number(valor || 0).toLocaleString("es-GT", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
