@@ -27,6 +27,9 @@ import {
   ToggleRight,
   Users,
   XCircle,
+  ChevronDown,
+  ChevronUp,
+  Terminal
 } from "lucide-react";
 import { Toaster, toast } from "react-hot-toast";
 
@@ -1493,16 +1496,16 @@ export default function MonitoreoSistemaPage() {
       />
       <Sidebar />
 
-      <main className="flex-1 p-6 md:p-8 overflow-y-auto">
-        <div className="max-w-7xl mx-auto">
+      <main className="flex-1 p-4 md:p-6 lg:p-8 overflow-y-auto">
+        <div className="max-w-[1600px] mx-auto">
           <header className="mb-8 flex flex-col xl:flex-row xl:items-end xl:justify-between gap-5">
             <div>
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-12 h-12 rounded-2xl bg-amber-400 text-black flex items-center justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 rounded-2xl bg-amber-400 text-black flex items-center justify-center">
                   <ServerCog size={28} />
                 </div>
                 <div>
-                  <h1 className="text-4xl md:text-5xl font-black tracking-tight">
+                  <h1 className="text-3xl md:text-5xl font-black tracking-tight">
                     Monitoreo del Sistema
                   </h1>
                   <p className="text-gray-400 text-sm mt-1">
@@ -2088,6 +2091,8 @@ function PanelDetalleAlerta({
   onCambiarEstado: (alerta: AlertaDiagnostico, estado: EstadoAlerta) => void;
   onIrModulo: (alerta: AlertaDiagnostico) => void;
 }) {
+  const [verTecnico, setVerTecnico] = useState(false);
+
   if (!alerta || !estado) {
     return (
       <div className="panel">
@@ -2121,55 +2126,72 @@ function PanelDetalleAlerta({
           <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <DatoTexto label="Acción" valor={etiqueta(alerta.accion)} />
-          <DatoTexto label="Fuente" valor={alerta.fuente} />
-          <DatoTexto label="Usuario" valor={alerta.usuario || "No aplica"} />
-          <DatoTexto label="Empresa" valor={alerta.empresa || "No aplica"} />
-        </div>
-
-        <div>
-          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Posible causa</p>
-          <p className="text-sm text-gray-300">{alerta.posibleCausa}</p>
-        </div>
-        <div>
-          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Acción recomendada</p>
-          <p className="text-sm text-gray-300">{alerta.accionRecomendada}</p>
-        </div>
-
-        <div>
-          <p className="text-[11px] uppercase font-black text-gray-500 mb-2">Metadatos relevantes</p>
-          <div className="space-y-2">
-            {Object.entries(alerta.metadatos).map(([clave, valor]) => (
-              <div key={clave} className="rounded-lg border border-white/10 bg-[#0f172a]/70 p-3">
-                <p className="text-[11px] text-gray-500">{clave}</p>
-                <p className="text-xs text-gray-300 break-words">{valor}</p>
-              </div>
-            ))}
-            {Object.keys(alerta.metadatos).length === 0 && (
-              <p className="text-sm text-gray-500">Sin metadatos visibles.</p>
-            )}
+        <div className="bg-amber-400/5 border border-amber-400/20 rounded-2xl p-4 space-y-4">
+          <div>
+            <p className="text-[11px] uppercase font-black text-amber-500/70 mb-1">Análisis de Causa</p>
+            <p className="text-sm text-gray-200 leading-relaxed">{alerta.posibleCausa}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase font-black text-cyan-500/70 mb-1">Acción recomendada</p>
+            <p className="text-sm font-bold text-white leading-relaxed">{alerta.accionRecomendada}</p>
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => onIrModulo(alerta)}
-            className="rounded-xl bg-cyan-500/15 border border-cyan-400/30 px-4 py-2 text-sm font-bold text-cyan-100 hover:border-cyan-300/70"
-          >
-            Ir al módulo relacionado
-          </button>
-          <button type="button" onClick={() => onCambiarEstado(alerta, "En revisión")} className="rounded-xl bg-white/5 border border-white/10 px-4 py-2 text-sm font-bold hover:border-amber-300/60">
-            Marcar revisada
-          </button>
-          <button type="button" onClick={() => onCambiarEstado(alerta, "Resuelta")} className="rounded-xl bg-green-500/10 border border-green-400/30 px-4 py-2 text-sm font-bold text-green-100 hover:border-green-300/70">
-            Marcar resuelta
-          </button>
-          <button type="button" onClick={() => onCambiarEstado(alerta, "Archivada")} className="rounded-xl bg-slate-500/10 border border-slate-400/30 px-4 py-2 text-sm font-bold text-slate-100 hover:border-slate-300/70">
-            Archivar alerta
-          </button>
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <DatoTexto label="Acción" valor={etiqueta(alerta.accion)} />
+          <DatoTexto label="Usuario" valor={alerta.usuario || "No aplica"} />
+          <DatoTexto label="Empresa" valor={alerta.empresa || "No aplica"} />
+          <DatoTexto label="Fuente" valor={alerta.fuente} />
         </div>
+
+        <div className="pt-2">
+          <button 
+            onClick={() => setVerTecnico(!verTecnico)}
+            className="flex items-center gap-2 text-[11px] font-black uppercase text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            <Terminal size={14} />
+            Detalle Técnico
+            {verTecnico ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          
+          {verTecnico && (
+            <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
+              <div className="rounded-lg border border-white/5 bg-black/20 p-2 mb-2">
+                <p className="text-[10px] text-gray-600 font-mono break-all">ID: {alerta.id}</p>
+              </div>
+              {Object.entries(alerta.metadatos).map(([clave, valor]) => (
+                <div key={clave} className="rounded-lg border border-white/10 bg-[#0f172a]/70 p-3">
+                  <p className="text-[11px] text-gray-500">{clave}</p>
+                  <p className="text-xs text-gray-300 break-words font-mono">{valor}</p>
+                </div>
+              ))}
+              {Object.keys(alerta.metadatos).length === 0 && (
+                <p className="text-sm text-gray-500 italic">Sin objetos JSON adicionales.</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2 pt-4 border-t border-white/5">
+           <button
+              type="button"
+              onClick={() => onIrModulo(alerta)}
+              className="w-full rounded-xl bg-cyan-500/15 border border-cyan-400/30 px-4 py-2.5 text-sm font-bold text-cyan-100 hover:border-cyan-300 transition-all flex items-center justify-center gap-2"
+            >
+              Ir al módulo afectado
+            </button>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => onCambiarEstado(alerta, "En revisión")} className="rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-[12px] font-bold hover:border-amber-400/50 transition-colors">
+                En revisión
+              </button>
+              <button type="button" onClick={() => onCambiarEstado(alerta, "Resuelta")} className="rounded-xl bg-green-500/10 border border-green-400/30 px-3 py-2 text-[12px] font-bold text-green-100 hover:border-green-300 transition-colors">
+                Resolver
+              </button>
+            </div>
+            <button type="button" onClick={() => onCambiarEstado(alerta, "Archivada")} className="w-full rounded-xl bg-slate-500/10 border border-slate-400/30 px-4 py-2 text-[12px] font-bold text-slate-400 hover:text-slate-100 hover:border-slate-300 transition-colors">
+              Archivar incidencia
+            </button>
+         </div>
       </div>
     </aside>
   );
