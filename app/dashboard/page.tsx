@@ -149,6 +149,7 @@ export default function DashboardPage() {
 
   const [validandoAcceso, setValidandoAcceso] = useState(true);
   const [cargandoDashboard, setCargandoDashboard] = useState(false);
+  const [tiempoAgotado, setTiempoAgotado] = useState(false);
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [movimientos, setMovimientos] = useState<Movimiento[]>([]);
   const [ordenes, setOrdenes] = useState<OrdenCompra[]>([]);
@@ -613,13 +614,43 @@ export default function DashboardPage() {
 
   if (validandoAcceso) {
     return (
-      <div className="h-screen w-full bg-[#020617] flex items-center justify-center">
-        <div className="animate-pulse flex flex-col items-center">
-          <div className="w-16 h-16 bg-cyan-500/20 rounded-full mb-4"></div>
-          <p className="text-cyan-500 font-mono tracking-widest">
-            VALIDANDO ACCESO...
-          </p>
-        </div>
+      <div className="h-screen w-full bg-[#020617] flex flex-col items-center justify-center p-6 text-center">
+        {!tiempoAgotado ? (
+          <div className="animate-pulse flex flex-col items-center">
+            <div className="w-16 h-16 bg-cyan-500/20 rounded-full mb-6 flex items-center justify-center border border-cyan-500/30">
+               <Clock3 className="text-cyan-500 animate-spin" size={32} />
+            </div>
+            <p className="text-cyan-500 font-mono tracking-widest uppercase text-sm">
+              Validando credenciales de acceso...
+            </p>
+          </div>
+        ) : (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="max-w-md bg-white/5 border border-white/10 p-8 rounded-[2rem] backdrop-blur-xl"
+          >
+            <AlertTriangle className="text-amber-400 mx-auto mb-4" size={48} />
+            <h2 className="text-xl font-bold mb-2">La validación está tardando más de lo esperado</h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Esto puede deberse a una conexión lenta o un problema temporal con los servicios.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full h-12 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold transition-colors"
+              >
+                Reintentar carga
+              </button>
+              <button
+                onClick={() => router.push("/login")}
+                className="w-full h-12 bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl font-bold transition-colors border border-white/10"
+              >
+                Volver al login
+              </button>
+            </div>
+          </motion.div>
+        )}
       </div>
     );
   }
@@ -837,9 +868,13 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="h-[350px] w-full">
+              <div className="min-h-[350px] w-full flex items-center justify-center">
                 {cargandoDashboard ? (
-                  <CargandoDatos />
+                  <CargandoDatos mensaje="Cargando historial de flujo..." />
+                ) : movimientosActivos.length === 0 ? (
+                  <p className="text-gray-500 text-sm italic">
+                    Sin movimientos registrados en este periodo.
+                  </p>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={movimientosActivos}>
@@ -917,9 +952,13 @@ export default function DashboardPage() {
                   Estado de Operaciones
                 </h3>
 
-                <div className="h-[200px]">
+                <div className="min-h-[200px] flex items-center justify-center">
                   {cargandoDashboard ? (
-                    <CargandoDatos />
+                    <CargandoDatos mensaje="Analizando tareas..." />
+                  ) : stats.totalTareas === 0 ? (
+                    <p className="text-gray-500 text-xs italic text-center">
+                      No hay tareas vigentes <br /> asignadas.
+                    </p>
                   ) : (
                     <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
@@ -941,7 +980,7 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {!cargandoDashboard && (
+                {!cargandoDashboard && stats.totalTareas > 0 && (
                   <div className="flex justify-center gap-6 mt-4">
                     <div className="flex items-center gap-2 text-xs text-gray-400">
                       <div className="w-3 h-3 bg-cyan-500 rounded-full" />{" "}
@@ -1205,10 +1244,11 @@ function SemaforoBadge({
   );
 }
 
-function CargandoDatos() {
+function CargandoDatos({ mensaje = "Cargando datos..." }: { mensaje?: string }) {
   return (
-    <div className="min-h-[100px] h-full flex items-center justify-center text-sm font-medium text-gray-500">
-      Cargando datos...
+    <div className="min-h-[100px] h-full flex flex-col items-center justify-center gap-3 text-sm font-medium text-gray-500">
+      <div className="w-5 h-5 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+      <span>{mensaje}</span>
     </div>
   );
 }
