@@ -166,7 +166,18 @@ export default function DashboardPage() {
   empresasRef.current = empresasPermitidas;
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      if (validandoAcceso) {
+        setTiempoAgotado(true);
+        // Nota: No forzamos validandoAcceso(false) aquí para que el usuario
+        // vea la interfaz de error de tiempo agotado definida en el render.
+      }
+    }, 10000); // 10 segundos de límite para validación de sesión
+
     inicializarDashboard();
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   useEffect(() => {
@@ -206,6 +217,7 @@ export default function DashboardPage() {
   async function inicializarDashboard() {
     setValidandoAcceso(true);
     setCargandoDashboard(false);
+    setTiempoAgotado(false);
 
     const acceso = await validarAccesoModuloUsuario("dashboard");
 
@@ -215,9 +227,7 @@ export default function DashboardPage() {
         acceso.motivo === "sin_perfil" ||
         acceso.motivo === "usuario_inactivo"
       ) {
-        if (acceso.motivo === "usuario_inactivo") {
-          toast.error("Tu usuario está inactivo. Contacta al administrador.");
-        }
+        // Manejado por la lógica de redirección posterior
       } else if (
         acceso.motivo === "modulo_inactivo" ||
         acceso.motivo === "modulo_no_encontrado"
@@ -227,9 +237,16 @@ export default function DashboardPage() {
         toast.error("No tienes acceso al módulo Dashboard.");
       }
 
+      if (acceso.motivo === "usuario_inactivo") {
+        toast.error("Tu usuario está inactivo. Contacta al administrador.");
+      }
+
       setAutorizado(false);
       setValidandoAcceso(false);
-      router.replace("/login");
+      
+      if (acceso.motivo !== "usuario_inactivo") {
+        router.replace("/login");
+      }
       return;
     }
 
@@ -245,27 +262,37 @@ export default function DashboardPage() {
     });
 
     setEsAdmin(admin);
-    setCargandoDashboard(true);
     setAutorizado(true);
+    
+    // LIBERACIÓN INMEDIATA DE LA INTERFAZ
+    // Una vez confirmada la sesión y el perfil, permitimos la entrada al Dashboard.
+    // Los datos operativos se cargarán en segundo plano.
     setValidandoAcceso(false);
+    setTiempoAgotado(false);
 
+    ejecutarCargaOperativa(user.id, p.rol);
+  }
+
+  async function ejecutarCargaOperativa(userId: string, rol: string) {
+    setCargandoDashboard(true);
     try {
-      const idsPermitidos = await obtenerEmpresasPermitidas(user.id, p.rol);
+      const idsPermitidos = await obtenerEmpresasPermitidas(userId, rol);
       const empresasOperativas = await obtenerEmpresasOperativasDesdeIds(idsPermitidos);
-      const empresas = empresasOperativas.ids;
+      const ids = empresasOperativas.ids;
 
-      setEmpresasPermitidas(empresas);
+      setEmpresasPermitidas(ids);
       setEmpresas(empresasOperativas.empresas);
 
+      // Carga paralela de métricas y listas
       await Promise.all([
-        obtenerTareas(empresas),
-        obtenerFinanzas(empresas),
-        obtenerOrdenes(empresas),
-        obtenerCheques(empresas),
+        obtenerTareas(ids),
+        obtenerFinanzas(ids),
+        obtenerOrdenes(ids),
+        obtenerCheques(ids),
       ]);
     } catch (error) {
-      console.error("Error cargando datos del dashboard:", error);
-      toast.error("Error cargando datos del dashboard");
+      console.error("Error en carga operativa de segundo plano:", error);
+      toast.error("Error al cargar algunos datos del dashboard");
     } finally {
       setCargandoDashboard(false);
     }
@@ -357,27 +384,6 @@ export default function DashboardPage() {
     }
 
     setCheques(data || []);
-  }
-
-  async function obtenerNombresEmpresas(empresasParam = empresasRef.current) {
-    if (!empresasParam.length) {
-      setEmpresas([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("empresas")
-      .select("id,nombre,estado")
-      .in("id", empresasParam)
-      .order("nombre", { ascending: true });
-
-    if (error) {
-      console.error("Error obteniendo empresas:", error);
-      toast.error("Error cargando empresas");
-      return;
-    }
-
-    setEmpresas(((data || []) as Empresa[]).filter(esEmpresaOperativaVisible));
   }
 
   const movimientosActivos = useMemo(
