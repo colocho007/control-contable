@@ -555,7 +555,7 @@ const menusAdmin = [
                           : "justify-between p-4"
                       } ${
                         active
-                          ? "bg-cyan-500/10 text-cyan-400"
+                          ? "bg-cyan-500/10 text-[var(--primary)]"
                           : "text-[var(--muted)] hover:bg-[var(--card)] hover:text-[var(--sidebar-foreground)]"
                       }`}
                     >

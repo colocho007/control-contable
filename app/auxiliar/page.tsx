@@ -361,11 +361,11 @@ export default function AuxiliarPage() {
             </div>
           </header>
 
-          <section className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-5 text-cyan-100">
+          <section className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-5 text-cyan-200">
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 shrink-0" size={20} />
               <p>
-                Este módulo centralizará el trabajo operativo del auxiliar. Por ahora algunas acciones están deshabilitadas hasta conectar el flujo completo.
+                Esta bandeja es informativa. Las funciones de automatización están previstas para una fase posterior.
               </p>
             </div>
           </section>
@@ -417,7 +417,7 @@ export default function AuxiliarPage() {
                 <TarjetaResumen
                   titulo="Vencimientos próximos"
                   valor={resumen.vencimientosProximos}
-                  detalle={tareas.length ? "Próximos 7 días" : "Pendiente de conectar"}
+                  detalle={tareas.length ? "Próximos 7 días" : "Sin datos disponibles"}
                   icono={<Clock size={22} />}
                 />
               </section>
@@ -443,12 +443,20 @@ export default function AuxiliarPage() {
                 <ListaCheques cheques={cheques} empresasPorId={empresasPorId} />
               </Panel>
 
-              <Panel titulo="Próximos pasos" subtitulo="Funciones pendientes de conexión operativa.">
-                <ul className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <Panel
+                titulo="Automatizaciones previstas"
+                subtitulo="Estas funciones están previstas para una fase posterior de automatización."
+              >
+                <ul className="divide-y divide-white/10 rounded-2xl border border-white/10 bg-white/[0.02] px-4">
                   {proximosPasos.map((item) => (
-                    <li key={item} className="flex items-start gap-3 text-sm text-gray-300">
-                      <AlertCircle size={16} className="mt-0.5 shrink-0 text-cyan-400" />
-                      {item}
+                    <li key={item} className="flex flex-col items-start gap-2 py-3 text-sm text-gray-400 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                      <span className="flex items-center gap-3">
+                        <AlertCircle size={16} className="shrink-0 text-gray-500" />
+                        {item}
+                      </span>
+                      <span className="shrink-0 rounded-full border border-gray-400/30 bg-gray-400/10 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-gray-400">
+                        Fase posterior
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -520,7 +528,7 @@ function TablaTareas({
   empresasPorId: Map<number, string>;
 }) {
   if (!tareas.length) {
-    return <EmptyState texto="Sin datos disponibles con la estructura actual." />;
+    return <EmptyState texto="Sin datos disponibles para esta empresa." />;
   }
 
   return (
@@ -534,7 +542,6 @@ function TablaTareas({
             <th className="px-4 py-3 text-left">Fecha límite</th>
             <th className="px-4 py-3 text-left">Monto</th>
             <th className="px-4 py-3 text-left">Estado</th>
-            <th className="px-4 py-3 text-left">Acciones</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-white/10">
@@ -559,13 +566,6 @@ function TablaTareas({
               <td className="px-4 py-4">
                 <EstadoPill estado={tarea.estado} />
               </td>
-              <td className="px-4 py-4">
-                <div className="flex flex-col gap-2">
-                  <AccionFasePosterior label="Tomar tarea" />
-                  <AccionFasePosterior label="Enviar a contador" />
-                  <AccionFasePosterior label="Marcar preparado" />
-                </div>
-              </td>
             </tr>
           ))}
         </tbody>
@@ -582,7 +582,7 @@ function ListaDocumentos({
   empresasPorId: Map<number, string>;
 }) {
   if (!documentos.length) {
-    return <EmptyState texto="Sin datos disponibles con la estructura actual." />;
+    return <EmptyState texto="Sin datos disponibles para esta empresa." />;
   }
 
   return (
@@ -607,9 +607,6 @@ function ListaDocumentos({
             <LineaDato label="Proveedor" valor={documento.proveedor_nombre_snapshot || "-"} />
             <LineaDato label="Monto" valor={formatoMonto(documento.monto, documento.moneda)} />
           </div>
-          <div className="mt-4">
-            <AccionFasePosterior label="Revisar documento" />
-          </div>
         </article>
       ))}
     </div>
@@ -624,7 +621,7 @@ function ListaCheques({
   empresasPorId: Map<number, string>;
 }) {
   if (!cheques.length) {
-    return <EmptyState texto="Sin datos disponibles con la estructura actual." />;
+    return <EmptyState texto="Sin datos disponibles para esta empresa." />;
   }
 
   return (
@@ -656,10 +653,6 @@ function ListaCheques({
                 <span className="font-semibold text-white">{formatoMonto(cheque.monto, cheque.moneda)}</span>
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <AccionFasePosterior label="Preparar cheque" />
-              <AccionFasePosterior label="Enviar a revisión" />
-            </div>
           </div>
         </article>
       ))}
@@ -689,11 +682,6 @@ function EstadoPill({ estado }: { estado: string }) {
       {estado}
     </span>
   );
-}
-
-function AccionFasePosterior({ label }: { label: string }) {
-  void label;
-  return null;
 }
 
 function LineaDato({ label, valor }: { label: string; valor: string }) {

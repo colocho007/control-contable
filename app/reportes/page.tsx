@@ -1243,7 +1243,7 @@ export default function ReportesPage() {
         <div className="max-w-7xl mx-auto">
           <header className="flex flex-col lg:flex-row lg:items-center justify-between mb-8 gap-4">
             <div>
-              <p className="text-cyan-400 text-sm font-bold uppercase tracking-[0.3em] mb-2">
+              <p className="text-[var(--primary)] text-sm font-bold uppercase tracking-[0.3em] mb-2">
                 Control+ contable
               </p>
               <h1 className="text-4xl md:text-5xl font-black tracking-tighter">
@@ -1418,7 +1418,7 @@ export default function ReportesPage() {
           </form>
 
           {cargandoReportes && (
-            <div className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-cyan-100">
+            <div className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-[var(--foreground-soft)]">
               Cargando reportes...
             </div>
           )}
@@ -1451,13 +1451,24 @@ export default function ReportesPage() {
                     key={tipo}
                     className="rounded-2xl border border-white/10 bg-slate-950/40 p-4"
                   >
-                    <p className="font-black text-cyan-100">{configuracion.titulo}</p>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-black text-[var(--primary)]">{configuracion.titulo}</p>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-black uppercase tracking-wide ${
+                          disponible
+                            ? "border-green-500/30 bg-green-500/10 text-green-300"
+                            : "border-gray-400/30 bg-gray-400/10 text-gray-400"
+                        }`}
+                      >
+                        {disponible ? "Disponible" : "No disponible"}
+                      </span>
+                    </div>
                     <div className="flex flex-wrap gap-2 mt-3">
                       <button
                         type="button"
                         onClick={() => exportarReporteEntrega(tipo, "csv")}
                         disabled={!disponible || cargandoReportes}
-                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold hover:bg-white/10 disabled:opacity-50"
+                        className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-[var(--primary)] hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-gray-400/20 disabled:bg-gray-400/5 disabled:text-gray-500 disabled:opacity-100"
                       >
                         <Download size={15} /> CSV Excel
                       </button>
@@ -1468,7 +1479,7 @@ export default function ReportesPage() {
                             exportarReporteEntrega(tipo, "pdf_vista_imprimible")
                           }
                           disabled={!disponible || cargandoReportes}
-                          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold hover:bg-white/10 disabled:opacity-50"
+                          className="inline-flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-bold text-[var(--primary)] hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:border-gray-400/20 disabled:bg-gray-400/5 disabled:text-gray-500 disabled:opacity-100"
                         >
                           <Printer size={15} /> Vista imprimible
                         </button>
@@ -1640,7 +1651,7 @@ export default function ReportesPage() {
                   Movimientos sin <strong>empresa_id</strong> no se mezclan en reportes por empresa.
                   Los reportes operativos priorizan el alcance seguro por empresas permitidas.
                 </div>
-                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-cyan-100">
+                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-4 text-[var(--foreground-soft)]">
                   Los estados financieros formales usan solo asientos registrados y se muestran
                   separados por moneda. Si hay periodos abiertos, el resultado es preliminar.
                 </div>
@@ -1693,7 +1704,7 @@ function StatCard({
   return (
     <article className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
       <div className="flex items-center justify-between mb-4">
-        <div className="rounded-2xl bg-cyan-400/10 text-cyan-300 p-3">
+        <div className="rounded-2xl bg-cyan-400/10 text-[var(--primary)] p-3">
           {icon}
         </div>
       </div>
@@ -1745,7 +1756,7 @@ function TablaResumenMoneda({ reporte }: { reporte: ReporteMensual | null }) {
             <td className="py-3 font-bold">{fila.moneda}</td>
             <td className="py-3 text-green-300">{formatoMonto(fila.ingresos, fila.moneda)}</td>
             <td className="py-3 text-red-300">{formatoMonto(fila.egresos, fila.moneda)}</td>
-            <td className="py-3 text-cyan-200">{formatoMonto(fila.neto, fila.moneda)}</td>
+            <td className="py-3 font-semibold text-[var(--primary)]">{formatoMonto(fila.neto, fila.moneda)}</td>
           </tr>
         ))}
       </tbody>
@@ -1923,7 +1934,7 @@ function ResumenOperativoPorMoneda({
 
         return (
           <article key={moneda} className="rounded-2xl border border-white/10 bg-[#0f172a]/70 p-4">
-            <h3 className="text-xl font-black text-cyan-200 mb-3">{moneda}</h3>
+            <h3 className="text-xl font-black text-[var(--primary)] mb-3">{moneda}</h3>
             <div className="grid gap-2 text-sm">
               <LineaResumen label="Ingresos operativos" valor={formatoMonto(movimientos?.ingresos || 0, moneda)} />
               <LineaResumen label="Egresos operativos" valor={formatoMonto(movimientos?.egresos || 0, moneda)} />
@@ -1991,7 +2002,7 @@ function TablaCuentasOperativas({
                     {cuenta.serie || ""} {cuenta.numero_documento || cuenta.id}
                   </td>
                   <td className="py-3">{mostrarFecha(cuenta.fecha_vencimiento)}</td>
-                  <td className="py-3 text-cyan-100">
+                  <td className="py-3 font-semibold text-[var(--primary)]">
                     {formatoMonto(cuenta.saldo_pendiente, cuenta.moneda)}
                   </td>
                   <td className="py-3">
@@ -2064,8 +2075,8 @@ function TablaBalanceFormal({ filas }: { filas: BalanceComprobacionFormalFila[] 
               <p className="text-xs text-gray-500">{textoLegible(fila.tipo)}</p>
             </td>
             <td className="py-3 font-bold">{fila.moneda}</td>
-            <td className="py-3 text-cyan-100">{formatoMonto(fila.debe, fila.moneda)}</td>
-            <td className="py-3 text-cyan-100">{formatoMonto(fila.haber, fila.moneda)}</td>
+            <td className="py-3 font-semibold text-[var(--primary)]">{formatoMonto(fila.debe, fila.moneda)}</td>
+            <td className="py-3 font-semibold text-[var(--primary)]">{formatoMonto(fila.haber, fila.moneda)}</td>
             <td className="py-3 text-green-300">{formatoMonto(fila.saldo_deudor, fila.moneda)}</td>
             <td className="py-3 text-yellow-300">{formatoMonto(fila.saldo_acreedor, fila.moneda)}</td>
           </tr>
@@ -2105,7 +2116,7 @@ function ResumenBalanceGeneralFormal({
           <tr key={`${fila.seccion}-${fila.moneda}`} className="border-t border-white/10">
             <td className="py-3 font-semibold">{fila.seccion}</td>
             <td className="py-3 font-bold">{fila.moneda}</td>
-            <td className="py-3 text-cyan-100">{formatoMonto(fila.total, fila.moneda)}</td>
+            <td className="py-3 font-semibold text-[var(--primary)]">{formatoMonto(fila.total, fila.moneda)}</td>
             <td className="py-3 text-gray-400">{fila.cuentas.length}</td>
           </tr>
         ))}
@@ -2137,7 +2148,7 @@ function TablaEstadoResultadosFormal({ filas }: { filas: EstadoResultadosSeccion
             <td className="py-3 text-yellow-300">{formatoMonto(fila.costos, fila.moneda)}</td>
             <td className="py-3 text-red-300">{formatoMonto(fila.gastos_operativos, fila.moneda)}</td>
             <td className="py-3 text-red-200">{formatoMonto(fila.gastos_financieros, fila.moneda)}</td>
-            <td className={fila.utilidad_perdida >= 0 ? "py-3 text-cyan-200" : "py-3 text-red-200"}>
+            <td className={fila.utilidad_perdida >= 0 ? "py-3 font-semibold text-[var(--primary)]" : "py-3 text-red-200"}>
               {formatoMonto(fila.utilidad_perdida, fila.moneda)}
             </td>
           </tr>
@@ -2196,7 +2207,7 @@ function TablaLibroMayor({ cuentas }: { cuentas: LibroMayorCuenta[] }) {
               <p className="font-black">{cuenta.codigo} - {cuenta.nombre}</p>
               <p className="text-xs text-gray-500">{textoLegible(cuenta.tipo)} | {cuenta.moneda}</p>
             </div>
-            <p className="text-sm text-cyan-200">
+            <p className="text-sm font-semibold text-[var(--primary)]">
               Saldo final: {formatoMonto(cuenta.saldo, cuenta.moneda)}
             </p>
           </div>
@@ -2220,7 +2231,7 @@ function TablaLibroMayor({ cuentas }: { cuentas: LibroMayorCuenta[] }) {
                   </td>
                   <td className="py-3 text-green-300">{formatoMonto(movimiento.debe, cuenta.moneda)}</td>
                   <td className="py-3 text-red-300">{formatoMonto(movimiento.haber, cuenta.moneda)}</td>
-                  <td className="py-3 text-cyan-200">{formatoMonto(movimiento.saldo_acumulado, cuenta.moneda)}</td>
+                  <td className="py-3 font-semibold text-[var(--primary)]">{formatoMonto(movimiento.saldo_acumulado, cuenta.moneda)}</td>
                 </tr>
               ))}
             </tbody>
