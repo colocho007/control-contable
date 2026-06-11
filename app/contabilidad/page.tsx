@@ -2739,12 +2739,9 @@ export default function ContabilidadPage() {
               >
                 <div>
                   <p className="font-black text-cyan-200">{impuesto.nombre}</p>
+                  <p className="text-xs text-gray-500 mt-1">Tipo: {impuesto.tipo}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    ID: {impuesto.impuesto_id || "interno"} | Tipo: {impuesto.tipo}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Proveedor: {impuesto.proveedor_id || "general"} | Cliente:{" "}
-                    {impuesto.cliente_id || "general"}
+                    Alcance: {impuesto.proveedor_id || impuesto.cliente_id ? "Específico" : "General"}
                   </p>
                 </div>
                 <div className="text-sm text-gray-300">

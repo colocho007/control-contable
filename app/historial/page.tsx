@@ -362,7 +362,7 @@ export default function HistorialPage() {
     eventos.forEach((evento) => {
       valores.set(
         evento.usuario_id,
-        evento.usuario_nombre_snapshot || evento.usuario_id
+        evento.usuario_nombre_snapshot || "Usuario no disponible"
       );
     });
 
@@ -406,10 +406,10 @@ export default function HistorialPage() {
         evento.empresa_id === null
           ? "General"
           : empresasPorId.get(Number(evento.empresa_id)) ||
-            `Empresa #${evento.empresa_id}`,
+            "Empresa no disponible",
       modulo: evento.modulo,
       accion: evento.accion,
-      usuario: evento.usuario_nombre_snapshot || evento.usuario_id,
+      usuario: evento.usuario_nombre_snapshot || "Usuario no disponible",
       entidad:
         evento.entidad_id !== null
           ? `${etiqueta(evento.entidad_tipo)} #${evento.entidad_id}`
@@ -1011,16 +1011,13 @@ export default function HistorialPage() {
                             {evento.empresa_id === null
                               ? "General"
                               : empresasPorId.get(Number(evento.empresa_id)) ||
-                                `Empresa #${evento.empresa_id}`}
+                                "Empresa no disponible"}
                           </div>
                         </td>
                         <td className="px-5 py-4 text-gray-200">
                           <div className="flex items-center gap-2">
                             <UserIcon size={14} className="text-gray-400" />
                             {evento.usuario_nombre_snapshot || "Usuario"}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1 break-all">
-                            {evento.usuario_id}
                           </div>
                         </td>
                         <td className="px-5 py-4 text-gray-200">

@@ -97,18 +97,14 @@ interface AsignacionFuncionExistente {
 }
 
 const ROLES_ADMIN_OPERATIVO = ["admin", "jefe", "supervisor"];
-const ROLES_SISTEMA = [
-  "admin",
-  "jefe",
-  "supervisor",
-  "contador",
-  "tesorero",
-  "firmante",
-  "firmante_oc",
-  "iniciador",
-  "iniciador_gestion",
-  "empleado",
-];
+const ROLES_VISIBLES = ["jefe", "supervisor", "contador", "auxiliar", "auditor"] as const;
+const ETIQUETAS_ROL: Record<(typeof ROLES_VISIBLES)[number], string> = {
+  jefe: "Jefe",
+  supervisor: "Supervisor",
+  contador: "Contador",
+  auxiliar: "Auxiliar",
+  auditor: "Auditor",
+};
 const MOTIVO_CAMBIO_PERMISOS = "Actualizacion desde Administrador Operativo";
 const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 const FUNCIONES_POR_MODULO: Record<string, FuncionOperativa[]> = {
@@ -147,16 +143,11 @@ function estadoPerfil(rol: string | null | undefined, activo: boolean | null | u
 function funcionOperativa(rol: string) {
   const normalizado = normalizarRol(rol);
   const funciones: Record<string, string> = {
-    admin: "Administracion operativa completa",
     jefe: "Supervision y administracion operativa",
     supervisor: "Gestion operativa multiempresa",
     contador: "Registro y revision contable",
-    tesorero: "Gestion financiera y pagos",
-    firmante: "Firma y autorizacion",
-    firmante_oc: "Firma de ordenes de compra",
-    iniciador: "Inicio de gestiones",
-    iniciador_gestion: "Inicio de ordenes y gestiones",
-    empleado: "Operacion asignada",
+    auxiliar: "Preparacion y carga operativa",
+    auditor: "Revision de solo lectura",
   };
   return funciones[normalizado] || "Funcion operativa no definida";
 }
@@ -207,7 +198,7 @@ export default function AdminPage() {
     nombre: "",
     correo: "",
     uid: "",
-    rol: "empleado",
+    rol: "auxiliar",
   });
 
   useEffect(() => {
@@ -623,7 +614,7 @@ export default function AdminPage() {
               Number(asignacion.empresa_id),
               {
                 id: Number(asignacion.empresa_id),
-                nombre: asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`,
+                nombre: asignacion.empresas?.nombre || "Empresa no disponible",
               },
             ])
         ).values()
@@ -639,7 +630,7 @@ export default function AdminPage() {
               Number(asignacion.empresa_id),
               {
                 id: Number(asignacion.empresa_id),
-                nombre: asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`,
+                nombre: asignacion.empresas?.nombre || "Empresa no disponible",
               },
             ])
         ).values()
@@ -669,7 +660,11 @@ export default function AdminPage() {
       setTrabajosActivos((resTrabajos.data || []) as TrabajoActivo[]);
     }
 
-    setUsuarios((resUsuarios.data || []) as Perfil[]);
+    setUsuarios(
+      ((resUsuarios.data || []) as Perfil[]).filter(
+        (usuario) => normalizarRol(usuario.rol) !== "admin"
+      )
+    );
     setModulos(((resModulos.data || []) as ModuloSistema[]).filter((m) => m.clave !== "admin"));
   }
 
@@ -860,7 +855,7 @@ export default function AdminPage() {
     }
 
     const rolNuevoUsuario = normalizarRol(nuevoUsuario.rol);
-    if (!ROLES_SISTEMA.includes(rolNuevoUsuario) || rolNuevoUsuario === "admin") {
+    if (!ROLES_VISIBLES.includes(rolNuevoUsuario as (typeof ROLES_VISIBLES)[number])) {
       toast.error("El rol seleccionado para el nuevo usuario no es valido.");
       return;
     }
@@ -908,7 +903,7 @@ export default function AdminPage() {
       }
 
       liberarIdempotencyKeyAdmin(storageKey);
-      setNuevoUsuario({ nombre: "", correo: "", uid: "", rol: "empleado" });
+      setNuevoUsuario({ nombre: "", correo: "", uid: "", rol: "auxiliar" });
       await cargarDatos();
       toast.success(
         resultado?.idempotency_replay
@@ -967,7 +962,7 @@ export default function AdminPage() {
     }
 
     const rolNormalizado = normalizarRol(rolSeleccionado);
-    if (!ROLES_SISTEMA.includes(rolNormalizado)) {
+    if (!ROLES_VISIBLES.includes(rolNormalizado as (typeof ROLES_VISIBLES)[number])) {
       toast.error("El rol seleccionado no es valido");
       return;
     }
@@ -1629,7 +1624,7 @@ export default function AdminPage() {
                       Crear usuario operativo
                     </h2>
                     <p className="text-xs text-gray-500 mt-2">
-                      El UID y correo deben existir en Supabase Auth.
+                      Crea perfiles con roles operativos visibles. El administrador principal se gestiona fuera de este flujo.
                     </p>
                   </div>
                   <Link
@@ -1639,7 +1634,7 @@ export default function AdminPage() {
                     Ver modulo Usuarios
                   </Link>
                 </div>
-                <div className="grid md:grid-cols-4 gap-4">
+                <div className="grid md:grid-cols-3 gap-4">
                   <input
                     value={nuevoUsuario.nombre}
                     onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, nombre: e.target.value })}
@@ -1653,22 +1648,29 @@ export default function AdminPage() {
                     className="input-custom"
                     placeholder="Correo"
                   />
-                  <input
-                    value={nuevoUsuario.uid}
-                    onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, uid: e.target.value })}
-                    className="input-custom font-mono"
-                    placeholder="UID Supabase Auth"
-                  />
                   <select
                     value={nuevoUsuario.rol}
                     onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })}
                     className="input-custom"
                   >
-                    {ROLES_SISTEMA.filter((rol) => rol !== "admin").map((rol) => (
-                      <option key={rol} value={rol}>{rol}</option>
+                    {ROLES_VISIBLES.map((rol) => (
+                      <option key={rol} value={rol}>{ETIQUETAS_ROL[rol]}</option>
                     ))}
                   </select>
                 </div>
+                <details className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-gray-400">
+                    Detalle técnico
+                  </summary>
+                  <div className="mt-4">
+                    <input
+                      value={nuevoUsuario.uid}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, uid: e.target.value })}
+                      className="input-custom font-mono w-full"
+                      placeholder="Identificador existente de Supabase Auth"
+                    />
+                  </div>
+                </details>
                 <button
                   type="button"
                   onClick={crearUsuarioOperativo}
@@ -1709,8 +1711,8 @@ export default function AdminPage() {
                     disabled={!usuarioEditando}
                   >
                     <option value="">Seleccionar rol...</option>
-                    {ROLES_SISTEMA.map((rol) => (
-                      <option key={rol} value={rol}>{rol}</option>
+                    {ROLES_VISIBLES.map((rol) => (
+                      <option key={rol} value={rol}>{ETIQUETAS_ROL[rol]}</option>
                     ))}
                   </select>
                   <select
@@ -1736,7 +1738,6 @@ export default function AdminPage() {
                       </span>
                       <span className="chip">{activoSeleccionado ? "Activo" : "Inactivo"}</span>
                     </div>
-                    <p className="text-cyan-400 text-xs font-mono break-all mt-3">{usuarioEditando}</p>
                   </div>
                 )}
 
@@ -1761,7 +1762,6 @@ export default function AdminPage() {
                         disabled={!usuarioEditando || procesando}
                         className={`option-card ${activa ? "option-card-active" : ""}`}
                       >
-                        <p className="text-[10px] font-black uppercase mb-1">ID empresa: {empresa.id}</p>
                         <p className="text-sm font-black">{empresa.nombre}</p>
                         <p className="text-[10px] mt-2">{activa ? "Asignada" : "No asignada"}</p>
                       </button>
@@ -2013,7 +2013,7 @@ function PanelResumenUsuariosOperativos({
         {usuarios.map((usuario) => {
           const empresasUsuario = asignaciones
             .filter((item) => item.usuario_id === usuario.id)
-            .map((item) => empresasPorId.get(Number(item.empresa_id)) || `Empresa ${item.empresa_id}`);
+            .map((item) => empresasPorId.get(Number(item.empresa_id)) || "Empresa no disponible");
           const modulosUsuario = modulos
             .filter((item) => item.usuario_id === usuario.id)
             .map((item) => modulosPorClave.get(item.modulo_clave) || item.modulo_clave);
@@ -2031,7 +2031,7 @@ function PanelResumenUsuariosOperativos({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="font-black text-white">{usuario.nombre}</p>
-                  <p className="text-xs text-gray-500 mt-1 break-all">{usuario.correo || usuario.id}</p>
+                  <p className="text-xs text-gray-500 mt-1 break-all">{usuario.correo || "Correo no disponible"}</p>
                 </div>
                 <span
                   className={`rounded-full border px-2 py-1 text-[10px] font-black uppercase ${
@@ -2059,7 +2059,7 @@ function PanelResumenUsuariosOperativos({
                 <ResumenLista
                   titulo="Funciones operativas por empresa"
                   items={funcionesUsuario.map((item) => {
-                    const empresa = empresasPorId.get(Number(item.empresa_id)) || `Empresa ${item.empresa_id}`;
+                    const empresa = empresasPorId.get(Number(item.empresa_id)) || "Empresa no disponible";
                     return `${empresa}: ${item.funcion}`;
                   })}
                   color="text-green-200"
@@ -2168,7 +2168,7 @@ function PanelTrabajando({ trabajos }: { trabajos: TrabajoActivo[] }) {
         {trabajos.map((trabajo) => (
           <div key={trabajo.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
             <p className="font-black text-white">
-              {trabajo.perfiles?.nombre || trabajo.usuario_id}
+              {trabajo.perfiles?.nombre || "Usuario no disponible"}
             </p>
             <p className="text-xs text-cyan-300 mt-1">
               {trabajo.modulo} | {trabajo.empresas?.nombre || "Empresa asignada"}
@@ -2202,7 +2202,7 @@ function PanelAsignaciones({ asignaciones }: { asignaciones: UsuarioEmpresa[] })
               Rol: {asignacion.perfiles?.rol || "Sin rol"}
             </p>
             <p className="text-xs text-cyan-400 mt-1">
-              Empresa: {asignacion.empresas?.nombre || `Empresa ${asignacion.empresa_id}`}
+              Empresa: {asignacion.empresas?.nombre || "Empresa no disponible"}
             </p>
           </div>
         ))}
@@ -2238,7 +2238,7 @@ function PanelModulos({
           return (
             <div key={`${modulo.usuario_id}-${modulo.modulo_clave}`} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
               <p className="font-black text-white">
-                {usuario?.nombre || modulo.usuario_id}
+                {usuario?.nombre || "Usuario no disponible"}
               </p>
               <p className="text-xs text-purple-300 mt-1">
                 {moduloCatalogo?.nombre || modulo.modulo_clave}
@@ -2280,10 +2280,10 @@ function PanelFunciones({
           const empresa = empresasPorId.get(Number(funcion.empresa_id));
           return (
             <div key={funcion.id} className="bg-[#0f172a]/70 border border-white/10 rounded-2xl p-4">
-              <p className="font-black text-white">{usuario?.nombre || funcion.usuario_id}</p>
+              <p className="font-black text-white">{usuario?.nombre || "Usuario no disponible"}</p>
               <p className="text-xs text-green-300 mt-1">{funcion.funcion}</p>
               <p className="text-xs text-gray-500 mt-1">
-                {empresa?.nombre || `Empresa ${funcion.empresa_id}`}
+                {empresa?.nombre || "Empresa no disponible"}
               </p>
             </div>
           );

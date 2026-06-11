@@ -1568,13 +1568,18 @@ function FormularioVinculo({
         <select className="input-custom" value={form.tipoVinculo} onChange={(e) => setForm({ ...form, tipoVinculo: e.target.value })}>
           {TIPOS_VINCULO.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
         </select>
-        <input className="input-custom" value={form.entidadOrigenId} onChange={(e) => setForm({ ...form, entidadOrigenId: e.target.value })} placeholder="Entidad UUID opcional" />
         <input className="input-custom" value={form.entidadOrigenTexto} onChange={(e) => setForm({ ...form, entidadOrigenTexto: e.target.value })} placeholder="Entidad texto opcional" />
         <input className="input-custom" type="number" min="0" step="0.01" value={form.montoVinculado} onChange={(e) => setForm({ ...form, montoVinculado: e.target.value })} placeholder="Monto vinculado" />
         <SelectMoneda value={form.moneda} onChange={(moneda) => setForm({ ...form, moneda })} />
         <input className="input-custom md:col-span-3" value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} placeholder="Observaciones" />
         <BotonGuardar procesando={procesando} disabled={!empresas.length || !movimientos.length} onGuardar={onGuardar} label="Guardar vinculo" />
       </div>
+      <details className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+        <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-gray-500">
+          Detalle técnico
+        </summary>
+        <input className="input-custom mt-3 w-full" value={form.entidadOrigenId} onChange={(e) => setForm({ ...form, entidadOrigenId: e.target.value })} placeholder="Identificador interno opcional" />
+      </details>
     </div>
   );
 }
@@ -1702,7 +1707,7 @@ function TablaCuentas({ cuentas, empresasPorId }: { cuentas: CuentaBancaria[]; e
       <tbody className="divide-y divide-white/10">
         {cuentas.map((cuenta) => (
           <tr key={cuenta.id} className="align-top text-sm">
-            <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(cuenta.empresa_id)) || `Empresa #${cuenta.empresa_id}`}</td>
+            <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(cuenta.empresa_id)) || "Empresa no disponible"}</td>
             <td className="px-4 py-4 font-bold">{cuenta.banco}</td>
             <td className="px-4 py-4 text-gray-300">{cuenta.nombre_cuenta}<br />{cuenta.numero_cuenta || "-"}<br />{cuenta.tipo_cuenta || "-"}</td>
             <td className="px-4 py-4 text-gray-300">{cuenta.moneda}</td>
@@ -1727,8 +1732,8 @@ function TablaEstados({ estados, empresasPorId, cuentasPorId }: { estados: Estad
           const cuenta = cuentasPorId.get(estado.cuenta_bancaria_id);
           return (
             <tr key={estado.id} className="align-top text-sm">
-              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(estado.empresa_id)) || `Empresa #${estado.empresa_id}`}</td>
-              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : estado.cuenta_bancaria_id}</td>
+              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(estado.empresa_id)) || "Empresa no disponible"}</td>
+              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : "Cuenta no disponible"}</td>
               <td className="px-4 py-4 font-bold">{estado.periodo_anio} / {MESES[estado.periodo_mes - 1] || estado.periodo_mes}</td>
               <td className="px-4 py-4 text-gray-300">{fechaMostrar(estado.fecha_inicio)} - {fechaMostrar(estado.fecha_fin)}</td>
               <td className="px-4 py-4 text-gray-300">Inicial {monto(estado.saldo_inicial, estado.moneda)}<br />Final {monto(estado.saldo_final, estado.moneda)}</td>
@@ -1753,8 +1758,8 @@ function TablaMovimientos({ movimientos, empresasPorId, cuentasPorId, estadosPor
           const estado = estadosPorId.get(movimiento.estado_cuenta_id);
           return (
             <tr key={movimiento.id} className="align-top text-sm">
-              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(movimiento.empresa_id)) || `Empresa #${movimiento.empresa_id}`}</td>
-              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : movimiento.cuenta_bancaria_id}<br />{estado ? `${estado.periodo_anio}/${estado.periodo_mes}` : movimiento.estado_cuenta_id}</td>
+              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(movimiento.empresa_id)) || "Empresa no disponible"}</td>
+              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : "Cuenta no disponible"}<br />{estado ? `${estado.periodo_anio}/${estado.periodo_mes}` : "Estado de cuenta no disponible"}</td>
               <td className="px-4 py-4"><p className="font-bold">{movimiento.tipo_movimiento}</p><p className="text-xs text-gray-500">{fechaMostrar(movimiento.fecha_movimiento)} / {movimiento.descripcion || "-"}</p></td>
               <td className="px-4 py-4 text-gray-300">{movimiento.referencia || "-"}</td>
               <td className="px-4 py-4 text-gray-300">Debito {monto(movimiento.debito, movimiento.moneda)}<br />Credito {monto(movimiento.credito, movimiento.moneda)}<br />Saldo {monto(movimiento.saldo_banco, movimiento.moneda)}</td>
@@ -1778,9 +1783,9 @@ function TablaVinculos({ vinculos, empresasPorId, movimientosPorId }: { vinculos
           const movimiento = movimientosPorId.get(vinculo.movimiento_banco_id);
           return (
             <tr key={vinculo.id} className="align-top text-sm">
-              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(vinculo.empresa_id)) || `Empresa #${vinculo.empresa_id}`}</td>
-              <td className="px-4 py-4 text-gray-300">{movimiento ? `${fechaMostrar(movimiento.fecha_movimiento)} / ${movimiento.referencia || movimiento.tipo_movimiento}` : vinculo.movimiento_banco_id}</td>
-              <td className="px-4 py-4 text-gray-300">{vinculo.modulo_origen}<br />{vinculo.entidad_origen_id || vinculo.entidad_origen_texto || "-"}</td>
+              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(vinculo.empresa_id)) || "Empresa no disponible"}</td>
+              <td className="px-4 py-4 text-gray-300">{movimiento ? `${fechaMostrar(movimiento.fecha_movimiento)} / ${movimiento.referencia || movimiento.tipo_movimiento}` : "Movimiento no disponible"}</td>
+              <td className="px-4 py-4 text-gray-300">{vinculo.modulo_origen}<br />{vinculo.entidad_origen_texto || "Referencia interna"}</td>
               <td className="px-4 py-4 font-bold">{vinculo.tipo_vinculo}</td>
               <td className="px-4 py-4 text-gray-300">{monto(vinculo.monto_vinculado, vinculo.moneda)}</td>
               <td className="px-4 py-4"><Badge estado={vinculo.estado} /></td>
@@ -1805,8 +1810,8 @@ function TablaAjustes({ ajustes, empresasPorId, cuentasPorId, estadosPorId, movi
           const movimiento = ajuste.movimiento_banco_id ? movimientosPorId.get(ajuste.movimiento_banco_id) : null;
           return (
             <tr key={ajuste.id} className="align-top text-sm">
-              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(ajuste.empresa_id)) || `Empresa #${ajuste.empresa_id}`}</td>
-              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : ajuste.cuenta_bancaria_id}</td>
+              <td className="px-4 py-4 text-gray-300">{empresasPorId.get(Number(ajuste.empresa_id)) || "Empresa no disponible"}</td>
+              <td className="px-4 py-4 text-gray-300">{cuenta ? `${cuenta.banco} / ${cuenta.nombre_cuenta}` : "Cuenta no disponible"}</td>
               <td className="px-4 py-4 text-gray-300">Estado {estado ? `${estado.periodo_anio}/${estado.periodo_mes}` : "-"}<br />Mov. {movimiento ? movimiento.referencia || movimiento.tipo_movimiento : "-"}</td>
               <td className="px-4 py-4"><p className="font-bold">{ajuste.tipo_ajuste}</p><p className="text-xs text-gray-500">{ajuste.descripcion}</p></td>
               <td className="px-4 py-4 text-gray-300">{monto(ajuste.monto, ajuste.moneda)}</td>

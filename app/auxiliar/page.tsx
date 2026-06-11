@@ -553,7 +553,7 @@ function TablaTareas({
                   {tarea.prioridad || "Sin prioridad"}
                 </span>
               </td>
-              <td className="px-4 py-4 text-gray-300">{tarea.empleado || tarea.usuario_id || "-"}</td>
+              <td className="px-4 py-4 text-gray-300">{tarea.empleado || "Responsable no disponible"}</td>
               <td className="px-4 py-4 text-gray-300">{mostrarFecha(tarea.fecha_limite)}</td>
               <td className="px-4 py-4 text-gray-300">{formatoMonto(tarea.monto, tarea.moneda)}</td>
               <td className="px-4 py-4">
@@ -599,7 +599,7 @@ function ListaDocumentos({
           </div>
           <h3 className="text-lg font-black">{documento.titulo || documento.descripcion || documento.tipo_documento}</h3>
           <div className="mt-3 grid gap-2 text-sm text-gray-400">
-            <LineaDato label="Empresa" valor={empresasPorId.get(Number(documento.empresa_id)) || `Empresa #${documento.empresa_id}`} />
+            <LineaDato label="Empresa" valor={empresasPorId.get(Number(documento.empresa_id)) || "Empresa no disponible"} />
             <LineaDato label="Módulo / tipo" valor={`${documento.modulo} / ${documento.tipo_documento}`} />
             <LineaDato label="Fecha" valor={mostrarFecha(documento.fecha_documento || documento.creado_at)} />
             <LineaDato label="Factura" valor={documento.numero_factura || "-"} />
@@ -677,7 +677,7 @@ function EmpresaTexto({
   empresasPorId: Map<number, string>;
 }) {
   if (empresaId !== null && empresaId !== undefined) {
-    return <span>{empresasPorId.get(Number(empresaId)) || empresa || `Empresa #${empresaId}`}</span>;
+    return <span>{empresasPorId.get(Number(empresaId)) || empresa || "Empresa no disponible"}</span>;
   }
 
   return <span>{empresa || "-"}</span>;

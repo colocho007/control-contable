@@ -10,6 +10,14 @@ import { Users, Plus, Trash2, Loader2 } from "lucide-react";
 import toast, { Toaster } from "react-hot-toast";
 
 const ROLES_PERMITIDOS = ["admin", "jefe", "supervisor"];
+const ROLES_VISIBLES = ["jefe", "supervisor", "contador", "auxiliar", "auditor"] as const;
+const ETIQUETAS_ROL: Record<(typeof ROLES_VISIBLES)[number], string> = {
+  jefe: "Jefe",
+  supervisor: "Supervisor",
+  contador: "Contador",
+  auxiliar: "Auxiliar",
+  auditor: "Auditor",
+};
 const MOTIVO_DESACTIVACION = "Desactivado desde modulo Usuarios";
 const IDEMPOTENCY_PREFIX_ADMIN = "controlplus_idempotency_admin";
 
@@ -51,7 +59,7 @@ export default function UsuariosPage() {
     nombre: "",
     uid: "",
     correo: "",
-    rol: "empleado",
+    rol: "auxiliar",
   });
 
   useEffect(() => {
@@ -118,12 +126,17 @@ export default function UsuariosPage() {
       return;
     }
 
-    setPerfiles(data || []);
+    setPerfiles((data || []).filter((perfil) => normalizarRol(perfil.rol) !== "admin"));
   }
 
   async function crearPerfil() {
     if (!form.nombre.trim() || !form.uid.trim() || !form.correo.trim()) {
       toast.error("Completa el nombre, correo y UID existente de Supabase Auth.");
+      return;
+    }
+
+    if (!ROLES_VISIBLES.includes(form.rol as (typeof ROLES_VISIBLES)[number])) {
+      toast.error("Selecciona un rol operativo permitido.");
       return;
     }
 
@@ -152,7 +165,7 @@ export default function UsuariosPage() {
         );
       }
 
-      setForm({ nombre: "", uid: "", correo: "", rol: "empleado" });
+      setForm({ nombre: "", uid: "", correo: "", rol: "auxiliar" });
       await obtenerPerfiles();
       toast.success(resultado?.advertencia || "Perfil de usuario creado correctamente.");
     } catch (error: unknown) {
@@ -253,7 +266,7 @@ export default function UsuariosPage() {
           </header>
 
           <section className="bg-white/5 border border-white/10 rounded-3xl p-6 mb-8">
-            <div className="grid md:grid-cols-4 gap-4">
+            <div className="grid md:grid-cols-3 gap-4">
               <input
                 type="text"
                 placeholder="Nombre completo"
@@ -268,29 +281,35 @@ export default function UsuariosPage() {
                 onChange={(e) => setForm({ ...form, correo: e.target.value })}
                 className="input-style"
               />
-              <input
-                type="text"
-                placeholder="UID existente de Supabase Auth"
-                value={form.uid}
-                onChange={(e) => setForm({ ...form, uid: e.target.value })}
-                className="input-style font-mono"
-              />
               <select
                 value={form.rol}
                 onChange={(e) => setForm({ ...form, rol: e.target.value })}
                 className="input-style"
               >
-                <option value="empleado">Empleado</option>
-                <option value="contador">Contador</option>
-                <option value="supervisor">Supervisor</option>
-                <option value="jefe">Jefe</option>
-                <option value="admin">Administrador</option>
+                {ROLES_VISIBLES.map((rol) => (
+                  <option key={rol} value={rol}>
+                    {ETIQUETAS_ROL[rol]}
+                  </option>
+                ))}
               </select>
             </div>
-            <p className="text-xs text-cyan-500/70 mt-3">
-              El UID y el correo deben existir previamente en Supabase
-              Authentication.
-            </p>
+            <details className="mt-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <summary className="cursor-pointer text-xs font-black uppercase tracking-wider text-gray-400">
+                Detalle técnico
+              </summary>
+              <div className="mt-4">
+                <input
+                  type="text"
+                  placeholder="Identificador existente de Supabase Auth"
+                  value={form.uid}
+                  onChange={(e) => setForm({ ...form, uid: e.target.value })}
+                  className="input-style font-mono w-full"
+                />
+                <p className="text-xs text-cyan-500/70 mt-3">
+                  El identificador y el correo deben existir previamente en Supabase Authentication.
+                </p>
+              </div>
+            </details>
             <button
               onClick={crearPerfil}
               disabled={procesando}
@@ -319,9 +338,6 @@ export default function UsuariosPage() {
                         {perfil.correo}
                       </p>
                     )}
-                    <p className="text-gray-400 text-xs mt-1 font-mono truncate">
-                      UID: {perfil.id}
-                    </p>
                     {perfil.created_at && (
                       <p className="text-gray-500 text-xs mt-2">
                         Creado:{" "}

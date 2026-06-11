@@ -596,9 +596,9 @@ function alertaDesdeEvento(
     accion: evento.accion || "evento",
     severidad: severidadEvento(evento),
     usuarioId: evento.usuario_id || null,
-    usuario: evento.usuario_nombre_snapshot || evento.usuario_id || null,
+    usuario: evento.usuario_nombre_snapshot || "Usuario no disponible",
     empresaId: evento.empresa_id,
-    empresa: evento.empresa_id ? `Empresa ${evento.empresa_id}` : null,
+    empresa: evento.empresa_id ? "Empresa no disponible" : null,
     mensaje:
       evento.descripcion ||
       evento.motivo ||
@@ -643,9 +643,9 @@ function alertaDesdeLog(log: LogSistema, index: number): AlertaDiagnostico {
     accion,
     severidad: mensaje.toLowerCase().includes("error") ? "Alta" : "Media",
     usuarioId: obtenerCampoLog(log, ["usuario_id", "user_id"]),
-    usuario: obtenerCampoLog(log, ["usuario", "usuario_id", "user_id"]),
+    usuario: obtenerCampoLog(log, ["usuario"]) || "Usuario no disponible",
     empresaId: null,
-    empresa: obtenerCampoLog(log, ["empresa", "empresa_id"]),
+    empresa: obtenerCampoLog(log, ["empresa"]) || null,
     mensaje,
     metadatos: metadatosResumidos(log),
     posibleCausa: "Registro técnico emitido por la aplicación o integración.",
@@ -1155,9 +1155,9 @@ export default function MonitoreoSistemaPage() {
         accion: "trabajo_activo",
         severidad: "Informativa" as const,
         usuarioId: trabajo.usuario_id,
-        usuario: trabajo.perfiles?.nombre || trabajo.usuario_id,
+        usuario: trabajo.perfiles?.nombre || "Usuario no disponible",
         empresaId: trabajo.empresa_id,
-        empresa: trabajo.empresa_id ? `Empresa ${trabajo.empresa_id}` : null,
+        empresa: trabajo.empresa_id ? "Empresa no disponible" : null,
         mensaje: trabajo.titulo || trabajo.ruta || "Operación activa visible.",
         metadatos: {
           ruta: valorSeguro(trabajo.ruta),
@@ -1186,7 +1186,7 @@ export default function MonitoreoSistemaPage() {
             accion: "modulo_asignado",
             severidad: modulo?.activo === false ? ("Media" as const) : ("Informativa" as const),
             usuarioId: item.usuario_id,
-            usuario: usuario?.nombre || item.usuario_id,
+            usuario: usuario?.nombre || "Usuario no disponible",
             empresaId: null,
             empresa: null,
             mensaje: `${usuario?.nombre || "Usuario"} tiene asignado ${modulo?.nombre || item.modulo_clave}.`,
@@ -1414,7 +1414,7 @@ export default function MonitoreoSistemaPage() {
     Object.entries(alertasPorCategoria).map(([categoria, alertas]) => [
       categoria,
       alertas.filter((alerta) =>
-        ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))
+        ["Pendiente", "En revisión"].includes(estadoActualAlerta(alerta))
       ).length,
     ])
   ) as Record<CategoriaDiagnostico, number>;
@@ -1703,9 +1703,9 @@ export default function MonitoreoSistemaPage() {
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
-                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
-                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
-                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.filter((alerta) => ["Pendiente", "En revisiÃ³n"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Errores recientes" categoria="errores" alertas={alertasPorCategoria.errores.filter((alerta) => ["Pendiente", "En revisión"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Operaciones parciales" categoria="parciales" alertas={alertasPorCategoria.parciales.filter((alerta) => ["Pendiente", "En revisión"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
+                <PanelResumenCategoria titulo="Alertas de seguridad" categoria="sensibles" alertas={alertasPorCategoria.sensibles.filter((alerta) => ["Pendiente", "En revisión"].includes(estadoActualAlerta(alerta))).slice(0, 8)} onVerCategoria={seleccionarCategoria} onSeleccionar={seleccionarAlerta} obtenerEstado={estadoActualAlerta} />
               </section>
 
               <section className="grid xl:grid-cols-3 gap-6 mb-8">
@@ -1751,7 +1751,7 @@ export default function MonitoreoSistemaPage() {
                       const modulo = modulos.find((catalogo) => catalogo.clave === item.modulo_clave);
                       return (
                         <div key={item.id} className="bg-[#0f172a]/70 border border-white/10 rounded-xl p-4">
-                          <p className="font-black">{usuario?.nombre || item.usuario_id}</p>
+                          <p className="font-black">{usuario?.nombre || "Usuario no disponible"}</p>
                           <p className="text-xs text-purple-200 mt-1">
                             {modulo?.nombre || item.modulo_clave}
                           </p>
@@ -2053,19 +2053,21 @@ function PanelDiagnostico({
             >
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
                 <span className={`rounded-full border px-2 py-0.5 ${estiloSeveridad(alerta.severidad)}`}>
-                  {alerta.severidad}
+                  Riesgo: {alerta.severidad}
                 </span>
                 <span className="rounded-full border border-white/10 px-2 py-0.5 text-gray-300">
-                  {estado}
+                  Estado: {estado}
                 </span>
-                <span className="text-gray-500">{fechaHora(alerta.fecha)}</span>
+                <span className="text-gray-500">Fecha: {fechaHora(alerta.fecha)}</span>
               </div>
-              <p className="font-sans text-sm font-semibold text-gray-100 mt-2 leading-snug">
-                {etiqueta(alerta.modulo)} / {etiqueta(alerta.accion)}
+              <p className="text-[11px] font-black uppercase tracking-wide text-cyan-300 mt-3">
+                Qué pasó
               </p>
-              <p className="text-sm text-gray-300 mt-1 line-clamp-2">{alerta.mensaje}</p>
+              <p className="font-sans text-sm font-semibold text-gray-100 mt-1 line-clamp-2">
+                {alerta.mensaje}
+              </p>
               <p className="text-[11px] text-gray-500 mt-2">
-                Usuario: {alerta.usuario || "No aplica"} | Empresa: {alerta.empresa || "No aplica"}
+                Módulo: {etiqueta(alerta.modulo)} | Usuario: {alerta.usuario || "No aplica"} | Empresa: {alerta.empresa || "No aplica"}
               </p>
             </button>
           );
@@ -2121,14 +2123,15 @@ function PanelDetalleAlerta({
               {estado}
             </span>
           </div>
-          <p className="text-xs text-gray-500">{fechaHora(alerta.fecha)}</p>
-          <h3 className="font-sans text-lg font-semibold text-gray-100 mt-2">{etiqueta(alerta.modulo)}</h3>
-          <p className="text-sm text-gray-300 mt-1">{alerta.mensaje}</p>
+          <p className="text-xs text-gray-500">Fecha: {fechaHora(alerta.fecha)}</p>
+          <p className="text-[11px] uppercase font-black text-cyan-500/70 mt-3">Qué pasó</p>
+          <h3 className="font-sans text-lg font-semibold text-gray-100 mt-1">{alerta.mensaje}</h3>
+          <p className="text-sm text-gray-400 mt-2">Módulo: {etiqueta(alerta.modulo)}</p>
         </div>
 
         <div className="bg-amber-400/5 border border-amber-400/20 rounded-2xl p-4 space-y-4">
           <div>
-            <p className="text-[11px] uppercase font-black text-amber-500/70 mb-1">Análisis de Causa</p>
+            <p className="text-[11px] uppercase font-black text-amber-500/70 mb-1">Posible causa</p>
             <p className="text-sm text-gray-200 leading-relaxed">{alerta.posibleCausa}</p>
           </div>
           <div>
@@ -2138,10 +2141,10 @@ function PanelDetalleAlerta({
         </div>
 
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <DatoTexto label="Acción" valor={etiqueta(alerta.accion)} />
+          <DatoTexto label="Estado" valor={estado} />
+          <DatoTexto label="Riesgo" valor={alerta.severidad} />
           <DatoTexto label="Usuario" valor={alerta.usuario || "No aplica"} />
           <DatoTexto label="Empresa" valor={alerta.empresa || "No aplica"} />
-          <DatoTexto label="Fuente" valor={alerta.fuente} />
         </div>
 
         <div className="pt-2">
@@ -2158,6 +2161,8 @@ function PanelDetalleAlerta({
             <div className="mt-3 space-y-2 animate-in fade-in slide-in-from-top-1 duration-200">
               <div className="rounded-lg border border-white/5 bg-black/20 p-2 mb-2">
                 <p className="text-[10px] text-gray-600 font-mono break-all">ID: {alerta.id}</p>
+                <p className="text-[10px] text-gray-600 font-mono break-all">Fuente: {alerta.fuente}</p>
+                <p className="text-[10px] text-gray-600 font-mono break-all">Código de acción: {alerta.accion}</p>
               </div>
               {Object.entries(alerta.metadatos).map(([clave, valor]) => (
                 <div key={clave} className="rounded-lg border border-white/10 bg-[#0f172a]/70 p-3">
@@ -2300,7 +2305,7 @@ function PanelTrabajos({ trabajos }: { trabajos: TrabajoActivo[] }) {
       <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
         {trabajos.map((trabajo) => (
           <div key={trabajo.id} className="bg-[#0f172a]/70 border border-white/10 rounded-xl p-4">
-            <p className="font-black">{trabajo.perfiles?.nombre || trabajo.usuario_id}</p>
+            <p className="font-black">{trabajo.perfiles?.nombre || "Usuario no disponible"}</p>
             <p className="text-xs text-green-200 mt-1">
               {trabajo.modulo} | {trabajo.titulo || trabajo.ruta || "Operacion activa"}
             </p>

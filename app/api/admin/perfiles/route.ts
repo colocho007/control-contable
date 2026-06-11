@@ -4,18 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 
 const ROLES_CREACION = ["admin", "jefe", "supervisor"];
-const ROLES_SISTEMA = [
-  "admin",
-  "jefe",
-  "supervisor",
-  "contador",
-  "tesorero",
-  "firmante",
-  "firmante_oc",
-  "iniciador",
-  "iniciador_gestion",
-  "empleado",
-];
+const ROLES_ASIGNABLES = ["jefe", "supervisor", "contador", "auxiliar", "auditor"];
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -243,8 +232,10 @@ export async function POST(request: NextRequest) {
     return json(400, { error: "Ingresa un correo valido." });
   }
 
-  if (!ROLES_SISTEMA.includes(rol)) {
-    return json(400, { error: "El rol seleccionado no es valido." });
+  if (!ROLES_ASIGNABLES.includes(rol)) {
+    return json(400, {
+      error: "El rol seleccionado no puede asignarse desde la administracion operativa.",
+    });
   }
 
   if (
