@@ -350,12 +350,12 @@ async function recuperarBorradorOrden() {
 
         if (!borradorCerrado) {
           bloquearBorradorConsumido(
-            "Este borrador ya generó una orden y no puede reutilizarse."
+            "Este borrador ya genero una orden y no puede reutilizarse."
           );
         }
 
         toast.error(
-          "Este borrador ya generó una orden y no puede reutilizarse."
+          "Este borrador ya genero una orden y no puede reutilizarse."
         );
         return;
       }
@@ -365,7 +365,7 @@ async function recuperarBorradorOrden() {
     setBorradorRevisado(!borrador);
   } catch (error: any) {
     console.error("Error recuperando borrador de orden:", error);
-    toast.error(error.message || "No se pudo recuperar el borrador pendiente");
+    toast.error("No se pudo recuperar el borrador pendiente.");
     setBorradorRevisado(true);
   }
 }
@@ -475,7 +475,7 @@ async function descartarBorradorPendiente() {
     toast.success("Borrador descartado.");
   } catch (error: any) {
     console.error("Error descartando borrador de orden:", error);
-    toast.error(error.message || "No se pudo descartar el borrador");
+    toast.error("No se pudo descartar el borrador.");
   } finally {
     setProcesandoBorrador(false);
   }
@@ -582,7 +582,7 @@ async function guardarBorradorActual(
       setBorradorActivo(borrador);
     } catch (error: any) {
       console.error("Error autoguardando borrador de orden:", error);
-      toast.error(error.message || "No se pudo guardar el borrador");
+      toast.error("No se pudo guardar el borrador.");
     } finally {
       setProcesandoBorrador(false);
     }
@@ -1641,7 +1641,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           { id: toastId }
         );
       } else {
-        toast.error(error.message || "Error al crear orden", { id: toastId });
+        toast.error("No se pudo crear la orden.", { id: toastId });
       }
 
       if (!ordenFinalizada) {
@@ -1922,7 +1922,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           id: toastId,
         });
       } else {
-        toast.error(error.message || "Error al firmar", { id: toastId });
+        toast.error("No se pudo firmar la orden.", { id: toastId });
       }
 
       if (!operacionCompletada) {
@@ -2159,7 +2159,7 @@ const firmas = firmantesSeleccionados.map((firmanteId, index) => {
           { id: toastId }
         );
       } else {
-        toast.error(error.message || "Error al observar", { id: toastId });
+        toast.error("No se pudo observar la orden.", { id: toastId });
       }
 
       if (!operacionCompletada) {

@@ -212,7 +212,7 @@ function uuidOpcional(valor: string, campo: string) {
   const texto = textoOpcional(valor);
   if (!texto) return null;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(texto)) {
-    throw new Error(`${campo} debe ser UUID valido o dejarse vacio.`);
+    throw new Error(`${campo} debe ser un identificador interno valido o dejarse vacio.`);
   }
   return texto;
 }
@@ -1576,7 +1576,7 @@ function FormularioVinculo({
       </div>
       <details className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
         <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-gray-500">
-          Detalle técnico
+          Detalle tecnico
         </summary>
         <input className="input-custom mt-3 w-full" value={form.entidadOrigenId} onChange={(e) => setForm({ ...form, entidadOrigenId: e.target.value })} placeholder="Identificador interno opcional" />
       </details>

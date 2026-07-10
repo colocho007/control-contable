@@ -80,6 +80,23 @@ function textoLegible(valor: string | null) {
   return valor ? valor.replaceAll("_", " ") : "-";
 }
 
+function metadatosLegibles(valor: unknown) {
+  if (!valor || typeof valor !== "object" || Array.isArray(valor)) return [];
+
+  return Object.entries(valor as Record<string, unknown>)
+    .filter(([clave]) => !["id", "uuid", "token", "secret", "password"].some((sensible) => clave.toLowerCase().includes(sensible)))
+    .slice(0, 5)
+    .map(([clave, dato]) => ({
+      clave: textoLegible(clave),
+      valor:
+        dato === null || dato === undefined || dato === ""
+          ? "Sin dato"
+          : typeof dato === "object"
+          ? "Detalle registrado"
+          : String(dato).slice(0, 120),
+    }));
+}
+
 function fechaDocumento(documento: DocumentoTramite) {
   return documento.fecha_documento || documento.creado_at;
 }
@@ -1103,14 +1120,19 @@ export default function DocumentosPage() {
                               {documento.descripcion}
                             </p>
                           )}
-                          {documento.metadatos !== null && (
+                          {documento.metadatos !== null && metadatosLegibles(documento.metadatos).length > 0 && (
                             <details className="mt-3">
                               <summary className="cursor-pointer text-cyan-300 text-xs">
-                                Ver detalles
+                                Detalle tecnico
                               </summary>
-                              <pre className="text-xs text-gray-300 bg-black/20 border border-white/10 rounded-xl p-3 mt-2 max-w-xs overflow-x-auto whitespace-pre-wrap">
-                                {JSON.stringify(documento.metadatos, null, 2)}
-                              </pre>
+                              <dl className="text-xs text-gray-300 bg-black/20 border border-white/10 rounded-xl p-3 mt-2 max-w-xs space-y-2">
+                                {metadatosLegibles(documento.metadatos).map((item) => (
+                                  <div key={item.clave}>
+                                    <dt className="font-bold text-gray-400 capitalize">{item.clave}</dt>
+                                    <dd className="break-words">{item.valor}</dd>
+                                  </div>
+                                ))}
+                              </dl>
                             </details>
                           )}
                         </td>

@@ -1547,15 +1547,15 @@ function FormularioConfiguracion({
       </h3>
       <div className="grid gap-3 md:grid-cols-4">
         <SelectEmpresa value={form.empresaId} empresas={empresas} onChange={(empresaId) => setForm({ ...form, empresaId })} />
-        <input className="input-custom" value={form.impuestoId} onChange={(e) => setForm({ ...form, impuestoId: e.target.value })} placeholder="Impuesto ID" />
+        <input className="input-custom" value={form.impuestoId} onChange={(e) => setForm({ ...form, impuestoId: e.target.value })} placeholder="Codigo de impuesto" />
         <input className="input-custom" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} placeholder="Nombre" />
         <select className="input-custom" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
           {TIPOS_IMPUESTO.map((tipo) => <option key={tipo} value={tipo}>{tipo}</option>)}
         </select>
         <input className="input-custom" type="number" min="0" max="100" step="0.0001" value={form.porcentaje} onChange={(e) => setForm({ ...form, porcentaje: e.target.value })} placeholder="Porcentaje" />
-        <input className="input-custom" value={form.cuentaContableId} onChange={(e) => setForm({ ...form, cuentaContableId: e.target.value })} placeholder="Cuenta contable UUID" />
-        <input className="input-custom" value={form.proveedorId} onChange={(e) => setForm({ ...form, proveedorId: e.target.value })} placeholder="Proveedor ID texto" />
-        <input className="input-custom" value={form.clienteId} onChange={(e) => setForm({ ...form, clienteId: e.target.value })} placeholder="Cliente ID texto" />
+        <input className="input-custom" value={form.cuentaContableId} onChange={(e) => setForm({ ...form, cuentaContableId: e.target.value })} placeholder="Cuenta contable relacionada" />
+        <input className="input-custom" value={form.proveedorId} onChange={(e) => setForm({ ...form, proveedorId: e.target.value })} placeholder="Proveedor relacionado" />
+        <input className="input-custom" value={form.clienteId} onChange={(e) => setForm({ ...form, clienteId: e.target.value })} placeholder="Cliente relacionado" />
         <Checkbox label="Aplica compra" checked={form.aplicaCompra} onChange={(valor) => setForm({ ...form, aplicaCompra: valor })} />
         <Checkbox label="Aplica venta" checked={form.aplicaVenta} onChange={(valor) => setForm({ ...form, aplicaVenta: valor })} />
         <Checkbox label="Aplica retencion" checked={form.aplicaRetencion} onChange={(valor) => setForm({ ...form, aplicaRetencion: valor })} />
@@ -1594,8 +1594,8 @@ function FormularioDocumento({
         </select>
         <SelectMoneda value={form.moneda} onChange={(moneda) => setForm({ ...form, moneda })} />
         <input className="input-custom" value={form.moduloOrigen} onChange={(e) => setForm({ ...form, moduloOrigen: e.target.value })} placeholder="Modulo origen" />
-        <input className="input-custom" value={form.proveedorId} onChange={(e) => setForm({ ...form, proveedorId: e.target.value })} placeholder="Proveedor ID texto" />
-        <input className="input-custom" value={form.clienteId} onChange={(e) => setForm({ ...form, clienteId: e.target.value })} placeholder="Cliente ID texto" />
+        <input className="input-custom" value={form.proveedorId} onChange={(e) => setForm({ ...form, proveedorId: e.target.value })} placeholder="Proveedor relacionado" />
+        <input className="input-custom" value={form.clienteId} onChange={(e) => setForm({ ...form, clienteId: e.target.value })} placeholder="Cliente relacionado" />
         <input className="input-custom" value={form.nitEmisor} onChange={(e) => setForm({ ...form, nitEmisor: e.target.value })} placeholder="NIT emisor" />
         <input className="input-custom" value={form.nitReceptor} onChange={(e) => setForm({ ...form, nitReceptor: e.target.value })} placeholder="NIT receptor" />
         <input className="input-custom" value={form.serie} onChange={(e) => setForm({ ...form, serie: e.target.value })} placeholder="Serie" />
@@ -1730,7 +1730,7 @@ function FormularioCalendario({
         </select>
         <input className="input-custom" type="number" min="0" step="0.01" value={form.montoEstimado} onChange={(e) => setForm({ ...form, montoEstimado: e.target.value })} placeholder="Monto estimado" />
         <SelectMoneda value={form.moneda} onChange={(moneda) => setForm({ ...form, moneda })} />
-        <input className="input-custom" value={form.responsableId} onChange={(e) => setForm({ ...form, responsableId: e.target.value })} placeholder="Responsable UUID" />
+        <input className="input-custom" value={form.responsableId} onChange={(e) => setForm({ ...form, responsableId: e.target.value })} placeholder="Responsable relacionado" />
         <Checkbox label="Visible calendario" checked={form.visibleCalendario} onChange={(valor) => setForm({ ...form, visibleCalendario: valor })} />
         <input className="input-custom md:col-span-2" value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} placeholder="Observaciones" />
         <BotonGuardar procesando={procesando} disabled={!empresas.length} onGuardar={onGuardar} label="Guardar vencimiento" />
