@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
   if (!serviceRoleKey) {
     return json(500, {
       error:
-        "Falta SUPABASE_SERVICE_ROLE_KEY para validar usuarios de Supabase Auth desde el servidor.",
+        "La configuracion del servidor esta incompleta para crear perfiles.",
     });
   }
 
@@ -225,7 +225,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!UUID_RE.test(uid)) {
-    return json(400, { error: "El UID de Supabase Auth debe ser un UUID valido." });
+    return json(400, { error: "El identificador interno del usuario no es valido." });
   }
 
   if (!EMAIL_RE.test(correo)) {
@@ -368,32 +368,32 @@ export async function POST(request: NextRequest) {
     await supabaseAdmin.auth.admin.getUserById(uid);
 
   if (usuarioAuthError || !usuarioAuth.user) {
-    await marcarIdempotenciaFallida(new Error("El UID no existe en Supabase Authentication."));
+    await marcarIdempotenciaFallida(new Error("El identificador interno no existe."));
     await registrarIntentoBloqueado(
       "uid_auth_no_existe",
-      "El UID no existe en Supabase Authentication."
+      "El identificador interno no existe en el proveedor de autenticacion."
     );
     return json(400, {
-      error: "El UID no existe en Supabase Authentication.",
+      error: "El identificador interno no existe en el proveedor de autenticacion.",
     });
   }
 
   const correoAuth = String(usuarioAuth.user.email || "").trim().toLowerCase();
   if (!correoAuth) {
-    await marcarIdempotenciaFallida(new Error("Usuario Auth sin correo registrado."));
+    await marcarIdempotenciaFallida(new Error("Usuario sin correo registrado."));
     return json(400, {
-      error: "El usuario de Supabase Auth no tiene correo registrado.",
+      error: "El usuario interno no tiene correo registrado.",
     });
   }
 
   if (correoAuth !== correo) {
-    await marcarIdempotenciaFallida(new Error("El correo no coincide con Supabase Auth."));
+    await marcarIdempotenciaFallida(new Error("El correo no coincide con el usuario interno."));
     await registrarIntentoBloqueado(
       "correo_no_coincide_auth",
-      "El correo no coincide con el usuario de Supabase Auth."
+      "El correo no coincide con el usuario interno."
     );
     return json(400, {
-      error: "El correo no coincide con el usuario de Supabase Auth.",
+      error: "El correo no coincide con el usuario interno.",
     });
   }
 
@@ -406,18 +406,18 @@ export async function POST(request: NextRequest) {
   if (perfilPorUidError) {
     await marcarIdempotenciaFallida(perfilPorUidError);
     return json(500, {
-      error: "No se pudo validar si el UID ya tiene perfil.",
+      error: "No se pudo validar si el usuario interno ya tiene perfil.",
     });
   }
 
   if (perfilPorUid) {
-    await marcarIdempotenciaFallida(new Error("Ya existe un perfil para ese UID."));
+    await marcarIdempotenciaFallida(new Error("Ya existe un perfil para ese identificador interno."));
     await registrarIntentoBloqueado(
       "perfil_uid_duplicado",
-      "Ya existe un perfil para ese UID."
+      "Ya existe un perfil para ese identificador interno."
     );
     return json(409, {
-      error: "Ya existe un perfil para ese UID.",
+      error: "Ya existe un perfil para ese identificador interno.",
     });
   }
 

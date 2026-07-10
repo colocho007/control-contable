@@ -850,7 +850,7 @@ export default function AdminPage() {
     }
 
     if (!nuevoUsuario.nombre.trim() || !nuevoUsuario.correo.trim() || !nuevoUsuario.uid.trim()) {
-      toast.error("Completa nombre, correo y UID de Supabase Auth");
+      toast.error("Completa nombre, correo e identificador interno existente.");
       return;
     }
 
@@ -921,7 +921,7 @@ export default function AdminPage() {
         rol: rolNuevoUsuario,
         error: getErrorMessage(error),
       });
-      toast.error(getErrorMessage(error), { id: toastId });
+      toast.error("No se pudo crear el usuario operativo.", { id: toastId });
     } finally {
       setProcesando(false);
     }
@@ -1667,7 +1667,7 @@ export default function AdminPage() {
                       value={nuevoUsuario.uid}
                       onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, uid: e.target.value })}
                       className="input-custom font-mono w-full"
-                      placeholder="Identificador existente de Supabase Auth"
+                      placeholder="Identificador interno existente"
                     />
                   </div>
                 </details>

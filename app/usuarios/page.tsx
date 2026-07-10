@@ -131,7 +131,7 @@ export default function UsuariosPage() {
 
   async function crearPerfil() {
     if (!form.nombre.trim() || !form.uid.trim() || !form.correo.trim()) {
-      toast.error("Completa el nombre, correo y UID existente de Supabase Auth.");
+      toast.error("Completa el nombre, correo e identificador interno existente.");
       return;
     }
 
@@ -276,7 +276,7 @@ export default function UsuariosPage() {
               />
               <input
                 type="email"
-                placeholder="Correo de Supabase Auth"
+                placeholder="Correo registrado"
                 value={form.correo}
                 onChange={(e) => setForm({ ...form, correo: e.target.value })}
                 className="input-style"
@@ -300,13 +300,13 @@ export default function UsuariosPage() {
               <div className="mt-4">
                 <input
                   type="text"
-                  placeholder="Identificador existente de Supabase Auth"
+                  placeholder="Identificador interno existente"
                   value={form.uid}
                   onChange={(e) => setForm({ ...form, uid: e.target.value })}
                   className="input-style font-mono w-full"
                 />
                 <p className="text-xs text-cyan-500/70 mt-3">
-                  El identificador y el correo deben existir previamente en Supabase Authentication.
+                  El identificador y el correo deben existir previamente en el sistema de autenticacion.
                 </p>
               </div>
             </details>
