@@ -465,7 +465,7 @@ export async function validarRespaldoDocumentalActivo(
   requerirTexto(params.entidad_tipo, "entidad_tipo");
 
   if (params.entidad_id === "" || params.entidad_id === null || params.entidad_id === undefined) {
-    throw new Error("No se puede validar respaldo documental sin entidad_id.");
+    throw new Error("No se puede validar el respaldo documental de este registro.");
   }
 
   const documentos = await listarDocumentosTramite({
@@ -504,8 +504,7 @@ export async function validarRespaldoDocumentalActivo(
     });
 
     throw new Error(
-      `Falta respaldo documental activo para ${params.operacion}. ` +
-        `Adjunta un documento activo en documentos_tramites para ${params.modulo}/${params.entidad_tipo}/${params.entidad_id}.`
+      `Falta respaldo documental activo para ${params.operacion}. Adjunta un documento activo antes de continuar.`
     );
   }
 

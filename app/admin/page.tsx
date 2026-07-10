@@ -1209,7 +1209,7 @@ export default function AdminPage() {
         entidad_id: usuarioEditando,
         error: getErrorMessage(error),
       });
-      toast.error(getErrorMessage(error), { id: toastId });
+      toast.error("No se pudieron guardar los permisos del usuario.", { id: toastId });
     } finally {
       setProcesando(false);
     }
