@@ -191,7 +191,7 @@ export default function AuxiliarPage() {
             return;
           }
 
-          setMensajeBloqueo("No tienes acceso al módulo Auxiliar.");
+          setMensajeBloqueo("No tienes acceso al modulo Auxiliar.");
           setAutorizado(false);
           setValidandoAcceso(false);
           return;
@@ -214,7 +214,7 @@ export default function AuxiliarPage() {
         setValidandoAcceso(false);
 
         if (!idsOperativos.length) {
-          setAviso("No tienes empresas operativas asignadas para consultar la bandeja del auxiliar.");
+          setAviso("Sin datos disponibles para esta empresa.");
           setTareas([]);
           setDocumentos([]);
           setCheques([]);

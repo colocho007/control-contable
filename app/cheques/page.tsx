@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import DocumentosEntidad from "../../components/DocumentosEntidad";
+import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { registrarAuditoriaEvento, type RegistrarAuditoriaEventoParams } from "../../lib/auditoria";
 import { obtenerEmpresasPermitidas } from "../../lib/permisosEmpresas";
@@ -258,6 +259,7 @@ function formularioChequeTieneContenido(formulario: FormularioCheque) {
 }
 
 export default function ChequesPage() {
+  const router = useRouter();
   const [cheques, setCheques] = useState<Cheque[]>([]);
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
   const [fondos, setFondos] = useState<FondoEmpresa[]>([]);
@@ -549,7 +551,7 @@ async function fallarOperacionIdempotente(
 
   useEffect(() => {
     iniciar();
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     formActualRef.current = form;
@@ -580,7 +582,7 @@ async function iniciar() {
           toast.error("Tu usuario está inactivo. Contacta al administrador.");
         }
 
-        window.location.href = "/login";
+        router.replace("/login");
         return;
       }
 
@@ -593,7 +595,7 @@ async function iniciar() {
         toast.error("No tienes acceso al módulo de Cheques.");
       }
 
-      window.location.href = "/dashboard";
+      router.replace("/dashboard");
       return;
     }
 
@@ -713,7 +715,7 @@ async function recuperarBorradorCheque() {
     setBorradorRevisado(!borrador);
   } catch (error: any) {
     console.error("Error recuperando borrador de cheque:", error);
-    toast.error(error.message || "No se pudo recuperar el borrador pendiente");
+    toast.error("No se pudo recuperar el borrador pendiente.");
     setBorradorRevisado(true);
   }
 }
@@ -1185,7 +1187,7 @@ async function descartarBorradorChequePendiente() {
     toast.success("Borrador descartado.");
   } catch (error: any) {
     console.error("Error descartando borrador de cheque:", error);
-    toast.error(error.message || "No se pudo descartar el borrador");
+    toast.error("No se pudo descartar el borrador.");
   } finally {
     setProcesandoBorrador(false);
   }
@@ -1302,7 +1304,7 @@ async function guardarBorradorChequeActual(
       setBorradorActivo(borrador);
     } catch (error: any) {
       console.error("Error autoguardando borrador de cheque:", error);
-      toast.error(error.message || "No se pudo guardar el borrador");
+      toast.error("No se pudo guardar el borrador.");
     } finally {
       setProcesandoBorrador(false);
     }
@@ -1511,7 +1513,7 @@ async function crearFondo() {
     toast.success("Fondo/cuenta bancaria creada", { id: toastId });
   } catch (error: any) {
     console.error(error);
-    toast.error(error.message || "Error al crear fondo", { id: toastId });
+    toast.error("No se pudo crear el fondo.", { id: toastId });
   }
 }
 
@@ -1621,7 +1623,7 @@ async function crearChequera() {
     });
   } catch (error: any) {
     console.error(error);
-    toast.error(error.message || "Error al crear chequera", { id: toastId });
+    toast.error("No se pudo crear la chequera.", { id: toastId });
   }
 }
 
@@ -2002,7 +2004,7 @@ async function crearChequera() {
         { id: toastId }
       );
     } else {
-      toast.error(error.message || "Error al crear cheque", { id: toastId });
+      toast.error("No se pudo crear el cheque.", { id: toastId });
     }
 
     if (!chequeFinalizado && !rpcEjecutada) {
@@ -2120,7 +2122,7 @@ async function autorizarCheque(cheque: Cheque) {
 
     toast.success("Cheque autorizado y fondos comprometidos", { id: toastId });
   } catch (error: any) {
-    toast.error(error.message || "Error al autorizar", { id: toastId });
+    toast.error("No se pudo autorizar el cheque.", { id: toastId });
 
     if (!rpcEjecutada) {
       liberarIdempotencyKeyCheque(idempotency.storageKey);
@@ -2194,7 +2196,7 @@ async function rechazarCheque(cheque: Cheque) {
 
     toast.success("Cheque rechazado y fondos liberados", { id: toastId });
   } catch (error: any) {
-    toast.error(error.message || "Error al rechazar", { id: toastId });
+    toast.error("No se pudo rechazar el cheque.", { id: toastId });
 
     if (!rpcEjecutada) {
       liberarIdempotencyKeyCheque(idempotency.storageKey);
@@ -2268,7 +2270,7 @@ const motivo = window.prompt("Indica el motivo de anulación:");
 
     toast.success("Cheque anulado y fondos liberados", { id: toastId });
   } catch (error: any) {
-    toast.error(error.message || "Error al anular cheque", { id: toastId });
+    toast.error("No se pudo anular el cheque.", { id: toastId });
 
     if (!rpcEjecutada) {
       liberarIdempotencyKeyCheque(idempotency.storageKey);
@@ -2369,7 +2371,7 @@ async function marcarPagado(cheque: Cheque) {
       id: toastId,
     });
   } catch (error: any) {
-    toast.error(error.message || "Error al pagar cheque", { id: toastId });
+    toast.error("No se pudo pagar el cheque.", { id: toastId });
 
     if (!rpcEjecutada) {
       liberarIdempotencyKeyCheque(idempotency.storageKey);

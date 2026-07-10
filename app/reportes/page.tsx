@@ -228,7 +228,7 @@ export default function ReportesPage() {
           setEmpresas([]);
           setReporte(null);
           setEstadosFinancieros(null);
-          setAviso("No tienes empresas operativas asignadas para consultar reportes.");
+          setAviso("Sin datos disponibles para esta empresa.");
           return;
         }
 
@@ -325,7 +325,7 @@ export default function ReportesPage() {
       if (!idsPermitidos.length) {
         setReporte(null);
         setEstadosFinancieros(null);
-        setAviso("No tienes empresas operativas asignadas para consultar reportes.");
+        setAviso("Sin datos disponibles para esta empresa.");
         return;
       }
 

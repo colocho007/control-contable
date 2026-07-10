@@ -475,16 +475,16 @@ function causaEvento(evento: AuditoriaEvento) {
   const texto = textoEvento(evento);
 
   if (evento.sensible || texto.includes("denegado")) {
-    return "Acceso, permiso o cambio sensible que requiere validación administrativa.";
+    return "Acceso, permiso o cambio sensible que requiere validacion administrativa.";
   }
   if (texto.includes("parcial") || texto.includes("incompleto") || texto.includes("borrador")) {
-    return "Operación iniciada que pudo quedar sin confirmación final o con datos pendientes.";
+    return "Operacion iniciada que pudo quedar sin confirmacion final o con datos pendientes.";
   }
   if (texto.includes("error") || texto.includes("fallo") || texto.includes("falla")) {
-    return "Falla registrada por el módulo, integración o validación operativa.";
+    return "Falla registrada por el modulo, integracion o validacion operativa.";
   }
 
-  return "Evento auditado que coincide con patrones de monitoreo y necesita revisión.";
+  return "Evento auditado que coincide con patrones de monitoreo y necesita revision.";
 }
 
 function accionEvento(evento: AuditoriaEvento) {
@@ -496,9 +496,9 @@ function accionEvento(evento: AuditoriaEvento) {
   if (ruta === "/cheques") return "Revisar el cheque o pago relacionado y completar o revertir el flujo operativo.";
   if (ruta === "/contabilidad") return "Revisar asiento, cierre o registro contable asociado antes de continuar.";
   if (ruta === "/reinicio-controlado") return "Revisar el reinicio controlado y sus dependencias operativas.";
-  if (ruta === "/documentos") return "Verificar documento, adjunto o trámite relacionado.";
+  if (ruta === "/documentos") return "Verificar documento, adjunto o tramite relacionado.";
 
-  return "Abrir el módulo relacionado, validar el registro y documentar la revisión.";
+  return "Abrir el modulo relacionado, validar el registro y documentar la revision.";
 }
 
 function valorSeguro(valor: unknown) {
@@ -1990,7 +1990,7 @@ function PanelDiagnostico({
           onChange={(event) => onFiltroModulo(event.target.value)}
           className="input-custom rounded-xl border border-white/10 bg-[#0f172a]/80 px-3 py-2 text-sm"
         >
-          <option value="todos">Todos los módulos</option>
+          <option value="todos">Todos los modulos</option>
           {modulosFiltro.map((modulo) => (
             <option key={modulo} value={modulo}>
               {etiqueta(modulo)}
@@ -2061,13 +2061,13 @@ function PanelDiagnostico({
                 <span className="text-gray-500">Fecha: {fechaHora(alerta.fecha)}</span>
               </div>
               <p className="text-[11px] font-black uppercase tracking-wide text-cyan-300 mt-3">
-                Qué pasó
+                Que paso
               </p>
               <p className="font-sans text-sm font-semibold text-gray-100 mt-1 line-clamp-2">
                 {alerta.mensaje}
               </p>
               <p className="text-[11px] text-gray-500 mt-2">
-                Módulo: {etiqueta(alerta.modulo)} | Usuario: {alerta.usuario || "No aplica"} | Empresa: {alerta.empresa || "No aplica"}
+                Modulo: {etiqueta(alerta.modulo)} | Usuario: {alerta.usuario || "No aplica"} | Empresa: {alerta.empresa || "No aplica"}
               </p>
             </button>
           );

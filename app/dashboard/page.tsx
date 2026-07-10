@@ -227,18 +227,18 @@ export default function DashboardPage() {
         acceso.motivo === "sin_perfil" ||
         acceso.motivo === "usuario_inactivo"
       ) {
-        // Manejado por la lógica de redirección posterior
+        // Manejado por la logica de redireccion posterior.
       } else if (
         acceso.motivo === "modulo_inactivo" ||
         acceso.motivo === "modulo_no_encontrado"
       ) {
-        toast.error("El módulo Dashboard está desactivado.");
+        toast.error("El modulo Dashboard esta desactivado.");
       } else {
-        toast.error("No tienes acceso al módulo Dashboard.");
+        toast.error("No tienes acceso al modulo Dashboard.");
       }
 
       if (acceso.motivo === "usuario_inactivo") {
-        toast.error("Tu usuario está inactivo. Contacta al administrador.");
+        toast.error("Tu usuario esta inactivo. Contacta al administrador.");
       }
 
       setAutorizado(false);
@@ -264,9 +264,8 @@ export default function DashboardPage() {
     setEsAdmin(admin);
     setAutorizado(true);
     
-    // LIBERACIÓN INMEDIATA DE LA INTERFAZ
-    // Una vez confirmada la sesión y el perfil, permitimos la entrada al Dashboard.
-    // Los datos operativos se cargarán en segundo plano.
+    // Liberacion inmediata de la interfaz: la sesion no depende de metricas.
+    // Los datos operativos se cargan en segundo plano.
     setValidandoAcceso(false);
     setTiempoAgotado(false);
 
@@ -283,16 +282,21 @@ export default function DashboardPage() {
       setEmpresasPermitidas(ids);
       setEmpresas(empresasOperativas.empresas);
 
-      // Carga paralela de métricas y listas
+      // Carga paralela de metricas y listas.
       await Promise.all([
         obtenerTareas(ids),
         obtenerFinanzas(ids),
         obtenerOrdenes(ids),
         obtenerCheques(ids),
       ]);
-    } catch (error) {
-      console.error("Error en carga operativa de segundo plano:", error);
-      toast.error("Error al cargar algunos datos del dashboard");
+    } catch {
+      console.warn("No se pudieron cargar algunos datos secundarios del dashboard.");
+      setEmpresasPermitidas([]);
+      setEmpresas([]);
+      setTareas([]);
+      setMovimientos([]);
+      setOrdenes([]);
+      setCheques([]);
     } finally {
       setCargandoDashboard(false);
     }
@@ -311,8 +315,8 @@ export default function DashboardPage() {
       .order("id", { ascending: false });
 
     if (error) {
-      console.error("Error obteniendo tareas:", error);
-      toast.error("Error cargando tareas");
+      console.warn("No se pudieron cargar tareas del dashboard.");
+      setTareas([]);
       return;
     }
 
@@ -332,8 +336,8 @@ export default function DashboardPage() {
       .order("fecha", { ascending: true });
 
     if (error) {
-      console.error("Error obteniendo movimientos:", error);
-      toast.error("Error cargando movimientos");
+      console.warn("No se pudieron cargar movimientos del dashboard.");
+      setMovimientos([]);
       return;
     }
 
@@ -355,8 +359,8 @@ export default function DashboardPage() {
       .order("id", { ascending: false });
 
     if (error) {
-      console.error("Error obteniendo ordenes:", error);
-      toast.error("Error cargando ordenes de compra");
+      console.warn("No se pudieron cargar ordenes de compra del dashboard.");
+      setOrdenes([]);
       return;
     }
 
@@ -378,8 +382,8 @@ export default function DashboardPage() {
       .order("id", { ascending: false });
 
     if (error) {
-      console.error("Error obteniendo cheques:", error);
-      toast.error("Error cargando cheques");
+      console.warn("No se pudieron cargar cheques del dashboard.");
+      setCheques([]);
       return;
     }
 
@@ -637,9 +641,9 @@ export default function DashboardPage() {
             className="max-w-md bg-white/5 border border-white/10 p-8 rounded-[2rem] backdrop-blur-xl"
           >
             <AlertTriangle className="text-amber-400 mx-auto mb-4" size={48} />
-            <h2 className="text-xl font-bold mb-2">La validación está tardando más de lo esperado</h2>
+            <h2 className="text-xl font-bold mb-2">La validacion esta tardando mas de lo esperado</h2>
             <p className="text-gray-400 text-sm mb-6">
-              Esto puede deberse a una conexión lenta o un problema temporal con los servicios.
+              Esto puede deberse a una conexion lenta o un problema temporal con los servicios.
             </p>
             <div className="flex flex-col gap-3">
               <button
