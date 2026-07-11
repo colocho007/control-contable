@@ -249,6 +249,12 @@ export default function Sidebar() {
     clave: "planilla",
   },
   {
+    name: "Empleados",
+    path: "/empleados",
+    icon: Users,
+    clave: "planilla",
+  },
+  {
     name: "Impuestos",
     path: "/impuestos",
     icon: Receipt,
@@ -423,6 +429,7 @@ const menusAdmin = [
         "/contabilidad",
         "/auxiliar",
         "/planilla",
+        "/empleados",
         "/impuestos",
         "/conciliacion-bancaria",
         "/flujo-efectivo",
