@@ -1,7 +1,7 @@
 # Maestro de Empleados: seguridad e importación V2
 
-Fecha: 2026-07-11  
-Rama: `feature/maestro-empleados-seguridad-importacion-v2`  
+Fecha: 2026-07-11
+Rama: `feature/maestro-empleados-seguridad-importacion-v2`
 Migración creada pero no ejecutada: `supabase/migrations/202607110001_maestro_empleados_seguridad_v2.sql`.
 
 ## Estado anterior y esquema detectado
