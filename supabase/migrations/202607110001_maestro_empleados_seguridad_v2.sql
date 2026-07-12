@@ -180,7 +180,7 @@ language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.perfiles p
     where p.id = auth.uid() and p.activo = true
-      and (pg_catalog.lower(pg_catalog.coalesce(p.rol, '')) = 'admin'
+      and (pg_catalog.lower(coalesce(p.rol, '')) = 'admin'
         or exists (select 1 from public.usuario_empresas ue
           where ue.usuario_id = auth.uid() and ue.empresa_id = p_empresa_id and ue.activo = true))
   )
@@ -195,7 +195,7 @@ language sql stable security definer set search_path = '' as $$
         and not exists (select 1 from public.usuario_funciones_operativas f
           where f.usuario_id = auth.uid() and f.empresa_id = p_empresa_id
             and f.activo = true and f.funcion = 'auditor_solo_lectura')
-        and (pg_catalog.lower(pg_catalog.coalesce(p.rol, '')) in ('admin', 'jefe', 'supervisor')
+        and (pg_catalog.lower(coalesce(p.rol, '')) in ('admin', 'jefe', 'supervisor')
           or exists (select 1 from public.usuario_funciones_operativas f
             where f.usuario_id = auth.uid() and f.empresa_id = p_empresa_id and f.activo = true
               and f.funcion in ('auxiliar_contable', 'contador_revisor')))
@@ -208,7 +208,7 @@ language sql stable security definer set search_path = '' as $$
     and exists (
       select 1 from public.perfiles p
       where p.id = auth.uid() and p.activo = true
-        and (pg_catalog.lower(pg_catalog.coalesce(p.rol, '')) in ('admin', 'jefe')
+        and (pg_catalog.lower(coalesce(p.rol, '')) in ('admin', 'jefe')
           or exists (select 1 from public.usuario_funciones_operativas f
             where f.usuario_id = auth.uid() and f.empresa_id = p_empresa_id
               and f.activo = true and f.funcion = 'contador_revisor'))
@@ -219,7 +219,7 @@ create or replace function public.empleados_puede_estado_v2(p_empresa_id bigint)
 language sql stable security definer set search_path = '' as $$
   select public.empleados_empresa_permitida_v2(p_empresa_id)
     and exists (select 1 from public.perfiles p where p.id = auth.uid() and p.activo = true
-      and pg_catalog.lower(pg_catalog.coalesce(p.rol, '')) in ('admin', 'jefe', 'supervisor'))
+      and pg_catalog.lower(coalesce(p.rol, '')) in ('admin', 'jefe', 'supervisor'))
 $$;
 
 -- Lista permitida para historial; nunca serializa la fila completa.
@@ -310,7 +310,7 @@ create or replace function public.empleados_fallar_operacion_v2(p_operacion_id u
 language plpgsql security definer set search_path = '' as $$
 declare v_resultado jsonb;
 begin
-  v_resultado := pg_catalog.jsonb_build_object('ok', false, 'mensaje', pg_catalog.left(pg_catalog.coalesce(p_mensaje, 'La operacion no pudo completarse.'), 300));
+  v_resultado := pg_catalog.jsonb_build_object('ok', false, 'mensaje', pg_catalog.left(coalesce(p_mensaje, 'La operacion no pudo completarse.'), 300));
   update public.empleados_operaciones_idempotentes
   set estado = 'fallida', resultado = v_resultado, completado_at = pg_catalog.now()
   where id = p_operacion_id and usuario_id = auth.uid();
@@ -335,11 +335,11 @@ begin
   if v_empresa is null or not public.empleados_puede_escribir_v2(v_empresa) then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'Empresa no autorizada.');
   end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_idempotency_key), '') is null then
+  if nullif(pg_catalog.btrim(p_idempotency_key), '') is null then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'Falta la llave de idempotencia.');
   end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_datos->>'nombres'), '') is null
-    or pg_catalog.nullif(pg_catalog.btrim(p_datos->>'apellidos'), '') is null or v_ingreso is null
+  if nullif(pg_catalog.btrim(p_datos->>'nombres'), '') is null
+    or nullif(pg_catalog.btrim(p_datos->>'apellidos'), '') is null or v_ingreso is null
     or v_salario is null or v_salario < 0 or v_bono is null or v_bono < 0
     or p_datos->>'moneda' not in ('GTQ', 'USD') or v_estado not in ('Activo', 'Inactivo', 'Suspendido', 'Egresado')
     or (v_retiro is not null and v_retiro < v_ingreso) then
@@ -349,9 +349,9 @@ begin
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'No tienes autorizacion para salario o estado sensible.');
   end if;
   if not public.empleados_puede_sensible_v2(v_empresa)
-    and (pg_catalog.nullif(p_datos->>'dpi','') is not null
-      or pg_catalog.nullif(p_datos->>'nit','') is not null
-      or pg_catalog.nullif(p_datos->>'igss_numero','') is not null) then
+    and (nullif(p_datos->>'dpi','') is not null
+      or nullif(p_datos->>'nit','') is not null
+      or nullif(p_datos->>'igss_numero','') is not null) then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'No tienes autorizacion para identificadores sensibles.');
   end if;
   v_hash := pg_catalog.md5(p_datos::text);
@@ -369,12 +369,12 @@ begin
     salario_base, bonificacion_incentivo, moneda, estado, activo, observaciones,
     creado_por, actualizado_por, actualizado_at, version, origen_registro
   ) values (
-    v_empresa, pg_catalog.nullif(p_datos->>'codigo_empleado',''), pg_catalog.btrim(p_datos->>'nombres'),
-    pg_catalog.btrim(p_datos->>'apellidos'), pg_catalog.nullif(p_datos->>'dpi',''), pg_catalog.nullif(p_datos->>'nit',''),
-    pg_catalog.nullif(p_datos->>'igss_numero',''), v_ingreso, v_retiro, pg_catalog.nullif(p_datos->>'puesto',''),
-    pg_catalog.nullif(p_datos->>'departamento',''), pg_catalog.nullif(p_datos->>'tipo_contrato',''),
-    pg_catalog.nullif(p_datos->>'jornada',''), v_salario, v_bono, p_datos->>'moneda', v_estado,
-    v_estado = 'Activo', pg_catalog.nullif(p_datos->>'observaciones',''), auth.uid(), auth.uid(), pg_catalog.now(), 1, 'manual'
+    v_empresa, nullif(p_datos->>'codigo_empleado',''), pg_catalog.btrim(p_datos->>'nombres'),
+    pg_catalog.btrim(p_datos->>'apellidos'), nullif(p_datos->>'dpi',''), nullif(p_datos->>'nit',''),
+    nullif(p_datos->>'igss_numero',''), v_ingreso, v_retiro, nullif(p_datos->>'puesto',''),
+    nullif(p_datos->>'departamento',''), nullif(p_datos->>'tipo_contrato',''),
+    nullif(p_datos->>'jornada',''), v_salario, v_bono, p_datos->>'moneda', v_estado,
+    v_estado = 'Activo', nullif(p_datos->>'observaciones',''), auth.uid(), auth.uid(), pg_catalog.now(), 1, 'manual'
   ) returning id into v_id;
   insert into public.empleados_historial
     (empleado_id, empresa_id, tipo_cambio, grupo_afectado, campos_modificados, usuario_id, origen, operacion_id, version_nueva)
@@ -408,11 +408,11 @@ begin
   if not found or not public.empleados_puede_escribir_v2(v_old.empresa_id) then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'Empleado no disponible o sin permiso.');
   end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_idempotency_key), '') is null then
+  if nullif(pg_catalog.btrim(p_idempotency_key), '') is null then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'Falta la llave de idempotencia.');
   end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_datos->>'nombres'),'') is null
-    or pg_catalog.nullif(pg_catalog.btrim(p_datos->>'apellidos'),'') is null or v_ingreso is null
+  if nullif(pg_catalog.btrim(p_datos->>'nombres'),'') is null
+    or nullif(pg_catalog.btrim(p_datos->>'apellidos'),'') is null or v_ingreso is null
     or v_salario is null or v_salario < 0 or v_bono is null or v_bono < 0
     or p_datos->>'moneda' not in ('GTQ','USD') or v_estado not in ('Activo','Inactivo','Suspendido','Egresado')
     or (v_retiro is not null and v_retiro < v_ingreso) then
@@ -425,9 +425,9 @@ begin
   if v_estado is distinct from v_old.estado and not public.empleados_puede_estado_v2(v_old.empresa_id) then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'No tienes autorizacion para cambiar el estado laboral.');
   end if;
-  if (pg_catalog.nullif(p_datos->>'dpi','') is distinct from v_old.dpi
-      or pg_catalog.nullif(p_datos->>'nit','') is distinct from v_old.nit
-      or pg_catalog.nullif(p_datos->>'igss_numero','') is distinct from v_old.igss_numero)
+  if (nullif(p_datos->>'dpi','') is distinct from v_old.dpi
+      or nullif(p_datos->>'nit','') is distinct from v_old.nit
+      or nullif(p_datos->>'igss_numero','') is distinct from v_old.igss_numero)
     and not public.empleados_puede_sensible_v2(v_old.empresa_id) then
     return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'No tienes autorizacion para modificar identificadores sensibles.');
   end if;
@@ -438,13 +438,13 @@ begin
   if v_op.request_hash <> v_hash then return pg_catalog.jsonb_build_object('ok', false, 'mensaje', 'La llave pertenece a otra solicitud.'); end if;
   if v_op.estado = 'completada' then return v_op.resultado || pg_catalog.jsonb_build_object('idempotency_replay', true); end if;
   update public.empleados_planilla set
-    codigo_empleado=pg_catalog.nullif(p_datos->>'codigo_empleado',''), nombres=pg_catalog.btrim(p_datos->>'nombres'),
-    apellidos=pg_catalog.btrim(p_datos->>'apellidos'), dpi=pg_catalog.nullif(p_datos->>'dpi',''),
-    nit=pg_catalog.nullif(p_datos->>'nit',''), igss_numero=pg_catalog.nullif(p_datos->>'igss_numero',''),
-    fecha_ingreso=v_ingreso, fecha_egreso=v_retiro, puesto=pg_catalog.nullif(p_datos->>'puesto',''),
-    departamento=pg_catalog.nullif(p_datos->>'departamento',''), tipo_contrato=pg_catalog.nullif(p_datos->>'tipo_contrato',''),
-    jornada=pg_catalog.nullif(p_datos->>'jornada',''), salario_base=v_salario, bonificacion_incentivo=v_bono,
-    moneda=p_datos->>'moneda', estado=v_estado, activo=v_estado='Activo', observaciones=pg_catalog.nullif(p_datos->>'observaciones',''),
+    codigo_empleado=nullif(p_datos->>'codigo_empleado',''), nombres=pg_catalog.btrim(p_datos->>'nombres'),
+    apellidos=pg_catalog.btrim(p_datos->>'apellidos'), dpi=nullif(p_datos->>'dpi',''),
+    nit=nullif(p_datos->>'nit',''), igss_numero=nullif(p_datos->>'igss_numero',''),
+    fecha_ingreso=v_ingreso, fecha_egreso=v_retiro, puesto=nullif(p_datos->>'puesto',''),
+    departamento=nullif(p_datos->>'departamento',''), tipo_contrato=nullif(p_datos->>'tipo_contrato',''),
+    jornada=nullif(p_datos->>'jornada',''), salario_base=v_salario, bonificacion_incentivo=v_bono,
+    moneda=p_datos->>'moneda', estado=v_estado, activo=v_estado='Activo', observaciones=nullif(p_datos->>'observaciones',''),
     actualizado_por=auth.uid(), actualizado_at=pg_catalog.now(), version=version+1
   where id=p_empleado_id and empresa_id=v_old.empresa_id and version=p_version_esperada returning * into v_new;
   if not found then return public.empleados_fallar_operacion_v2(v_op.id, 'La ficha cambio. Recarga antes de guardar.'); end if;
@@ -475,30 +475,30 @@ declare
   v_ids uuid[] := '{}'; v_id uuid; v_version integer; v_errores text[] := '{}'; v_advertencias text[] := '{}';
 begin
   if v_empresa is null or not public.empleados_puede_sensible_v2(v_empresa) then v_errores:=array_append(v_errores,'Empresa no autorizada para importacion.'); end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_fila->>'nombres'),'') is null then v_errores:=array_append(v_errores,'Nombres obligatorios.'); end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_fila->>'apellidos'),'') is null then v_errores:=array_append(v_errores,'Apellidos obligatorios.'); end if;
+  if nullif(pg_catalog.btrim(p_fila->>'nombres'),'') is null then v_errores:=array_append(v_errores,'Nombres obligatorios.'); end if;
+  if nullif(pg_catalog.btrim(p_fila->>'apellidos'),'') is null then v_errores:=array_append(v_errores,'Apellidos obligatorios.'); end if;
   if v_ingreso is null then v_errores:=array_append(v_errores,'Fecha de ingreso invalida.'); end if;
-  if pg_catalog.nullif(p_fila->>'fecha_nacimiento','') is not null and v_nacimiento is null then v_errores:=array_append(v_errores,'Fecha de nacimiento invalida.'); end if;
-  if pg_catalog.nullif(p_fila->>'fecha_retiro','') is not null and v_retiro is null then v_errores:=array_append(v_errores,'Fecha de retiro invalida.'); end if;
+  if nullif(p_fila->>'fecha_nacimiento','') is not null and v_nacimiento is null then v_errores:=array_append(v_errores,'Fecha de nacimiento invalida.'); end if;
+  if nullif(p_fila->>'fecha_retiro','') is not null and v_retiro is null then v_errores:=array_append(v_errores,'Fecha de retiro invalida.'); end if;
   if v_retiro is not null and v_ingreso is not null and v_retiro<v_ingreso then v_errores:=array_append(v_errores,'Retiro anterior al ingreso.'); end if;
   if v_salario is null or v_salario<0 or v_bono is null or v_bono<0 then v_errores:=array_append(v_errores,'Monto invalido.'); end if;
   if p_fila->>'moneda' not in('GTQ','USD') then v_errores:=array_append(v_errores,'Moneda invalida.'); end if;
   if p_fila->>'estado_laboral' not in('Activo','Inactivo','Suspendido','Egresado') then v_errores:=array_append(v_errores,'Estado laboral invalido.'); end if;
-  if pg_catalog.nullif(p_fila->>'correo','') is not null and p_fila->>'correo' !~* '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then v_errores:=array_append(v_errores,'Correo invalido.'); end if;
+  if nullif(p_fila->>'correo','') is not null and p_fila->>'correo' !~* '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$' then v_errores:=array_append(v_errores,'Correo invalido.'); end if;
   if v_empresa is not null then
-    select pg_catalog.coalesce(pg_catalog.array_agg(distinct e.id),'{}') into v_ids
+    select coalesce(pg_catalog.array_agg(distinct e.id),'{}') into v_ids
     from public.empleados_planilla e where e.empresa_id=v_empresa and (
-      (pg_catalog.nullif(p_fila->>'codigo_interno','') is not null and e.codigo_empleado=p_fila->>'codigo_interno') or
-      (pg_catalog.nullif(p_fila->>'dpi','') is not null and e.dpi=p_fila->>'dpi') or
-      (pg_catalog.nullif(p_fila->>'nit','') is not null and e.nit=p_fila->>'nit') or
-      (pg_catalog.nullif(p_fila->>'afiliacion_igss','') is not null and e.igss_numero=p_fila->>'afiliacion_igss') or
+      (nullif(p_fila->>'codigo_interno','') is not null and e.codigo_empleado=p_fila->>'codigo_interno') or
+      (nullif(p_fila->>'dpi','') is not null and e.dpi=p_fila->>'dpi') or
+      (nullif(p_fila->>'nit','') is not null and e.nit=p_fila->>'nit') or
+      (nullif(p_fila->>'afiliacion_igss','') is not null and e.igss_numero=p_fila->>'afiliacion_igss') or
       (v_nacimiento is not null and pg_catalog.lower(pg_catalog.concat_ws(' ',e.nombres,e.apellidos))=
         pg_catalog.lower(pg_catalog.concat_ws(' ',p_fila->>'nombres',p_fila->>'apellidos')) and e.fecha_nacimiento=v_nacimiento));
   end if;
   if pg_catalog.cardinality(v_ids)>1 then v_errores:=array_append(v_errores,'Identificadores ambiguos coinciden con empleados distintos.');
   elsif pg_catalog.cardinality(v_ids)=1 then v_id=v_ids[1]; select version into v_version from public.empleados_planilla where id=v_id and empresa_id=v_empresa;
     v_advertencias:=array_append(v_advertencias,'Coincide con un empleado existente.'); end if;
-  if pg_catalog.nullif(p_fila->>'dpi','') is null then v_advertencias:=array_append(v_advertencias,'DPI no informado.'); end if;
+  if nullif(p_fila->>'dpi','') is null then v_advertencias:=array_append(v_advertencias,'DPI no informado.'); end if;
   return p_fila || pg_catalog.jsonb_build_object(
     'estado_validacion',case when pg_catalog.cardinality(v_errores)>0 then 'rechazada' when v_id is not null then 'duplicada' when pg_catalog.cardinality(v_advertencias)>0 then 'advertencia' else 'valida' end,
     'accion_propuesta',case when pg_catalog.cardinality(v_errores)>0 then 'corregir' when v_id is not null then 'actualizar' else 'crear' end,
@@ -511,8 +511,8 @@ language plpgsql security definer set search_path = '' as $$
 declare f jsonb; v jsonb; v_ordinal bigint; salida jsonb:='[]'; total integer:=0; validas integer:=0; incompletas integer:=0; duplicadas integer:=0; advertencias integer:=0; rechazadas integer:=0;
 begin
   if auth.uid() is null then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Sesion no valida.'); end if;
-  if pg_catalog.nullif(pg_catalog.btrim(p_archivo_hash),'') is null or p_archivo_hash !~ '^[0-9a-fA-F]{64}$'
-    or pg_catalog.nullif(pg_catalog.btrim(p_plantilla_version),'') is null then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Hash o version de plantilla invalidos.'); end if;
+  if nullif(pg_catalog.btrim(p_archivo_hash),'') is null or p_archivo_hash !~ '^[0-9a-fA-F]{64}$'
+    or nullif(pg_catalog.btrim(p_plantilla_version),'') is null then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Hash o version de plantilla invalidos.'); end if;
   if pg_catalog.jsonb_typeof(p_filas) is distinct from 'array' then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Las filas deben ser un arreglo JSON.'); end if;
   total:=pg_catalog.jsonb_array_length(p_filas); if total<1 or total>1000 then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Cantidad de filas fuera del limite.'); end if;
   for f, v_ordinal in select value, ordinality from pg_catalog.jsonb_array_elements(p_filas) with ordinality loop
@@ -537,16 +537,16 @@ begin
   if auth.uid() is null then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Sesion no valida.'); end if;
   if pg_catalog.jsonb_typeof(p_filas) is distinct from 'array' then return pg_catalog.jsonb_build_object('ok',false,'mensaje','Las filas deben ser un arreglo JSON.'); end if;
   if pg_catalog.jsonb_array_length(p_filas) not between 1 and 1000 or p_archivo_tamano not between 1 and 5242880
-    or pg_catalog.nullif(pg_catalog.btrim(p_archivo_nombre),'') is null or pg_catalog.lower(p_archivo_nombre) not like '%.xlsx'
-    or pg_catalog.nullif(pg_catalog.btrim(p_archivo_hash),'') is null or p_archivo_hash !~ '^[0-9a-fA-F]{64}$'
-    or pg_catalog.nullif(pg_catalog.btrim(p_plantilla_version),'') is null or pg_catalog.nullif(pg_catalog.btrim(p_idempotency_key),'') is null then
+    or nullif(pg_catalog.btrim(p_archivo_nombre),'') is null or pg_catalog.lower(p_archivo_nombre) not like '%.xlsx'
+    or nullif(pg_catalog.btrim(p_archivo_hash),'') is null or p_archivo_hash !~ '^[0-9a-fA-F]{64}$'
+    or nullif(pg_catalog.btrim(p_plantilla_version),'') is null or nullif(pg_catalog.btrim(p_idempotency_key),'') is null then
     return pg_catalog.jsonb_build_object('ok',false,'mensaje','Metadatos de importacion invalidos.');
   end if;
   for f in select value from pg_catalog.jsonb_array_elements(p_filas) loop
     v_empresa:=public.empleados_try_bigint_v2(f->>'empresa_id');
     if v_empresa is not null and public.empleados_puede_sensible_v2(v_empresa) then v_empresas:=array_append(v_empresas,v_empresa); end if;
   end loop;
-  select pg_catalog.coalesce(pg_catalog.array_agg(distinct x order by x),'{}') into v_empresas from pg_catalog.unnest(v_empresas) x;
+  select coalesce(pg_catalog.array_agg(distinct x order by x),'{}') into v_empresas from pg_catalog.unnest(v_empresas) x;
   if pg_catalog.cardinality(v_empresas)=0 then return pg_catalog.jsonb_build_object('ok',false,'mensaje','No hay empresas autorizadas para importar.'); end if;
   v_ambito:=pg_catalog.array_to_string(v_empresas,',');
   v_hash:=pg_catalog.md5(pg_catalog.concat_ws('|',p_archivo_hash,p_plantilla_version,p_filas::text));
@@ -555,7 +555,7 @@ begin
   v_op:=public.empleados_reservar_operacion_v2('importar_empleados',v_ambito,p_idempotency_key,v_hash);
   if v_op.request_hash<>v_hash then return pg_catalog.jsonb_build_object('ok',false,'mensaje','La llave pertenece a otra importacion.'); end if;
   if v_op.estado='completada' then return v_op.resultado||pg_catalog.jsonb_build_object('idempotency_replay',true); end if;
-  if v_op.estado<>'reservada' then return pg_catalog.coalesce(v_op.resultado,pg_catalog.jsonb_build_object('ok',false,'mensaje','La importacion requiere una nueva llave.')); end if;
+  if v_op.estado<>'reservada' then return coalesce(v_op.resultado,pg_catalog.jsonb_build_object('ok',false,'mensaje','La importacion requiere una nueva llave.')); end if;
   insert into public.importaciones_empleados(archivo_nombre,archivo_hash,archivo_tamano,plantilla_version,usuario_id,ambito_hash,empresa_ids,total_filas)
   values(pg_catalog.left(p_archivo_nombre,255),p_archivo_hash,p_archivo_tamano,p_plantilla_version,auth.uid(),v_ambito,v_empresas,pg_catalog.jsonb_array_length(p_filas))
   on conflict(usuario_id,ambito_hash,archivo_hash,plantilla_version) do nothing returning * into v_imp;
@@ -563,7 +563,7 @@ begin
   for f, v_ordinal in select value, ordinality from pg_catalog.jsonb_array_elements(p_filas) with ordinality loop
     begin
     v:=public.empleados_validar_fila_v2(f); v_empresa:=public.empleados_try_bigint_v2(v->>'empresa_id'); v_id:=public.empleados_try_uuid_v2(v->>'empleado_existente_id'); v_version:=public.empleados_try_integer_v2(v->>'version_esperada');
-    v_decision:=pg_catalog.lower(pg_catalog.coalesce(f->>'decision_usuario',''));
+    v_decision:=pg_catalog.lower(coalesce(f->>'decision_usuario',''));
     if v_decision='ignorar' then
       omitidos:=omitidos+1;
       insert into public.importaciones_empleados_filas(importacion_id,fila,fila_origen,empresa_id,accion,estado)
@@ -592,24 +592,24 @@ begin
     end if;
       if v_decision='crear' then
         insert into public.empleados_planilla(empresa_id,codigo_empleado,nombres,apellidos,dpi,nit,igss_numero,fecha_nacimiento,nacionalidad,estado_civil,telefono,correo,direccion,departamento_residencia,municipio_residencia,puesto,ocupacion,departamento,centro_trabajo,tipo_contrato,jornada,fecha_ingreso,fecha_egreso,motivo_retiro,estado,activo,salario_base,bonificacion_incentivo,moneda,observaciones,creado_por,actualizado_por,actualizado_at,version,origen_registro,importacion_id)
-        values(v_empresa,pg_catalog.nullif(v->>'codigo_interno',''),v->>'nombres',v->>'apellidos',pg_catalog.nullif(v->>'dpi',''),pg_catalog.nullif(v->>'nit',''),pg_catalog.nullif(v->>'afiliacion_igss',''),public.empleados_try_date_v2(v->>'fecha_nacimiento'),pg_catalog.nullif(v->>'nacionalidad',''),pg_catalog.nullif(v->>'estado_civil',''),pg_catalog.nullif(v->>'telefono',''),pg_catalog.nullif(v->>'correo',''),pg_catalog.nullif(v->>'direccion',''),pg_catalog.nullif(v->>'departamento_residencia',''),pg_catalog.nullif(v->>'municipio_residencia',''),pg_catalog.nullif(v->>'puesto',''),pg_catalog.nullif(v->>'ocupacion',''),pg_catalog.nullif(v->>'departamento_area',''),pg_catalog.nullif(v->>'centro_trabajo',''),pg_catalog.nullif(v->>'tipo_contrato',''),pg_catalog.nullif(v->>'jornada',''),public.empleados_try_date_v2(v->>'fecha_ingreso'),public.empleados_try_date_v2(v->>'fecha_retiro'),pg_catalog.nullif(v->>'motivo_retiro',''),v->>'estado_laboral',(v->>'estado_laboral')='Activo',public.empleados_try_numeric_v2(v->>'salario_base'),public.empleados_try_numeric_v2(v->>'bonificacion_incentivo'),v->>'moneda',pg_catalog.nullif(v->>'observaciones',''),auth.uid(),auth.uid(),pg_catalog.now(),1,'importacion',v_imp.id) returning id into v_id;
+        values(v_empresa,nullif(v->>'codigo_interno',''),v->>'nombres',v->>'apellidos',nullif(v->>'dpi',''),nullif(v->>'nit',''),nullif(v->>'afiliacion_igss',''),public.empleados_try_date_v2(v->>'fecha_nacimiento'),nullif(v->>'nacionalidad',''),nullif(v->>'estado_civil',''),nullif(v->>'telefono',''),nullif(v->>'correo',''),nullif(v->>'direccion',''),nullif(v->>'departamento_residencia',''),nullif(v->>'municipio_residencia',''),nullif(v->>'puesto',''),nullif(v->>'ocupacion',''),nullif(v->>'departamento_area',''),nullif(v->>'centro_trabajo',''),nullif(v->>'tipo_contrato',''),nullif(v->>'jornada',''),public.empleados_try_date_v2(v->>'fecha_ingreso'),public.empleados_try_date_v2(v->>'fecha_retiro'),nullif(v->>'motivo_retiro',''),v->>'estado_laboral',(v->>'estado_laboral')='Activo',public.empleados_try_numeric_v2(v->>'salario_base'),public.empleados_try_numeric_v2(v->>'bonificacion_incentivo'),v->>'moneda',nullif(v->>'observaciones',''),auth.uid(),auth.uid(),pg_catalog.now(),1,'importacion',v_imp.id) returning id into v_id;
         creados:=creados+1; v_version:=1;
       else
         select * into v_old from public.empleados_planilla where id=v_id and empresa_id=v_empresa;
         v_campos:=pg_catalog.array_remove(array[
           case when v_old.nombres is distinct from v->>'nombres' then 'nombres' end,
           case when v_old.apellidos is distinct from v->>'apellidos' then 'apellidos' end,
-          case when v_old.puesto is distinct from pg_catalog.nullif(v->>'puesto','') then 'puesto' end,
-          case when v_old.departamento is distinct from pg_catalog.nullif(v->>'departamento_area','') then 'departamento_area' end,
-          case when v_old.tipo_contrato is distinct from pg_catalog.nullif(v->>'tipo_contrato','') then 'tipo_contrato' end,
-          case when v_old.jornada is distinct from pg_catalog.nullif(v->>'jornada','') then 'jornada' end,
+          case when v_old.puesto is distinct from nullif(v->>'puesto','') then 'puesto' end,
+          case when v_old.departamento is distinct from nullif(v->>'departamento_area','') then 'departamento_area' end,
+          case when v_old.tipo_contrato is distinct from nullif(v->>'tipo_contrato','') then 'tipo_contrato' end,
+          case when v_old.jornada is distinct from nullif(v->>'jornada','') then 'jornada' end,
           case when v_old.fecha_ingreso is distinct from public.empleados_try_date_v2(v->>'fecha_ingreso') then 'fecha_ingreso' end,
           case when v_old.fecha_egreso is distinct from public.empleados_try_date_v2(v->>'fecha_retiro') then 'fecha_retiro' end,
           case when v_old.estado is distinct from v->>'estado_laboral' then 'estado' end,
           case when v_old.salario_base is distinct from public.empleados_try_numeric_v2(v->>'salario_base') then 'salario_base' end,
           case when v_old.bonificacion_incentivo is distinct from public.empleados_try_numeric_v2(v->>'bonificacion_incentivo') then 'bonificacion_incentivo' end,
-          case when v_old.telefono is distinct from pg_catalog.nullif(v->>'telefono','') then 'telefono' end,
-          case when v_old.correo is distinct from pg_catalog.nullif(v->>'correo','') then 'correo' end
+          case when v_old.telefono is distinct from nullif(v->>'telefono','') then 'telefono' end,
+          case when v_old.correo is distinct from nullif(v->>'correo','') then 'correo' end
         ],null);
         if pg_catalog.cardinality(v_campos)=0 then
           omitidos:=omitidos+1;
@@ -621,14 +621,14 @@ begin
           raise exception using errcode='42501';
         end if;
         update public.empleados_planilla set
-          nombres=v->>'nombres',apellidos=v->>'apellidos',puesto=pg_catalog.nullif(v->>'puesto',''),
-          departamento=pg_catalog.nullif(v->>'departamento_area',''),tipo_contrato=pg_catalog.nullif(v->>'tipo_contrato',''),
-          jornada=pg_catalog.nullif(v->>'jornada',''),fecha_ingreso=public.empleados_try_date_v2(v->>'fecha_ingreso'),
-          fecha_egreso=public.empleados_try_date_v2(v->>'fecha_retiro'),motivo_retiro=pg_catalog.nullif(v->>'motivo_retiro',''),
+          nombres=v->>'nombres',apellidos=v->>'apellidos',puesto=nullif(v->>'puesto',''),
+          departamento=nullif(v->>'departamento_area',''),tipo_contrato=nullif(v->>'tipo_contrato',''),
+          jornada=nullif(v->>'jornada',''),fecha_ingreso=public.empleados_try_date_v2(v->>'fecha_ingreso'),
+          fecha_egreso=public.empleados_try_date_v2(v->>'fecha_retiro'),motivo_retiro=nullif(v->>'motivo_retiro',''),
           estado=v->>'estado_laboral',activo=(v->>'estado_laboral')='Activo',
           salario_base=public.empleados_try_numeric_v2(v->>'salario_base'),
           bonificacion_incentivo=public.empleados_try_numeric_v2(v->>'bonificacion_incentivo'),
-          telefono=pg_catalog.nullif(v->>'telefono',''),correo=pg_catalog.nullif(v->>'correo',''),
+          telefono=nullif(v->>'telefono',''),correo=nullif(v->>'correo',''),
           actualizado_por=auth.uid(),actualizado_at=pg_catalog.now(),version=version+1,importacion_id=v_imp.id
         where id=v_id and empresa_id=v_empresa and version=v_version returning * into v_new;
         get diagnostics v_affected = row_count;
@@ -720,7 +720,7 @@ using (
     select 1 from public.perfiles p
     where p.id = auth.uid() and p.activo = true
       and (
-        pg_catalog.lower(pg_catalog.coalesce(p.rol, '')) = 'admin'
+        pg_catalog.lower(coalesce(p.rol, '')) = 'admin'
         or exists (
           select 1 from public.usuario_empresas ue
           where ue.usuario_id = auth.uid()
