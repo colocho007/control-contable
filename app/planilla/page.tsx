@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BadgeDollarSign,
@@ -325,6 +325,8 @@ export default function PlanillaPage() {
   const [formPeriodo, setFormPeriodo] = useState(formularioPeriodoInicial());
   const [formTasa, setFormTasa] = useState(formularioTasaInicial());
   const [formDescuento, setFormDescuento] = useState(formularioDescuentoInicial());
+  const operacionEmpleadoRef = useRef<{ fingerprint: string; key: string } | null>(null);
+  const creacionEmpleadoEnCursoRef = useRef(false);
 
   useEffect(() => {
     let activo = true;
@@ -487,6 +489,7 @@ export default function PlanillaPage() {
   }
 
   async function guardarEmpleado() {
+    if (creacionEmpleadoEnCursoRef.current) return;
     setErrorCarga(null);
     setExito(null);
     setAviso(null);
@@ -506,62 +509,88 @@ export default function PlanillaPage() {
         throw new Error("Nombres, apellidos y fecha de ingreso son obligatorios.");
       }
 
-      setProcesando(true);
-      const { data: empleadoCreado, error } = await supabase
-        .from("empleados_planilla")
-        .insert({
-          empresa_id: empresaId,
-          codigo_empleado: textoOpcional(formEmpleado.codigoEmpleado),
-          nombres: formEmpleado.nombres.trim(),
-          apellidos: formEmpleado.apellidos.trim(),
-          dpi: textoOpcional(formEmpleado.dpi),
-          nit: textoOpcional(formEmpleado.nit),
-          igss_numero: textoOpcional(formEmpleado.igssNumero),
-          fecha_ingreso: formEmpleado.fechaIngreso,
-          puesto: textoOpcional(formEmpleado.puesto),
-          departamento: textoOpcional(formEmpleado.departamento),
-          salario_base: numeroNoNegativo(formEmpleado.salarioBase, "Salario base"),
-          bonificacion_incentivo: numeroNoNegativo(
-            formEmpleado.bonificacionIncentivo,
-            "Bonificacion incentivo"
-          ),
-          moneda: formEmpleado.moneda,
-          observaciones: textoOpcional(formEmpleado.observaciones),
-          creado_por: userId,
-        })
-        .select(COLUMNAS_EMPLEADOS)
-        .single();
+      const payloadEmpleado = {
+        empresa_id: empresaId,
+        codigo_empleado: textoOpcional(formEmpleado.codigoEmpleado),
+        nombres: formEmpleado.nombres.trim(),
+        apellidos: formEmpleado.apellidos.trim(),
+        dpi: textoOpcional(formEmpleado.dpi),
+        nit: textoOpcional(formEmpleado.nit),
+        igss_numero: textoOpcional(formEmpleado.igssNumero),
+        fecha_ingreso: formEmpleado.fechaIngreso,
+        fecha_egreso: null,
+        puesto: textoOpcional(formEmpleado.puesto),
+        departamento: textoOpcional(formEmpleado.departamento),
+        tipo_contrato: null,
+        jornada: null,
+        salario_base: numeroNoNegativo(formEmpleado.salarioBase, "Salario base"),
+        bonificacion_incentivo: numeroNoNegativo(
+          formEmpleado.bonificacionIncentivo,
+          "Bonificacion incentivo"
+        ),
+        moneda: formEmpleado.moneda,
+        estado: "Activo",
+        observaciones: textoOpcional(formEmpleado.observaciones),
+      };
+      const fingerprint = JSON.stringify(payloadEmpleado);
+      if (!operacionEmpleadoRef.current || operacionEmpleadoRef.current.fingerprint !== fingerprint) {
+        operacionEmpleadoRef.current = {
+          fingerprint,
+          key: crypto.randomUUID(),
+        };
+      }
 
-      if (error || !empleadoCreado) throw error || new Error("No se pudo crear el empleado.");
+      creacionEmpleadoEnCursoRef.current = true;
+      setProcesando(true);
+      const { data, error } = await supabase.rpc("crear_empleado_v2", {
+        p_datos: payloadEmpleado,
+        p_idempotency_key: operacionEmpleadoRef.current.key,
+      });
+      if (error) throw error;
+
+      const respuesta = data as {
+        ok?: boolean;
+        mensaje?: string;
+        empleado_id?: string;
+        version?: number;
+        idempotency_replay?: boolean;
+      } | null;
+      if (!respuesta?.ok || !respuesta.empleado_id) {
+        setErrorCarga(respuesta?.mensaje || "No se pudo crear el empleado.");
+        return;
+      }
 
       await auditar({
-        empresa_id: empleadoCreado.empresa_id,
+        empresa_id: empresaId,
         modulo: "planilla",
         accion: "crear_empleado_planilla",
         entidad_tipo: "empleados_planilla",
-        entidad_id: empleadoCreado.id,
-        estado_nuevo: empleadoCreado.estado,
+        entidad_id: respuesta.empleado_id,
+        estado_nuevo: "Activo",
         sensible: true,
         origen: "app_planilla",
         metadatos: {
-          empresa_id: empleadoCreado.empresa_id,
-          empleado_id: empleadoCreado.id,
-          codigo_empleado: empleadoCreado.codigo_empleado,
-          nombre: `${empleadoCreado.nombres} ${empleadoCreado.apellidos}`.trim(),
-          estado: empleadoCreado.estado,
-          fecha_ingreso: empleadoCreado.fecha_ingreso,
-          salario_base: Number(empleadoCreado.salario_base || 0),
-          moneda: empleadoCreado.moneda,
+          empresa_id: empresaId,
+          empleado_id: respuesta.empleado_id,
+          codigo_empleado: payloadEmpleado.codigo_empleado,
+          nombre: `${payloadEmpleado.nombres} ${payloadEmpleado.apellidos}`.trim(),
+          estado: "Activo",
+          fecha_ingreso: payloadEmpleado.fecha_ingreso,
+          moneda: payloadEmpleado.moneda,
+          version: respuesta.version || 1,
+          idempotency_replay: respuesta.idempotency_replay === true,
         },
       });
 
+      operacionEmpleadoRef.current = null;
       setFormEmpleado(formularioEmpleadoInicial(String(empresaId)));
       await cargarDatos();
-      setExito("Empleado registrado.");
+      setExito(respuesta.mensaje || (respuesta.idempotency_replay ? "Empleado ya registrado." : "Empleado registrado."));
     } catch (error) {
       console.error("Error guardando empleado de planilla:", error);
       setErrorCarga(errorSeguro(error));
     } finally {
+      creacionEmpleadoEnCursoRef.current = false;
       setProcesando(false);
     }
   }

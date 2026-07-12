@@ -377,17 +377,6 @@ html[data-theme="light"] [class*="shadow-black"] {
   --tw-shadow-color: rgba(15, 23, 42, 0.1) !important;
 }
 
-/* Contraste oscuro del Maestro de Empleados. Se mantiene encapsulado para no
-   alterar los campos ni botones de otros módulos. */
-html.dark .empleados-maestro,
-html[data-theme="dark"] .empleados-maestro {
-  --empleados-field-bg: #111c2f;
-  --empleados-field-border: rgba(148, 163, 184, 0.38);
-  --empleados-field-text: #e7edf6;
-  --empleados-secondary-text: #b8c4d4;
-  --empleados-placeholder: #93a4b8;
-}
-
 html.dark .empleados-maestro .input-custom,
 html.dark .empleados-maestro input,
 html.dark .empleados-maestro select,
@@ -396,98 +385,29 @@ html[data-theme="dark"] .empleados-maestro .input-custom,
 html[data-theme="dark"] .empleados-maestro input,
 html[data-theme="dark"] .empleados-maestro select,
 html[data-theme="dark"] .empleados-maestro textarea {
-  background-color: var(--empleados-field-bg) !important;
-  border-color: var(--empleados-field-border) !important;
-  color: var(--empleados-field-text) !important;
-  caret-color: #a5d8e2;
+  background-color: #111c2f !important;
+  border-color: rgba(148, 163, 184, 0.38) !important;
+  color: #e7edf6 !important;
   color-scheme: dark;
 }
 
 html.dark .empleados-maestro input::placeholder,
-html.dark .empleados-maestro textarea::placeholder,
-html[data-theme="dark"] .empleados-maestro input::placeholder,
-html[data-theme="dark"] .empleados-maestro textarea::placeholder {
-  color: var(--empleados-placeholder) !important;
+html[data-theme="dark"] .empleados-maestro input::placeholder {
+  color: #93a4b8 !important;
   opacity: 1;
-}
-
-html.dark .empleados-maestro select option,
-html.dark .empleados-maestro .input-custom option,
-html[data-theme="dark"] .empleados-maestro select option,
-html[data-theme="dark"] .empleados-maestro .input-custom option {
-  background-color: #111c2f !important;
-  color: #e7edf6 !important;
-}
-
-html.dark .empleados-maestro input:read-only,
-html.dark .empleados-maestro textarea:read-only,
-html.dark .empleados-maestro select:disabled,
-html.dark .empleados-maestro input:disabled,
-html[data-theme="dark"] .empleados-maestro input:read-only,
-html[data-theme="dark"] .empleados-maestro textarea:read-only,
-html[data-theme="dark"] .empleados-maestro select:disabled,
-html[data-theme="dark"] .empleados-maestro input:disabled {
-  background-color: #0d1728 !important;
-  color: #cbd5e1 !important;
-  opacity: 1;
-}
-
-html.dark .empleados-maestro input[type="date"]::-webkit-calendar-picker-indicator,
-html.dark .empleados-maestro input[type="number"]::-webkit-inner-spin-button,
-html[data-theme="dark"] .empleados-maestro input[type="date"]::-webkit-calendar-picker-indicator,
-html[data-theme="dark"] .empleados-maestro input[type="number"]::-webkit-inner-spin-button {
-  filter: invert(0.82) sepia(0.08) saturate(0.55);
-  opacity: 0.9;
-}
-
-html.dark .empleados-maestro .text-\[var\(--muted\)\],
-html.dark .empleados-maestro .text-\[var\(--muted-strong\)\],
-html[data-theme="dark"] .empleados-maestro .text-\[var\(--muted\)\],
-html[data-theme="dark"] .empleados-maestro .text-\[var\(--muted-strong\)\] {
-  color: var(--empleados-secondary-text) !important;
 }
 
 html.dark .empleados-maestro .btn-secondary,
 html[data-theme="dark"] .empleados-maestro .btn-secondary {
-  background-color: #17243a !important;
+  background: #17243a !important;
   border-color: rgba(148, 163, 184, 0.36) !important;
   color: #d8e1ec !important;
 }
 
-html.dark .empleados-maestro .btn-secondary:hover:not(:disabled),
-html[data-theme="dark"] .empleados-maestro .btn-secondary:hover:not(:disabled) {
-  background-color: #1d2d46 !important;
-  border-color: rgba(103, 198, 216, 0.48) !important;
-  color: #edf6f8 !important;
-}
-
 html.dark .empleados-maestro .btn-primary,
 html[data-theme="dark"] .empleados-maestro .btn-primary {
-  background-color: #1593aa !important;
+  background: #1593aa !important;
   border-color: #249fb5 !important;
   color: #06151a !important;
   font-weight: 800;
-}
-
-html.dark .empleados-maestro .btn-primary:hover:not(:disabled),
-html[data-theme="dark"] .empleados-maestro .btn-primary:hover:not(:disabled) {
-  background-color: #2aa3b8 !important;
-}
-
-html.dark .empleados-maestro button:disabled,
-html[data-theme="dark"] .empleados-maestro button:disabled {
-  color: #8d9caf !important;
-  opacity: 0.72;
-}
-
-html.dark .empleados-maestro .border-cyan-500\/30.bg-cyan-500\/10,
-html[data-theme="dark"] .empleados-maestro .border-cyan-500\/30.bg-cyan-500\/10 {
-  background-color: rgba(8, 145, 178, 0.13) !important;
-  border-color: rgba(73, 175, 196, 0.38) !important;
-  color: #b9dce4 !important;
-}
-
-html.dark .empleados-maestro button svg,
-html[data-theme="dark"] .empleados-maestro button svg {
-  color: currentColor;
 }
