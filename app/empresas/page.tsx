@@ -655,103 +655,8 @@ export default function EmpresasPage() {
     }
   }
 
-  async function eliminarEmpresaVacia(empresa: Empresa) {
-    if (perfilActual?.rol !== "admin") {
-      toast.error("Solo admin puede eliminar definitivamente una empresa vacia.");
-      return;
-    }
-
-    try {
-      validarEmpresaPermitida(empresa.id);
-    } catch (error) {
-      toast.error(mensajeError(error));
-      return;
-    }
-
-    const deps =
-      empresaPrevisualizada?.id === empresa.id && dependencias.length
-        ? dependencias
-        : await contarDependencias(empresa.id);
-    const total = deps.reduce((acc, dep) => acc + dep.conteo, 0);
-    const candidata = esEmpresaCandidataLimpieza(empresa);
-
-    if (!candidata || estadoNormalizado(empresa.estado) === "Activa") {
-      await auditarEmpresa({
-        empresaId: empresa.id,
-        accion: "bloquear_eliminacion_empresa",
-        estadoAnterior: estadoNormalizado(empresa.estado),
-        descripcion: "Eliminacion fisica bloqueada por empresa no candidata",
-        metadatos: {
-          nombre: empresaNombre(empresa),
-          motivos_limpieza: motivosEmpresaPruebaOLimpieza(empresa),
-          total_dependencias: total,
-        },
-      });
-      toast.error("No se permite eliminar fisicamente empresas reales activas.");
-      return;
-    }
-
-    if (total > 0) {
-      await auditarEmpresa({
-        empresaId: empresa.id,
-        accion: "bloquear_eliminacion_empresa",
-        estadoAnterior: estadoNormalizado(empresa.estado),
-        descripcion: "Eliminacion fisica bloqueada por dependencias",
-        metadatos: {
-          nombre: empresaNombre(empresa),
-          total_dependencias: total,
-          dependencias: deps.map((dep) => ({
-            tabla: dep.tabla,
-            descripcion: dep.descripcion,
-            conteo: dep.conteo,
-            critica: dep.critica,
-          })),
-          instruccion: "Archivar o inactivar; no eliminar fisicamente.",
-        },
-      });
-      toast.error("La empresa tiene dependencias. Solo se permite archivarla o inactivarla.");
-      return;
-    }
-
-    const primera = window.confirm(
-      `Vas a eliminar definitivamente "${empresaNombre(empresa)}". Esta accion solo es segura para empresas vacias. Deseas continuar?`
-    );
-    if (!primera) return;
-
-    const confirmacion = window.prompt(
-      'Escribe exactamente "ELIMINAR EMPRESA" para confirmar la eliminacion fisica:'
-    );
-    if (confirmacion !== "ELIMINAR EMPRESA") {
-      toast.error("Confirmacion incorrecta. No se elimino la empresa.");
-      return;
-    }
-
-    setProcesando(true);
-    setMensaje("");
-
-    try {
-      const { data, error } = await supabase.rpc("eliminar_empresa_vacia_segura", {
-        p_empresa_id: empresa.id,
-        p_confirmacion: confirmacion,
-      });
-
-      if (error) throw error;
-      if (data && typeof data === "object" && "ok" in data && data.ok === false) {
-        toast.error(typeof data.mensaje === "string" ? data.mensaje : "No se pudo eliminar la empresa.");
-        return;
-      }
-
-      setMensaje("Empresa vacia eliminada definitivamente de forma segura.");
-      setEmpresaPrevisualizada(null);
-      setDependencias([]);
-      await obtenerEmpresas();
-      console.info("Eliminacion segura de empresa:", data);
-    } catch (error) {
-      console.error("Error eliminando empresa vacia:", error);
-      toast.error(mensajeError(error));
-    } finally {
-      setProcesando(false);
-    }
+  function eliminarEmpresaVacia() {
+    toast.error("Eliminación de empresas no disponible durante el piloto.");
   }
 
   const empresasFiltradas = useMemo(() => {
@@ -1068,11 +973,12 @@ export default function EmpresasPage() {
                   </button>
                 )}
                 <button
-                  onClick={() => eliminarEmpresaVacia(empresaPrevisualizada)}
-                  disabled={procesando || !puedeEliminarFisicamente}
+                  onClick={() => eliminarEmpresaVacia()}
+                  disabled
+                  title="Eliminación de empresas no disponible durante el piloto"
                   className="rounded-2xl border border-red-500/40 bg-red-500/10 px-5 py-3 font-black text-red-200 disabled:opacity-40"
                 >
-                  Eliminar definitivamente
+                  Eliminación no disponible durante el piloto
                 </button>
               </div>
                   </>
